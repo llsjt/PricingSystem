@@ -1,5 +1,7 @@
-import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router'
+﻿import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router'
 import BasicLayout from '../layout/BasicLayout.vue'
+
+const APP_TITLE = '智能定价决策平台'
 
 const routes: Array<RouteRecordRaw> = [
   {
@@ -32,16 +34,16 @@ const routes: Array<RouteRecordRaw> = [
         meta: { title: '决策档案' }
       },
       {
+        path: 'profile',
+        name: 'PersonalCenter',
+        component: () => import('../views/PersonalCenter.vue'),
+        meta: { title: '个人中心' }
+      },
+      {
         path: 'user',
         name: 'UserManagement',
         component: () => import('../views/UserManagement.vue'),
         meta: { title: '用户管理' }
-      },
-      {
-        path: 'settings',
-        name: 'Settings',
-        component: () => import('../views/Settings.vue'),
-        meta: { title: '系统设置' }
       }
     ]
   }
@@ -66,6 +68,11 @@ router.beforeEach((to, _from, next) => {
   }
 
   next()
+})
+
+router.afterEach((to) => {
+  const pageTitle = String(to.meta.title || '首页')
+  document.title = `${pageTitle} - ${APP_TITLE}`
 })
 
 export default router

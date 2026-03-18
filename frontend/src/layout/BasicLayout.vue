@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -8,7 +8,6 @@ import {
   Document,
   Files,
   Menu,
-  Setting,
   User,
   UserFilled
 } from '@element-plus/icons-vue'
@@ -34,33 +33,33 @@ const navItems: NavItem[] = [
   {
     path: '/import',
     title: '数据管理',
-    desc: '商品、导入和趋势分析',
+    desc: '商品管理与批量导入',
     icon: Document
   },
   {
     path: '/lab',
     title: '智能定价',
-    desc: '任务配置、执行和结果反馈',
+    desc: '任务配置与结果分析',
     icon: DataLine
   },
   {
     path: '/archive',
     title: '决策档案',
-    desc: '历史记录、复盘和报表',
+    desc: '任务记录与复盘报表',
     icon: Files
+  },
+  {
+    path: '/profile',
+    title: '个人中心',
+    desc: '查看个人信息与账号状态',
+    icon: UserFilled
   },
   {
     path: '/user',
     title: '用户管理',
-    desc: '账号维护与管理员操作',
+    desc: '账号维护与权限管理',
     icon: User,
     adminOnly: true
-  },
-  {
-    path: '/settings',
-    title: '系统设置',
-    desc: '模型与 API 配置',
-    icon: Setting
   }
 ]
 
@@ -93,8 +92,8 @@ const toggleSidebar = () => {
 }
 
 const handleCommand = (command: string) => {
-  if (command === 'settings') {
-    navigateTo('/settings')
+  if (command === 'profile') {
+    navigateTo('/profile')
     return
   }
 
@@ -138,24 +137,15 @@ onBeforeUnmount(() => {
         visible: mobileMenuVisible && isMobile
       }"
     >
-      <div class="brand-block">
-        <div class="brand-mark">{{ isSidebarCollapsed && !isMobile ? 'AI' : 'AI' }}</div>
-        <transition name="fade-slide">
-          <div v-if="!isSidebarCollapsed || isMobile" class="brand-copy">
-            <strong>智能定价系统</strong>
-            <span>商品管理与多 Agent 决策平台</span>
-          </div>
-        </transition>
-        <el-button
-          v-if="isMobile"
-          circle
-          text
-          class="mobile-close"
-          @click="mobileMenuVisible = false"
-        >
-          <el-icon><Close /></el-icon>
-        </el-button>
-      </div>
+      <el-button
+        v-if="isMobile"
+        circle
+        text
+        class="mobile-close"
+        @click="mobileMenuVisible = false"
+      >
+        <el-icon><Close /></el-icon>
+      </el-button>
 
       <nav class="nav-list">
         <button
@@ -172,19 +162,10 @@ onBeforeUnmount(() => {
           <transition name="fade-slide">
             <span v-if="!isSidebarCollapsed || isMobile" class="nav-copy">
               <strong>{{ item.title }}</strong>
-              <small>{{ item.desc }}</small>
             </span>
           </transition>
         </button>
       </nav>
-
-      <div class="sidebar-footer" v-if="!isSidebarCollapsed || isMobile">
-        <div class="footer-tip">今日建议</div>
-        <div class="footer-card">
-          <strong>先导入数据，再配置任务</strong>
-          <span>约束条件越明确，Agent 输出越稳定。</span>
-        </div>
-      </div>
     </aside>
 
     <div class="main-shell">
@@ -205,10 +186,6 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="topbar-right">
-          <div class="status-chip">
-            <span class="status-dot"></span>
-            <span>系统在线</span>
-          </div>
           <el-dropdown trigger="click" @command="handleCommand">
             <button type="button" class="user-entry">
               <el-avatar :size="38" :icon="UserFilled" />
@@ -220,7 +197,7 @@ onBeforeUnmount(() => {
             </button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="settings">系统设置</el-dropdown-item>
+                <el-dropdown-item command="profile">个人中心</el-dropdown-item>
                 <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -253,60 +230,21 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  width: 296px;
-  min-width: 296px;
-  height: 100vh;
+  width: 260px;
+  min-width: 260px;
+  height: auto;
+  min-height: 100vh;
   padding: 24px 18px 18px;
-  background: linear-gradient(180deg, #215dc6 0%, #287ec9 48%, #1d948c 100%);
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 24px 0 48px rgba(19, 52, 110, 0.12);
+  background: linear-gradient(180deg, #2f5f93 0%, #3b72a7 52%, #4a82b0 100%);
+  border-right: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 20px 0 40px rgba(34, 70, 110, 0.14);
   transition: width 0.28s ease, min-width 0.28s ease, transform 0.28s ease;
   z-index: 20;
 }
 
 .sidebar.collapsed {
-  width: 96px;
-  min-width: 96px;
-}
-
-.brand-block {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 12px;
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.brand-mark {
-  width: 50px;
-  height: 50px;
-  border-radius: 18px;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(145deg, #16a085, #0f7b6c);
-  color: #fff;
-  font-size: 18px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  box-shadow: 0 10px 20px rgba(10, 91, 80, 0.25);
-}
-
-.brand-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  color: rgba(255, 255, 255, 0.96);
-}
-
-.brand-copy strong {
-  font-size: 18px;
-}
-
-.brand-copy span {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.66);
+  width: 84px;
+  min-width: 84px;
 }
 
 .mobile-close {
@@ -325,11 +263,11 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 14px 16px;
+  padding: 12px 14px;
   border: 0;
   border-radius: 20px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.76);
+  color: rgba(255, 255, 255, 0.84);
   cursor: pointer;
   transition: transform 0.18s ease, background 0.18s ease, color 0.18s ease;
   text-align: left;
@@ -337,69 +275,35 @@ onBeforeUnmount(() => {
 
 .nav-item:hover {
   transform: translateX(2px);
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.12);
   color: #fff;
 }
 
 .nav-item.active {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(22, 160, 133, 0.22));
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.26), rgba(105, 171, 227, 0.32));
   color: #fff;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
 }
 
 .nav-icon {
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
   display: grid;
   place-items: center;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.18);
   font-size: 18px;
   flex-shrink: 0;
 }
 
 .nav-copy {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
   overflow: hidden;
 }
 
 .nav-copy strong {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
-}
-
-.nav-copy small {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.60);
-}
-
-.sidebar-footer {
-  margin-top: auto;
-  display: grid;
-  gap: 10px;
-}
-
-.footer-tip {
-  color: rgba(255, 255, 255, 0.58);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-}
-
-.footer-card {
-  display: grid;
-  gap: 6px;
-  padding: 16px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.07);
-  color: rgba(255, 255, 255, 0.92);
-  line-height: 1.5;
-}
-
-.footer-card span {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.68);
 }
 
 .main-shell {
@@ -461,27 +365,6 @@ onBeforeUnmount(() => {
   margin: 0;
   color: var(--text-2);
   font-size: 14px;
-}
-
-.status-chip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  border-radius: 999px;
-  background: var(--surface-1);
-  border: 1px solid var(--line-soft);
-  color: var(--text-2);
-  box-shadow: var(--shadow-card);
-  font-size: 13px;
-}
-
-.status-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: #20c997;
-  box-shadow: 0 0 0 6px rgba(32, 201, 151, 0.14);
 }
 
 .user-entry {
@@ -554,9 +437,10 @@ onBeforeUnmount(() => {
     position: fixed;
     inset: 0 auto 0 0;
     transform: translateX(-100%);
-    width: min(84vw, 320px);
-    min-width: min(84vw, 320px);
+    width: min(76vw, 288px);
+    min-width: min(76vw, 288px);
     height: 100vh;
+    min-height: 100vh;
   }
 
   .sidebar.visible {
@@ -575,8 +459,7 @@ onBeforeUnmount(() => {
     font-size: 22px;
   }
 
-  .page-meta p,
-  .status-chip {
+  .page-meta p {
     display: none;
   }
 

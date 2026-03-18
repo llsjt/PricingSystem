@@ -622,16 +622,71 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .archive-page {
-  gap: 20px;
+  gap: 14px;
 }
 
 .compact-metrics {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.archive-hero {
+  padding: 14px 16px;
+}
+
+.archive-hero .section-title {
+  gap: 4px;
+}
+
+.archive-hero .section-title p {
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.archive-hero .compact-metrics {
+  gap: 10px;
+}
+
+.archive-hero .metric-card {
+  padding: 14px 16px;
+}
+
+.archive-hero .metric-value {
+  margin-top: 6px;
+  font-size: 34px;
+}
+
+.archive-hero .metric-hint {
+  display: none;
+}
+
+.filter-panel {
+  padding: 12px 14px;
+}
+
+.filter-panel .section-head {
+  margin-bottom: 8px;
+}
+
+.filter-panel .section-title p {
+  display: none;
+}
+
 .filter-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  align-items: end;
+  display: grid;
+  grid-template-columns: 180px 200px minmax(280px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.filter-grid .toolbar-actions {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.filter-panel :deep(.el-input__wrapper),
+.filter-panel :deep(.el-date-editor.el-input__wrapper),
+.filter-panel :deep(.el-select__wrapper) {
+  min-height: 36px;
 }
 
 .table-footer {
@@ -728,6 +783,10 @@ onBeforeUnmount(() => {
   .drawer-meta,
   .compact-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filter-grid .toolbar-actions {
+    justify-content: flex-start;
   }
 }
 

@@ -8,14 +8,16 @@
       </template>
 
       <el-form ref="loginFormRef" :model="loginForm" :rules="rules" label-width="0">
-        <el-form-item prop="username">
-          <el-input v-model="loginForm.username" placeholder="用户名" />
+        <el-form-item prop="username" class="field-item">
+          <div class="field-label">用户名</div>
+          <el-input v-model="loginForm.username" placeholder="请输入用户名" />
         </el-form-item>
-        <el-form-item prop="password">
+        <el-form-item prop="password" class="field-item">
+          <div class="field-label">密码</div>
           <el-input
             v-model="loginForm.password"
             type="password"
-            placeholder="密码"
+            placeholder="请输入密码"
             show-password
             @keyup.enter="handleLogin"
           />
@@ -96,10 +98,22 @@ const handleLogin = async () => {
   text-align: center;
 }
 
+.field-item :deep(.el-form-item__content) {
+  display: block;
+}
+
+.field-label {
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #25364d;
+}
+
 .tips {
+  margin-top: 10px;
   font-size: 12px;
   color: #999;
   text-align: center;
-  margin-top: 10px;
 }
 </style>

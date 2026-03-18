@@ -127,6 +127,10 @@ a {
   font-size: 14px;
 }
 
+.panel-card .section-title p {
+  display: none;
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

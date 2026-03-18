@@ -744,7 +744,7 @@ onUnmounted(() => {
 
 <style scoped>
 .pricing-page {
-  gap: 18px;
+  gap: 14px;
 }
 
 .intro-panel,
@@ -757,7 +757,8 @@ onUnmounted(() => {
 }
 
 .compact-metrics {
-  margin-top: 18px;
+  margin-top: 10px;
+  gap: 10px;
 }
 
 .metric-value.small {
@@ -765,7 +766,43 @@ onUnmounted(() => {
 }
 
 .steps {
-  padding-top: 6px;
+  padding-top: 0;
+}
+
+.intro-panel,
+.step-panel {
+  padding: 14px 16px;
+}
+
+.intro-panel .section-title p,
+.step-panel .section-title p {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.intro-panel .metric-card {
+  padding: 14px 16px;
+}
+
+.intro-panel .metric-value {
+  margin-top: 6px;
+  font-size: 20px;
+}
+
+.intro-panel .metric-hint {
+  display: none;
+}
+
+.step-panel .section-head {
+  margin-bottom: 10px;
+}
+
+.steps :deep(.el-step__description) {
+  display: none;
+}
+
+.steps :deep(.el-step__title) {
+  font-size: 13px;
 }
 
 .config-form {

@@ -287,7 +287,16 @@ onMounted(() => {
 }
 
 .search-toolbar {
+  display: grid;
+  grid-template-columns: minmax(260px, 460px) 220px 132px;
+  align-items: center;
+  gap: 10px;
   margin-bottom: 14px;
+}
+
+.search-toolbar :deep(.el-button) {
+  width: 132px;
+  justify-self: start;
 }
 
 .selected-bar {
@@ -316,6 +325,15 @@ onMounted(() => {
 @media (max-width: 768px) {
   .product-card {
     padding: 16px;
+  }
+
+  .search-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .search-toolbar :deep(.el-button) {
+    width: 100%;
+    justify-self: stretch;
   }
 
   .form-grid {

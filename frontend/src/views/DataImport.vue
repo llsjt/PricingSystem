@@ -1,64 +1,90 @@
-<template>
+﻿<template>
   <div class="page-shell data-page">
-    <section class="panel-card import-panel">
-      <div class="section-head">
-        <div class="section-title">
-          <h2>数据管理</h2>
-          <p>集中处理商品导入和商品列表维护。</p>
-        </div>
-        <div class="toolbar-actions">
-          <el-button @click="handleDownloadTemplate">下载模板</el-button>
-        </div>
-      </div>
+    <el-tabs v-model="activeTab" class="data-tabs">
+      <el-tab-pane name="products">
+        <template #label>
+          <span class="tab-label">
+            <el-icon><Document /></el-icon>
+            <span>商品管理</span>
+          </span>
+        </template>
+        <ProductList ref="productListRef" />
+      </el-tab-pane>
 
-      <div class="import-layout">
-        <el-upload
-          class="upload-box"
-          drag
-          :http-request="handleCustomUpload"
-          :before-upload="beforeUpload"
-          accept=".xlsx,.xls"
-          :limit="1"
-        >
-          <el-icon class="upload-icon"><UploadFilled /></el-icon>
-          <div class="upload-title">上传商品 Excel</div>
-          <div class="upload-desc">支持 `.xlsx` 和 `.xls`，单文件不超过 10MB</div>
-        </el-upload>
+      <el-tab-pane name="import">
+        <template #label>
+          <span class="tab-label">
+            <el-icon><UploadFilled /></el-icon>
+            <span>批量导入</span>
+          </span>
+        </template>
 
-        <div class="import-side">
-          <div class="action-card">
-            <strong>导入后自动刷新商品列表</strong>
-            <span>商品新增、批量删除和搜索都在下方列表完成。</span>
+        <section class="panel-card import-panel">
+          <div class="section-head">
+            <div class="section-title">
+              <h2>Excel 批量导入</h2>
+              <p>上传模板文件后会自动同步到商品管理列表。</p>
+            </div>
           </div>
-          <div class="action-card warm">
-            <strong>建议先使用模板整理字段</strong>
-            <span>可减少导入失败和字段不匹配的问题。</span>
+
+          <div class="import-layout">
+            <div class="import-main">
+              <div class="template-action">
+                <el-button type="primary" class="template-btn" @click="handleDownloadTemplate">
+                  <el-icon><Download /></el-icon>
+                  <span>下载导入模板</span>
+                </el-button>
+              </div>
+
+              <el-upload
+                class="upload-box"
+                drag
+                :http-request="handleCustomUpload"
+                :before-upload="beforeUpload"
+                accept=".xlsx,.xls"
+                :limit="1"
+              >
+                <el-icon class="upload-icon"><UploadFilled /></el-icon>
+                <div class="upload-title">上传商品 Excel</div>
+                <div class="upload-desc">支持 `.xlsx` 和 `.xls`，单文件不超过 10MB</div>
+              </el-upload>
+            </div>
+
+            <div class="import-side">
+              <div class="action-card">
+                <strong>导入后自动刷新商品列表</strong>
+                <span>导入完成后可切换到“商品管理”标签继续查询、编辑和批量操作。</span>
+              </div>
+              <div class="action-card warm">
+                <strong>建议优先使用模板整理字段</strong>
+                <span>可降低字段不匹配、格式错误等导入失败问题。</span>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
 
-      <el-alert
-        v-if="importResult"
-        :title="importResult.title"
-        :type="importResult.type"
-        :description="importResult.message"
-        show-icon
-        class="upload-feedback"
-      />
-    </section>
-
-    <ProductList ref="productListRef" />
+          <el-alert
+            v-if="importResult"
+            :title="importResult.title"
+            :type="importResult.type"
+            :description="importResult.message"
+            show-icon
+            class="upload-feedback"
+          />
+        </section>
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { UploadFilled } from '@element-plus/icons-vue'
+import { Document, Download, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, type UploadProps } from 'element-plus'
 import ProductList from './ProductList.vue'
 import { downloadTemplate } from '../api/product'
 import request from '../api/request'
 
+const activeTab = ref('products')
 const importResult = ref<any>(null)
 const productListRef = ref<any>(null)
 
@@ -128,11 +154,39 @@ const handleDownloadTemplate = async () => {
 
 <style scoped>
 .data-page {
-  gap: 18px;
+  gap: 16px;
+}
+
+.data-tabs :deep(.el-tabs__content) {
+  padding-top: 8px;
+}
+
+.data-tabs :deep(.el-tab-pane > .page-shell) {
+  gap: 0;
+}
+
+.tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .import-panel {
   padding: 20px;
+}
+
+.template-btn {
+  --el-button-bg-color: #1f6feb;
+  --el-button-border-color: #1f6feb;
+  --el-button-hover-bg-color: #1558b5;
+  --el-button-hover-border-color: #1558b5;
+  --el-button-active-bg-color: #1558b5;
+  --el-button-active-border-color: #1558b5;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 12px;
+  font-weight: 700;
+  box-shadow: 0 8px 20px rgba(31, 111, 235, 0.28);
 }
 
 .import-layout {
@@ -140,6 +194,16 @@ const handleDownloadTemplate = async () => {
   grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.75fr);
   gap: 16px;
   align-items: stretch;
+}
+
+.import-main {
+  display: grid;
+  gap: 12px;
+}
+
+.template-action {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .upload-box,
