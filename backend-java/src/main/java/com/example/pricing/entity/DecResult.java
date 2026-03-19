@@ -29,6 +29,9 @@ public class DecResult {
 
     private String rejectReason;
 
+    @TableField(exist = false)
+    private String productTitle;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 }

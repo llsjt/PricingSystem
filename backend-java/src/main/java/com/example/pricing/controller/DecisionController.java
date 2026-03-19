@@ -1,10 +1,8 @@
 package com.example.pricing.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.pricing.common.Result;
-import com.example.pricing.dto.DecisionTaskDTO;
 import com.example.pricing.entity.DecResult;
 import com.example.pricing.entity.DecTask;
 import com.example.pricing.mapper.DecResultMapper;
@@ -14,15 +12,18 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
 
-import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import com.alibaba.excel.EasyExcel;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.URLEncoder;
 
 @RestController
@@ -104,7 +105,27 @@ public class DecisionController {
     public Result<List<DecResult>> getTaskResult(@PathVariable Long taskId) {
         LambdaQueryWrapper<DecResult> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(DecResult::getTaskId, taskId);
-        return Result.success(resultMapper.selectList(wrapper));
+        List<DecResult> results = resultMapper.selectList(wrapper);
+        if (results.isEmpty()) {
+            return Result.success(results);
+        }
+
+        Set<Long> productIds = results.stream()
+                .map(DecResult::getProductId)
+                .filter(id -> id != null && id > 0)
+                .collect(Collectors.toSet());
+        if (productIds.isEmpty()) {
+            return Result.success(results);
+        }
+
+        Map<Long, String> titleMap = productMapper.selectBatchIds(productIds).stream()
+                .collect(Collectors.toMap(
+                        com.example.pricing.entity.BizProduct::getId,
+                        com.example.pricing.entity.BizProduct::getTitle,
+                        (left, right) -> left
+                ));
+        results.forEach(item -> item.setProductTitle(titleMap.get(item.getProductId())));
+        return Result.success(results);
     }
 
     @GetMapping("/logs/{taskId}")
@@ -127,18 +148,9 @@ public class DecisionController {
         
         Page<DecTask> pageParam = new Page<>(page, size);
         LambdaQueryWrapper<DecTask> wrapper = new LambdaQueryWrapper<>();
-        
+        applyCommonFilters(wrapper, strategyType, startTime, endTime);
         if (status != null && !status.isEmpty()) {
             wrapper.eq(DecTask::getStatus, status);
-        }
-        if (strategyType != null && !strategyType.isEmpty()) {
-            wrapper.eq(DecTask::getStrategyType, strategyType);
-        }
-        if (startTime != null && !startTime.isEmpty()) {
-            wrapper.ge(DecTask::getCreatedAt, startTime);
-        }
-        if (endTime != null && !endTime.isEmpty()) {
-            wrapper.le(DecTask::getCreatedAt, endTime);
         }
         
         if ("asc".equalsIgnoreCase(sortOrder)) {
@@ -148,6 +160,32 @@ public class DecisionController {
         }
         
         return Result.success(taskMapper.selectPage(pageParam, wrapper));
+    }
+
+    @GetMapping("/tasks/stats")
+    public Result<Map<String, Long>> getTaskStats(
+            @RequestParam(required = false) String strategyType,
+            @RequestParam(required = false) String startTime,
+            @RequestParam(required = false) String endTime) {
+        LambdaQueryWrapper<DecTask> totalWrapper = new LambdaQueryWrapper<>();
+        applyCommonFilters(totalWrapper, strategyType, startTime, endTime);
+        long totalCount = taskMapper.selectCount(totalWrapper);
+
+        LambdaQueryWrapper<DecTask> completedWrapper = new LambdaQueryWrapper<>();
+        applyCommonFilters(completedWrapper, strategyType, startTime, endTime);
+        completedWrapper.eq(DecTask::getStatus, "COMPLETED");
+        long completedCount = taskMapper.selectCount(completedWrapper);
+
+        LambdaQueryWrapper<DecTask> runningWrapper = new LambdaQueryWrapper<>();
+        applyCommonFilters(runningWrapper, strategyType, startTime, endTime);
+        runningWrapper.eq(DecTask::getStatus, "RUNNING");
+        long runningCount = taskMapper.selectCount(runningWrapper);
+
+        Map<String, Long> stats = new HashMap<>();
+        stats.put("total", totalCount);
+        stats.put("completed", completedCount);
+        stats.put("running", runningCount);
+        return Result.success(stats);
     }
 
     @GetMapping("/comparison/{taskId}")
@@ -161,22 +199,27 @@ public class DecisionController {
             com.example.pricing.entity.BizProduct product = productMapper.selectById(result.getProductId());
             if (product != null) {
                 com.example.pricing.vo.DecisionComparisonVO vo = new com.example.pricing.vo.DecisionComparisonVO();
+                vo.setResultId(result.getId());
                 vo.setProductId(product.getId());
                 vo.setProductTitle(product.getTitle());
-                vo.setOriginalPrice(product.getCurrentPrice());
-                vo.setSuggestedPrice(result.getSuggestedPrice());
-                
-                // Mock original profit = (current_price - cost_price) * monthly_sales
-                java.math.BigDecimal cost = product.getCostPrice() != null ? product.getCostPrice() : java.math.BigDecimal.ZERO;
-                java.math.BigDecimal originalProfit = product.getCurrentPrice().subtract(cost)
-                        .multiply(new java.math.BigDecimal(product.getMonthlySales() != null ? product.getMonthlySales() : 0));
+                BigDecimal suggestedPrice = result.getSuggestedPrice() != null ? result.getSuggestedPrice() : BigDecimal.ZERO;
+                BigDecimal originalPrice = normalizeOriginalPrice(
+                        product.getCurrentPrice(),
+                        suggestedPrice,
+                        result.getDiscountRate()
+                );
+                BigDecimal cost = product.getCostPrice() != null ? product.getCostPrice() : BigDecimal.ZERO;
+                int monthlySales = product.getMonthlySales() != null ? product.getMonthlySales() : 0;
+
+                vo.setOriginalPrice(originalPrice);
+                vo.setSuggestedPrice(suggestedPrice);
+
+                BigDecimal originalProfit = calculateProfit(originalPrice, cost, monthlySales);
                 vo.setOriginalProfit(originalProfit);
-                
-                // Mock new profit
-                java.math.BigDecimal newProfit = result.getProfitChange() != null 
-                        ? originalProfit.add(result.getProfitChange()) 
-                        : originalProfit;
+
+                BigDecimal newProfit = calculateProfit(suggestedPrice, cost, monthlySales);
                 vo.setNewProfit(newProfit);
+                vo.setProfitChange(result.getProfitChange());
                 
                 vo.setDiscountRate(result.getDiscountRate());
                 vo.setIsAccepted(result.getIsAccepted());
@@ -225,6 +268,44 @@ public class DecisionController {
         resultMapper.updateById(result);
         
         return Result.success(null);
+    }
+
+    private void applyCommonFilters(
+            LambdaQueryWrapper<DecTask> wrapper,
+            String strategyType,
+            String startTime,
+            String endTime) {
+        if (strategyType != null && !strategyType.isEmpty()) {
+            wrapper.eq(DecTask::getStrategyType, strategyType);
+        }
+        if (startTime != null && !startTime.isEmpty()) {
+            wrapper.ge(DecTask::getCreatedAt, startTime);
+        }
+        if (endTime != null && !endTime.isEmpty()) {
+            wrapper.le(DecTask::getCreatedAt, endTime);
+        }
+    }
+
+    private BigDecimal normalizeOriginalPrice(BigDecimal currentPrice, BigDecimal suggestedPrice, BigDecimal discountRate) {
+        if (suggestedPrice != null && discountRate != null && discountRate.compareTo(BigDecimal.ZERO) > 0) {
+            return suggestedPrice.divide(discountRate, 2, RoundingMode.HALF_UP);
+        }
+        if (currentPrice != null) {
+            return currentPrice.setScale(2, RoundingMode.HALF_UP);
+        }
+        if (suggestedPrice != null) {
+            return suggestedPrice.setScale(2, RoundingMode.HALF_UP);
+        }
+        return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal calculateProfit(BigDecimal price, BigDecimal cost, int monthlySales) {
+        BigDecimal safePrice = price != null ? price : BigDecimal.ZERO;
+        BigDecimal safeCost = cost != null ? cost : BigDecimal.ZERO;
+        return safePrice
+                .subtract(safeCost)
+                .multiply(BigDecimal.valueOf(Math.max(monthlySales, 0)))
+                .setScale(2, RoundingMode.HALF_UP);
     }
 
     @GetMapping("/export/{taskId}")

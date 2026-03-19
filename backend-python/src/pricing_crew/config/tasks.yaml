@@ -1,0 +1,107 @@
+data_analysis_task:
+  description: >
+    Input JSON:
+    {request_json}
+
+    Use available tools when needed.
+    Produce JSON only (no markdown) with fields:
+    sales_trend, sales_trend_score, inventory_status, inventory_health_score,
+    estimated_turnover_days, demand_elasticity, recommended_action,
+    recommended_discount_min, recommended_discount_max,
+    recommendation_confidence, recommendation_reasons,
+    thinking_process, reasoning, decision_summary.
+
+    Rules:
+    - sales_trend in [rapid_rising, rising, stable, declining, rapid_declining]
+    - inventory_status in [severe_overstock, overstock, normal, tight, shortage]
+    - recommended_action in [maintain, discount, clearance]
+    - discount values in [0.5, 1.5]
+    - if recommended_action is maintain, both discount values must be 1.0
+  expected_output: >
+    Strict JSON that matches the DataAnalysis output schema.
+  agent: data_analysis_agent
+
+market_intel_task:
+  description: >
+    Input JSON:
+    {request_json}
+
+    Use available tools and prior task context.
+    Produce JSON only with fields:
+    competition_level, competition_score, price_position, price_percentile,
+    min_competitor_price, max_competitor_price, avg_competitor_price, price_gap_vs_avg,
+    market_suggestion, suggestion_confidence, suggestion_reasons,
+    thinking_process, reasoning, decision_summary.
+
+    Rules:
+    - competition_level in [fierce, moderate, low]
+    - price_position in [premium, mid-range, budget]
+    - market_suggestion in [price_war, penetrate, discount, differentiate, premium, maintain]
+  expected_output: >
+    Strict JSON that matches the MarketIntel output schema.
+  agent: market_intel_agent
+  context:
+    - data_analysis_task
+
+risk_control_task:
+  description: >
+    Input JSON:
+    {request_json}
+
+    Use available tools and prior task context.
+    Produce JSON only with fields:
+    current_profit_margin, profit_margin_after_discount, break_even_price,
+    min_safe_price, required_min_price, current_price_compliant,
+    risk_level, risk_score, allow_promotion, max_safe_discount,
+    recommendation, recommendation_reasons, constraint_summary,
+    warnings, veto_reason, thinking_process, reasoning, decision_summary.
+
+    Rules:
+    - risk_level in [high, medium, low]
+    - recommendation in [maintain, discount, increase]
+    - if current_price_compliant is false, recommendation must be increase and allow_promotion false
+  expected_output: >
+    Strict JSON that matches the RiskControl output schema.
+  agent: risk_control_agent
+  context:
+    - data_analysis_task
+    - market_intel_task
+
+manager_decision_task:
+  description: >
+    Input JSON:
+    {request_json}
+
+    Use all prior task outputs.
+    Produce JSON only with fields:
+    decision, discount_rate, suggested_price, confidence,
+    core_reasons, key_factors, risk_warning, contingency_plan,
+    conflict_summary, thinking_process, reasoning.
+
+    Rules:
+    - decision in [maintain, discount, increase]
+    - if risk control blocks promotion, decision must not be discount
+  expected_output: >
+    Strict JSON that matches the ManagerDecision output schema.
+  agent: decision_manager_agent
+  context:
+    - data_analysis_task
+    - market_intel_task
+    - risk_control_task
+
+manager_only_task:
+  description: >
+    Input JSON:
+    {manager_input_json}
+
+    Data, market, and risk outputs are already provided.
+    Produce JSON only with fields:
+    decision, discount_rate, suggested_price, confidence,
+    core_reasons, key_factors, risk_warning, contingency_plan,
+    conflict_summary, thinking_process, reasoning.
+
+    Rule:
+    - if risk_result.allow_promotion is false, decision cannot be discount
+  expected_output: >
+    Strict JSON that matches the ManagerDecision output schema.
+  agent: decision_manager_agent

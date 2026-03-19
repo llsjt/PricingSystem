@@ -9,11 +9,11 @@ import { RouterView } from 'vue-router'
 <style>
 :root {
   color-scheme: light;
-  --app-bg: #eff5ff;
+  --app-bg: #eef4fc;
   --surface-1: #ffffff;
-  --surface-2: #f7faff;
-  --surface-3: #edf4ff;
-  --panel-muted: #f4f8ff;
+  --surface-2: #f6f9fe;
+  --surface-3: #edf3fc;
+  --panel-muted: #f3f8ff;
   --line-soft: rgba(31, 46, 77, 0.08);
   --line-strong: rgba(31, 46, 77, 0.14);
   --border-soft: rgba(31, 46, 77, 0.08);
@@ -30,12 +30,13 @@ import { RouterView } from 'vue-router'
   --danger-soft: rgba(214, 82, 82, 0.14);
   --success-soft: rgba(47, 161, 116, 0.14);
   --warning-soft: rgba(255, 159, 67, 0.14);
-  --shadow-soft: 0 18px 48px rgba(17, 35, 43, 0.08);
-  --shadow-card: 0 10px 24px rgba(17, 35, 43, 0.06);
-  --radius-xl: 28px;
-  --radius-lg: 22px;
-  --radius-md: 16px;
-  --radius-sm: 12px;
+  --shadow-soft: 0 14px 40px rgba(22, 39, 58, 0.1);
+  --shadow-card: 0 8px 24px rgba(20, 40, 63, 0.08);
+  --radius-xl: 10px;
+  --radius-lg: 10px;
+  --radius-md: 10px;
+  --radius-sm: 10px;
+  --motion-fast: 0.2s ease-in-out;
   --content-width: 1380px;
   font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
 }
@@ -59,9 +60,9 @@ body {
   margin: 0;
   overflow-x: hidden;
   background:
-    radial-gradient(circle at top left, rgba(31, 111, 235, 0.12), transparent 28%),
-    radial-gradient(circle at right 16%, rgba(255, 159, 67, 0.14), transparent 24%),
-    linear-gradient(180deg, #f8fbff 0%, var(--app-bg) 100%);
+    radial-gradient(circle at top left, rgba(58, 118, 196, 0.14), transparent 30%),
+    radial-gradient(circle at right 14%, rgba(152, 187, 227, 0.16), transparent 26%),
+    linear-gradient(180deg, #f9fcff 0%, var(--app-bg) 100%);
   color: var(--text-1);
 }
 
@@ -82,23 +83,29 @@ a {
 
 .page-shell {
   display: grid;
-  gap: 20px;
+  gap: 16px;
 }
 
 .panel-card {
   padding: 24px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 251, 255, 0.96));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(249, 252, 255, 0.98));
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
+  transition: box-shadow var(--motion-fast), border-color var(--motion-fast);
+}
+
+.panel-card:hover {
+  border-color: rgba(31, 111, 235, 0.16);
+  box-shadow: 0 12px 28px rgba(20, 44, 72, 0.1);
 }
 
 .section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 18px;
-  margin-bottom: 20px;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
 .section-title {
@@ -142,10 +149,11 @@ a {
 .metric-card {
   position: relative;
   overflow: hidden;
-  padding: 20px 22px;
+  padding: 24px;
   border-radius: var(--radius-md);
-  background: linear-gradient(160deg, rgba(255, 255, 255, 0.98), rgba(240, 246, 255, 0.96));
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.98), rgba(241, 247, 255, 0.96));
   border: 1px solid rgba(31, 111, 235, 0.10);
+  transition: box-shadow var(--motion-fast), border-color var(--motion-fast);
 }
 
 .metric-card::before {
@@ -158,28 +166,23 @@ a {
   opacity: 0.9;
 }
 
-.metric-card::after {
-  content: "";
-  position: absolute;
-  inset: auto -20px -30px auto;
-  width: 110px;
-  height: 110px;
-  border-radius: 999px;
-  background: rgba(31, 111, 235, 0.10);
+.metric-card:hover {
+  border-color: rgba(31, 111, 235, 0.2);
+  box-shadow: 0 10px 22px rgba(25, 53, 84, 0.08);
 }
 
 .metric-label {
   position: relative;
   z-index: 1;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .metric-value {
   position: relative;
   z-index: 1;
-  margin-top: 10px;
-  font-size: 30px;
+  margin-top: 8px;
+  font-size: 34px;
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.03em;
@@ -197,7 +200,7 @@ a {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
 }
 
 .toolbar-row.grow > * {
@@ -208,11 +211,11 @@ a {
 .toolbar-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
 .table-card {
-  padding: 20px;
+  padding: 24px;
   overflow: hidden;
 }
 
@@ -220,7 +223,7 @@ a {
   --el-table-border-color: rgba(31, 46, 77, 0.08);
   --el-table-header-bg-color: #f5f8ff;
   --el-table-row-hover-bg-color: rgba(31, 111, 235, 0.05);
-  border-radius: 16px;
+  border-radius: 10px;
   overflow: hidden;
   width: 100%;
   max-width: 100%;
@@ -257,13 +260,19 @@ a {
 .responsive-two {
   display: grid;
   grid-template-columns: minmax(0, 1.65fr) minmax(300px, 0.95fr);
-  gap: 18px;
+  gap: 16px;
 }
 
 .responsive-three {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
+}
+
+.el-button,
+.el-input__wrapper,
+.el-select__wrapper {
+  transition: all var(--motion-fast);
 }
 
 .el-button--primary {
@@ -298,7 +307,7 @@ a {
 .el-select__wrapper,
 .el-input-number,
 .el-date-editor.el-input__wrapper {
-  border-radius: 14px;
+  border-radius: 10px;
 }
 
 .el-card {
@@ -313,7 +322,7 @@ a {
 
 .el-dialog,
 .el-drawer {
-  border-radius: 24px 24px 0 0;
+  border-radius: 10px 10px 0 0;
 }
 
 .el-tag {

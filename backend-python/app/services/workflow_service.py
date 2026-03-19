@@ -85,32 +85,27 @@ class WorkflowService:
                 business_context={"parsed_constraints": parsed_constraints},
             )
 
-            data_result = await decision_service.run_data_analysis(request_data)
+            data_result, market_result, risk_result, final_decision = await decision_service.run_full_decision(
+                request_data
+            )
+
             data_content = self.compose_data_agent_output(request_data, data_result)
             await self.stream_thought(task_id, self.DATA_ROLE, 1, data_content, product_id)
             self.save_or_update_agent_log(db, task_id, product_id, self.DATA_ROLE, 1, data_content)
 
-            market_result = await decision_service.run_market_intel(request_data)
             market_content = self.compose_market_agent_output(request_data, market_result)
             await self.stream_thought(task_id, self.MARKET_ROLE, 2, market_content, product_id)
             self.save_or_update_agent_log(db, task_id, product_id, self.MARKET_ROLE, 2, market_content)
 
-            risk_result = await decision_service.run_risk_control(request_data)
             risk_content = self.compose_risk_agent_output(request_data, risk_result)
             await self.stream_thought(task_id, self.RISK_ROLE, 3, risk_content, product_id)
             self.save_or_update_agent_log(db, task_id, product_id, self.RISK_ROLE, 3, risk_content)
 
-            final_decision = await decision_service.run_manager_decision(
-                request_data,
-                data_result=data_result,
-                market_result=market_result,
-                risk_result=risk_result,
-            )
             manager_content = self.compose_manager_agent_output(request_data.product.product_name, final_decision)
             await self.stream_thought(task_id, self.MANAGER_ROLE, 4, manager_content, product_id)
             self.save_or_update_agent_log(db, task_id, product_id, self.MANAGER_ROLE, 4, manager_content)
 
-            self.save_result(db, task_id, product_id, final_decision)
+            self.save_result(db, task_id, product_id, product, final_decision)
             await manager.broadcast(
                 json.dumps({"type": "result", "product_id": product_id, "data": final_decision.model_dump()}),
                 str(task_id),
@@ -147,23 +142,20 @@ class WorkflowService:
             db.rollback()
             logger.exception("Error saving log for role %s on task %s", role, task_id)
 
-    def save_result(self, db: Session, task_id: int, product_id: int, final_decision):
+    def save_result(self, db: Session, task_id: int, product_id: int, product: BizProduct, final_decision):
         try:
             existing_result = (
                 db.query(DecResult)
                 .filter(DecResult.task_id == task_id, DecResult.product_id == product_id)
                 .first()
             )
+            profit_change_amount = self.calculate_profit_change_amount(product, final_decision)
 
             if existing_result:
                 existing_result.decision = final_decision.decision
                 existing_result.discount_rate = final_decision.discount_rate
                 existing_result.suggested_price = final_decision.suggested_price
-                existing_result.profit_change = getattr(
-                    getattr(final_decision, "expected_outcomes", None),
-                    "profit_change",
-                    0.0,
-                )
+                existing_result.profit_change = profit_change_amount
                 existing_result.core_reasons = final_decision.core_reasons
             else:
                 db.add(
@@ -173,11 +165,7 @@ class WorkflowService:
                         decision=final_decision.decision,
                         discount_rate=final_decision.discount_rate,
                         suggested_price=final_decision.suggested_price,
-                        profit_change=getattr(
-                            getattr(final_decision, "expected_outcomes", None),
-                            "profit_change",
-                            0.0,
-                        ),
+                        profit_change=profit_change_amount,
                         core_reasons=final_decision.core_reasons,
                         is_accepted=False,
                     )
@@ -186,6 +174,16 @@ class WorkflowService:
         except Exception:
             db.rollback()
             logger.exception("Error saving result for task %s product %s", task_id, product_id)
+
+    def calculate_profit_change_amount(self, product: BizProduct, final_decision) -> float:
+        try:
+            current_price = float(product.current_price or 0.0)
+            suggested_price = float(getattr(final_decision, "suggested_price", current_price) or current_price)
+            # 按产品价差口径输出：建议价 - 原价
+            return round(suggested_price - current_price, 2)
+        except Exception:
+            logger.exception("Failed to calculate profit delta amount for product %s", product.id)
+            return 0.0
 
     async def stream_thought(self, task_id: int, role: str, step: int, content: str, product_id: int):
         timestamp = datetime.now().strftime("%H:%M:%S")

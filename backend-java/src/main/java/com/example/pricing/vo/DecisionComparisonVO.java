@@ -1,11 +1,15 @@
 package com.example.pricing.vo;
 
+import com.alibaba.excel.annotation.ExcelIgnore;
 import com.alibaba.excel.annotation.ExcelProperty;
 import lombok.Data;
 import java.math.BigDecimal;
 
 @Data
 public class DecisionComparisonVO {
+    @ExcelIgnore
+    private Long resultId;
+
     @ExcelProperty("商品ID")
     private Long productId;
     
@@ -23,6 +27,9 @@ public class DecisionComparisonVO {
     
     @ExcelProperty("新预估利润")
     private BigDecimal newProfit;
+
+    @ExcelProperty("预计利润变化")
+    private BigDecimal profitChange;
 
     @ExcelProperty("折扣率")
     private BigDecimal discountRate;

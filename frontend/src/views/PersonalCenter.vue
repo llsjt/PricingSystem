@@ -7,7 +7,6 @@
           <h2>{{ username }}</h2>
           <div class="profile-tags">
             <el-tag :type="isAdmin ? 'danger' : 'success'">{{ isAdmin ? '管理员' : '普通用户' }}</el-tag>
-            <el-tag type="info">在线</el-tag>
           </div>
         </div>
       </div>

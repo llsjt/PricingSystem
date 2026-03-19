@@ -27,3 +27,7 @@ export const getTaskResult = (taskId: number) => {
 export const getTaskLogs = (taskId: number) => {
   return request.get(`/decision/logs/${taskId}`)
 }
+
+export const applyDecision = (resultId: number) => {
+  return request.post(`/decision/apply/${resultId}`)
+}

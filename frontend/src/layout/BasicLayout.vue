@@ -28,6 +28,8 @@ const username = ref(localStorage.getItem('username') || 'User')
 const isSidebarCollapsed = ref(false)
 const mobileMenuVisible = ref(false)
 const isMobile = ref(false)
+const appName = '智能定价平台'
+const appSubtitle = '多 Agent 协同工作台'
 
 const navItems: NavItem[] = [
   {
@@ -51,7 +53,7 @@ const navItems: NavItem[] = [
   {
     path: '/profile',
     title: '个人中心',
-    desc: '查看个人信息与账号状态',
+    desc: '查看个人信息与账号管理',
     icon: UserFilled
   },
   {
@@ -147,6 +149,15 @@ onBeforeUnmount(() => {
         <el-icon><Close /></el-icon>
       </el-button>
 
+      <div class="sidebar-brand">
+        <transition name="fade-slide">
+          <div v-if="!isSidebarCollapsed || isMobile" class="brand-copy">
+            <strong>{{ appName }}</strong>
+            <span>{{ appSubtitle }}</span>
+          </div>
+        </transition>
+      </div>
+
       <nav class="nav-list">
         <button
           v-for="item in visibleNavItems"
@@ -175,11 +186,6 @@ onBeforeUnmount(() => {
             <el-icon><Menu /></el-icon>
           </el-button>
           <div class="page-meta">
-            <div class="crumb-line">
-              <span>首页</span>
-              <span>/</span>
-              <span>{{ pageTitle }}</span>
-            </div>
             <h1>{{ pageTitle }}</h1>
             <p>{{ pageDesc }}</p>
           </div>
@@ -229,16 +235,18 @@ onBeforeUnmount(() => {
   top: 0;
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  width: 260px;
-  min-width: 260px;
+  gap: 18px;
+  width: 286px;
+  min-width: 286px;
   height: auto;
   min-height: 100vh;
-  padding: 24px 18px 18px;
-  background: linear-gradient(180deg, #2f5f93 0%, #3b72a7 52%, #4a82b0 100%);
-  border-right: 1px solid rgba(255, 255, 255, 0.14);
-  box-shadow: 20px 0 40px rgba(34, 70, 110, 0.14);
-  transition: width 0.28s ease, min-width 0.28s ease, transform 0.28s ease;
+  padding: 18px 16px 16px;
+  background:
+    radial-gradient(circle at 18% 10%, rgba(109, 170, 238, 0.18), transparent 36%),
+    linear-gradient(180deg, #162b45 0%, #1b3757 52%, #1f3f63 100%);
+  border-right: 1px solid rgba(156, 197, 241, 0.22);
+  box-shadow: 18px 0 40px rgba(11, 28, 47, 0.32);
+  transition: width 0.2s ease-in-out, min-width 0.2s ease-in-out, transform 0.2s ease-in-out;
   z-index: 20;
 }
 
@@ -252,48 +260,126 @@ onBeforeUnmount(() => {
   color: #fff;
 }
 
+.sidebar-brand {
+  display: block;
+  padding: 8px 8px 18px;
+  border-bottom: 1px solid rgba(198, 226, 255, 0.24);
+}
+
+.brand-copy {
+  position: relative;
+  display: grid;
+  gap: 8px;
+  padding: 16px 14px 14px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(88, 180, 255, 0.5), rgba(57, 124, 220, 0.4));
+  border: 1px solid rgba(201, 234, 255, 0.56);
+  backdrop-filter: blur(10px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -1px 0 rgba(9, 40, 82, 0.2),
+    0 14px 30px rgba(8, 32, 60, 0.28);
+}
+
+.brand-copy::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 0;
+  height: 45%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(235, 249, 255, 0.34), rgba(235, 249, 255, 0));
+  filter: blur(0.2px);
+  pointer-events: none;
+}
+
+.brand-copy strong {
+  display: block;
+  font-size: 34px;
+  line-height: 1.02;
+  color: #f6fcff;
+  font-weight: 700;
+  letter-spacing: 0.005em;
+  text-shadow:
+    0 2px 12px rgba(8, 30, 54, 0.3),
+    0 0 0.8px rgba(228, 248, 255, 0.8);
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  position: relative;
+  z-index: 1;
+}
+
+.brand-copy span {
+  font-size: 13px;
+  color: rgba(238, 249, 255, 0.94);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  position: relative;
+  z-index: 1;
+}
+
+.sidebar.collapsed .sidebar-brand {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
 .nav-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  padding-top: 2px;
 }
 
 .nav-item {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 14px;
+  gap: 12px;
+  padding: 10px 12px;
   border: 0;
-  border-radius: 20px;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.84);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(238, 246, 255, 0.86);
   cursor: pointer;
-  transition: transform 0.18s ease, background 0.18s ease, color 0.18s ease;
+  transition: transform 0.2s ease-in-out, background 0.2s ease-in-out, color 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
   text-align: left;
 }
 
 .nav-item:hover {
   transform: translateX(2px);
-  background: rgba(255, 255, 255, 0.12);
+  background: linear-gradient(90deg, rgba(116, 184, 249, 0.36), rgba(83, 147, 226, 0.26));
   color: #fff;
+  box-shadow: 0 8px 16px rgba(8, 30, 54, 0.24);
 }
 
 .nav-item.active {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.26), rgba(105, 171, 227, 0.32));
-  color: #fff;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  background: linear-gradient(90deg, rgba(160, 218, 255, 0.48), rgba(122, 183, 247, 0.34));
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(220, 242, 255, 0.58), 0 10px 18px rgba(8, 30, 54, 0.24);
 }
 
 .nav-icon {
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
   display: grid;
   place-items: center;
-  background: rgba(255, 255, 255, 0.18);
-  font-size: 18px;
+  background: rgba(255, 255, 255, 0.16);
+  font-size: 17px;
   flex-shrink: 0;
+  transition: transform 0.2s ease-in-out, background 0.2s ease-in-out;
+}
+
+.nav-item:hover .nav-icon,
+.nav-item.active .nav-icon {
+  transform: scale(1.03);
+  background: rgba(226, 244, 255, 0.34);
 }
 
 .nav-copy {
@@ -322,10 +408,10 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 20px;
-  padding: 18px 28px;
+  gap: 16px;
+  padding: 16px 24px;
   backdrop-filter: blur(14px);
-  background: rgba(248, 251, 255, 0.86);
+  background: linear-gradient(90deg, rgba(249, 252, 255, 0.9), rgba(246, 250, 255, 0.86));
   border-bottom: 1px solid rgba(14, 30, 37, 0.07);
 }
 
@@ -344,15 +430,7 @@ onBeforeUnmount(() => {
 
 .page-meta {
   display: grid;
-  gap: 4px;
-}
-
-.crumb-line {
-  display: flex;
-  align-items: center;
   gap: 8px;
-  font-size: 13px;
-  color: var(--text-3);
 }
 
 .page-meta h1 {
@@ -363,8 +441,15 @@ onBeforeUnmount(() => {
 
 .page-meta p {
   margin: 0;
-  color: var(--text-2);
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 10px;
+  border-radius: 8px;
+  color: #35577c;
+  background: rgba(31, 111, 235, 0.1);
+  border: 1px solid rgba(31, 111, 235, 0.15);
   font-size: 14px;
+  font-weight: 500;
 }
 
 .user-entry {
@@ -396,7 +481,7 @@ onBeforeUnmount(() => {
 }
 
 .content-shell {
-  padding: 22px 28px 34px;
+  padding: 24px 24px 32px;
   overflow-x: hidden;
 }
 
@@ -418,7 +503,7 @@ onBeforeUnmount(() => {
 .fade-mask-leave-active,
 .fade-slide-enter-active,
 .fade-slide-leave-active {
-  transition: all 0.24s ease;
+  transition: all 0.2s ease-in-out;
 }
 
 .fade-mask-enter-from,
@@ -437,8 +522,8 @@ onBeforeUnmount(() => {
     position: fixed;
     inset: 0 auto 0 0;
     transform: translateX(-100%);
-    width: min(76vw, 288px);
-    min-width: min(76vw, 288px);
+    width: min(82vw, 330px);
+    min-width: min(82vw, 330px);
     height: 100vh;
     min-height: 100vh;
   }
@@ -475,12 +560,6 @@ onBeforeUnmount(() => {
 
   .page-meta {
     min-width: 0;
-  }
-
-  .crumb-line {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 
   .page-meta h1 {

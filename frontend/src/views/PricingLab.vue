@@ -1,29 +1,5 @@
 <template>
   <div class="page-shell pricing-page">
-    <section class="panel-card intro-panel">
-      <div class="section-title">
-        <h2>智能定价任务</h2>
-        <p>按步骤配置商品、策略目标和约束条件，实时查看多 Agent 协同分析和最终报告。</p>
-      </div>
-      <div class="metric-grid compact-metrics">
-        <article class="metric-card">
-          <div class="metric-label">当前阶段</div>
-          <div class="metric-value small">{{ currentStepLabel }}</div>
-          <div class="metric-hint">流程会随着任务推进自动切换</div>
-        </article>
-        <article class="metric-card">
-          <div class="metric-label">已选商品</div>
-          <div class="metric-value">{{ taskConfig.productIds.length }}</div>
-          <div class="metric-hint">支持多商品批量发起决策</div>
-        </article>
-        <article class="metric-card">
-          <div class="metric-label">执行状态</div>
-          <div class="metric-value small">{{ socketStatusText }}</div>
-          <div class="metric-hint">实时流式输出和历史日志双通路兜底</div>
-        </article>
-      </div>
-    </section>
-
     <section class="panel-card step-panel">
       <div class="section-head">
         <div class="section-title">
@@ -264,7 +240,16 @@
           <el-table-column prop="coreReasons" label="核心依据" min-width="360" show-overflow-tooltip />
           <el-table-column label="操作" width="120">
             <template #default="{ row }">
-              <el-button type="primary" link @click="acceptPrice(row)">应用建议</el-button>
+              <el-tag v-if="row.adoptStatus === 'ADOPTED'" type="success">已应用</el-tag>
+              <el-button
+                v-else
+                type="primary"
+                link
+                :loading="applyingResultIds.includes(Number(row.id))"
+                @click="acceptPrice(row)"
+              >
+                应用建议
+              </el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -275,8 +260,8 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { getTaskLogs, getTaskResult, startDecisionTask } from '../api/decision'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { applyDecision, getTaskLogs, getTaskResult, startDecisionTask } from '../api/decision'
 import { getProductList } from '../api/product'
 
 interface ProductOption {
@@ -325,17 +310,12 @@ const chatBoxRef = ref<HTMLDivElement>()
 const progress = ref(0)
 const currentTaskId = ref<number | null>(null)
 const resultList = ref<any[]>([])
+const applyingResultIds = ref<number[]>([])
 
 const stepBarActive = computed(() => {
   if (activeStep.value === 2) return 3
   if (activeStep.value === 1) return 2
   return 1
-})
-
-const currentStepLabel = computed(() => {
-  if (activeStep.value === 2) return '结果报告'
-  if (activeStep.value === 1) return '智能决策'
-  return '配置任务'
 })
 
 const strategyGoalText = computed(() => {
@@ -713,7 +693,10 @@ const viewResult = async () => {
   try {
     const res: any = await getTaskResult(currentTaskId.value)
     if (res.code === 200) {
-      resultList.value = res.data
+      resultList.value = (res.data || []).map((item: any) => ({
+        ...item,
+        adoptStatus: item.adoptStatus || (item.isAccepted ? 'ADOPTED' : 'PENDING')
+      }))
       activeStep.value = 2
       stopLogSync()
     }
@@ -722,9 +705,43 @@ const viewResult = async () => {
   }
 }
 
-const acceptPrice = (row: any) => {
-  ElMessage.success(`已应用建议价格：${row.suggestedPrice}`)
-  row.isAccepted = true
+const acceptPrice = async (row: any) => {
+  const resultId = Number(row.id || 0)
+  const productName = row.productTitle || row.title || `ID ${row.productId}`
+  if (!resultId) {
+    ElMessage.error('未找到可应用的结果记录')
+    return
+  }
+  if (applyingResultIds.value.includes(resultId)) {
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确认将商品“${productName}”的售价更新为 ${Number(row.suggestedPrice || 0).toFixed(2)} 吗？`,
+      '应用价格建议',
+      {
+        type: 'warning',
+        confirmButtonText: '确认应用',
+        cancelButtonText: '取消'
+      }
+    )
+    applyingResultIds.value.push(resultId)
+    const res: any = await applyDecision(resultId)
+    if (res.code === 200) {
+      row.isAccepted = true
+      row.adoptStatus = 'ADOPTED'
+      ElMessage.success(`已应用建议价格：${row.suggestedPrice}`)
+      return
+    }
+    ElMessage.error(res.message || '应用失败')
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      ElMessage.error('应用失败')
+    }
+  } finally {
+    applyingResultIds.value = applyingResultIds.value.filter((id) => id !== resultId)
+  }
 }
 
 const resetToConfig = () => {
@@ -747,7 +764,6 @@ onUnmounted(() => {
   gap: 14px;
 }
 
-.intro-panel,
 .step-panel,
 .config-panel,
 .helper-panel,
@@ -769,28 +785,13 @@ onUnmounted(() => {
   padding-top: 0;
 }
 
-.intro-panel,
 .step-panel {
   padding: 14px 16px;
 }
 
-.intro-panel .section-title p,
 .step-panel .section-title p {
   font-size: 12px;
   line-height: 1.5;
-}
-
-.intro-panel .metric-card {
-  padding: 14px 16px;
-}
-
-.intro-panel .metric-value {
-  margin-top: 6px;
-  font-size: 20px;
-}
-
-.intro-panel .metric-hint {
-  display: none;
 }
 
 .step-panel .section-head {
@@ -844,7 +845,7 @@ onUnmounted(() => {
   display: grid;
   gap: 6px;
   padding: 16px;
-  border-radius: 18px;
+  border-radius: 10px;
   background: var(--surface-2);
   border: 1px solid var(--line-soft);
 }
@@ -864,7 +865,7 @@ onUnmounted(() => {
   display: grid;
   gap: 10px;
   padding: 18px;
-  border-radius: 18px;
+  border-radius: 10px;
   background: linear-gradient(180deg, rgba(15, 123, 108, 0.08), rgba(255, 255, 255, 0.9));
   border: 1px solid rgba(15, 123, 108, 0.12);
 }
@@ -899,7 +900,7 @@ onUnmounted(() => {
   display: flex;
   gap: 14px;
   padding: 16px;
-  border-radius: 20px;
+  border-radius: 10px;
   background: #fff;
   border: 1px solid var(--line-soft);
 }
@@ -907,7 +908,7 @@ onUnmounted(() => {
 .message-avatar {
   width: 54px;
   height: 54px;
-  border-radius: 18px;
+  border-radius: 10px;
   display: grid;
   place-items: center;
   color: #fff;
@@ -977,7 +978,7 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 12px 14px;
-  border-radius: 16px;
+  border-radius: 10px;
   background: var(--surface-2);
 }
 
@@ -1001,7 +1002,6 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
-  .intro-panel,
   .step-panel,
   .config-panel,
   .helper-panel,

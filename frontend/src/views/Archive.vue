@@ -194,8 +194,8 @@
                 </el-table-column>
                 <el-table-column label="利润变化" min-width="140">
                   <template #default="{ row }">
-                    <span :class="Number(row.newProfit || 0) >= Number(row.originalProfit || 0) ? 'up' : 'down'">
-                      {{ formatCurrency(Number(row.newProfit || 0) - Number(row.originalProfit || 0)) }}
+                    <span :class="Number(row.profitChange || 0) >= 0 ? 'up' : 'down'">
+                      {{ formatCurrency(Number(row.profitChange || 0)) }}
                     </span>
                   </template>
                 </el-table-column>
@@ -343,8 +343,8 @@ const strategyOptions = [
   { label: '市场份额优先', value: 'MARKET_SHARE' }
 ]
 
-const completedCount = computed(() => tasks.value.filter((item) => item.status === 'COMPLETED').length)
-const runningCount = computed(() => tasks.value.filter((item) => item.status === 'RUNNING').length)
+const completedCount = ref(0)
+const runningCount = ref(0)
 const drawerSize = computed(() => (viewportWidth.value < 900 ? '100%' : '78%'))
 
 const averageDiscountRate = computed(() => {
@@ -355,9 +355,7 @@ const averageDiscountRate = computed(() => {
 
 const averageProfitDelta = computed(() => {
   if (!comparisonData.value.length) return '--'
-  const delta = comparisonData.value.reduce((sum, item) => {
-    return sum + Number(item.newProfit || 0) - Number(item.originalProfit || 0)
-  }, 0)
+  const delta = comparisonData.value.reduce((sum, item) => sum + Number(item.profitChange || 0), 0)
   return formatCurrency(delta / comparisonData.value.length)
 })
 
@@ -418,6 +416,7 @@ const fetchTasks = async () => {
     if (res.code === 200) {
       tasks.value = res.data.records || []
       total.value = res.data.total || 0
+      await fetchTaskStats()
       return
     }
     ElMessage.error(res.message || '获取任务列表失败')
@@ -425,6 +424,24 @@ const fetchTasks = async () => {
     ElMessage.error('获取任务列表失败')
   } finally {
     loading.value = false
+  }
+}
+
+const fetchTaskStats = async () => {
+  try {
+    const params = {
+      strategyType: queryParams.strategyType,
+      startTime: queryParams.startTime,
+      endTime: queryParams.endTime
+    }
+    const res: any = await request.get('/decision/tasks/stats', { params })
+    if (res.code === 200) {
+      completedCount.value = Number(res.data?.completed || 0)
+      runningCount.value = Number(res.data?.running || 0)
+    }
+  } catch {
+    completedCount.value = tasks.value.filter((item) => item.status === 'COMPLETED').length
+    runningCount.value = tasks.value.filter((item) => item.status === 'RUNNING').length
   }
 }
 
@@ -475,12 +492,12 @@ const fetchLogs = async () => {
 }
 
 const getResultId = (productId: number) => {
-  const result = originalResults.value.find((item) => item.productId === productId)
+  const result = originalResults.value.find((item) => Number(item.productId) === Number(productId))
   return result ? result.id : null
 }
 
 const applyPrice = async (row: any) => {
-  const resultId = getResultId(row.productId)
+  const resultId = Number(row.resultId || getResultId(row.productId))
   if (!resultId) {
     ElMessage.error('未找到对应结果记录')
     return
@@ -520,7 +537,7 @@ const openRejectDialog = (row: any) => {
 const submitReject = async () => {
   if (!currentRejectRow.value) return
 
-  const resultId = getResultId(currentRejectRow.value.productId)
+  const resultId = Number(currentRejectRow.value.resultId || getResultId(currentRejectRow.value.productId))
   if (!resultId) {
     ElMessage.error('未找到对应结果记录')
     return
@@ -635,6 +652,7 @@ onBeforeUnmount(() => {
 
 .archive-hero .section-title {
   gap: 4px;
+  margin-bottom: 10px;
 }
 
 .archive-hero .section-title p {
@@ -707,7 +725,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 8px;
   padding: 14px 16px;
-  border-radius: 18px;
+  border-radius: 10px;
   background: var(--panel-muted);
   color: var(--text-secondary);
 }
@@ -745,7 +763,7 @@ onBeforeUnmount(() => {
 
 .log-card {
   padding: 18px 20px;
-  border-radius: 20px;
+  border-radius: 10px;
   border: 1px solid var(--border-soft);
   background: linear-gradient(180deg, rgba(247, 250, 255, 0.96), #ffffff);
 }

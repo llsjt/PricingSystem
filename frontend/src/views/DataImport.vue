@@ -184,7 +184,7 @@ const handleDownloadTemplate = async () => {
   --el-button-active-border-color: #1558b5;
   height: 40px;
   padding: 0 16px;
-  border-radius: 12px;
+  border-radius: 10px;
   font-weight: 700;
   box-shadow: 0 8px 20px rgba(31, 111, 235, 0.28);
 }
@@ -214,7 +214,7 @@ const handleDownloadTemplate = async () => {
 .upload-box :deep(.el-upload-dragger) {
   width: 100%;
   min-height: 200px;
-  border-radius: 20px;
+  border-radius: 10px;
   padding: 32px 18px;
   border: 1px dashed rgba(31, 111, 235, 0.28);
   background: linear-gradient(180deg, rgba(31, 111, 235, 0.04), rgba(255, 159, 67, 0.05));
@@ -246,7 +246,7 @@ const handleDownloadTemplate = async () => {
   display: grid;
   gap: 8px;
   padding: 18px 20px;
-  border-radius: 18px;
+  border-radius: 10px;
   background: linear-gradient(180deg, rgba(31, 111, 235, 0.08), rgba(255, 255, 255, 0.95));
   border: 1px solid rgba(31, 111, 235, 0.12);
 }
