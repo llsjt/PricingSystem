@@ -208,7 +208,7 @@
           <div class="metric-hint">便于快速评估策略区间</div>
         </article>
         <article class="metric-card">
-          <div class="metric-label">平均利润变化</div>
+          <div class="metric-label">预计利润变化</div>
           <div class="metric-value">{{ averageProfitChange }}</div>
           <div class="metric-hint">正值说明利润改善预期更高</div>
         </article>
@@ -239,7 +239,11 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="coreReasons" label="核心依据" min-width="360" show-overflow-tooltip />
+          <el-table-column label="核心依据" min-width="360" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span>{{ formatCoreReasons(row.coreReasons) }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="操作" width="120">
             <template #default="{ row }">
               <el-tag v-if="row.adoptStatus === 'ADOPTED'" type="success">已应用</el-tag>
@@ -263,7 +267,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { applyDecision, getTaskLogs, getTaskResult, startDecisionTask } from '../api/decision'
+import { applyDecision, getTaskComparison, getTaskLogs, getTaskResult, startDecisionTask } from '../api/decision'
 import { getProductList } from '../api/product'
 
 interface ProductOption {
@@ -368,6 +372,34 @@ const averageProfitChange = computed(() => {
   const totalChange = resultList.value.reduce((sum, item) => sum + Number(item.profitChange || 0), 0)
   return (totalChange / resultList.value.length).toFixed(2)
 })
+
+const coreReasonDictionary: Array<[RegExp, string]> = [
+  [/strategy target=/gi, '策略目标：'],
+  [/策略目标=/g, '策略目标：'],
+  [/data advice=/gi, '数据建议：'],
+  [/数据建议=/g, '数据建议：'],
+  [/market advice=/gi, '市场建议：'],
+  [/市场建议=/g, '市场建议：'],
+  [/risk advice=/gi, '风险建议：'],
+  [/风险建议=/g, '风险建议：'],
+  [/overall suggestion=/gi, '综合建议：'],
+  [/综合建议=/g, '综合建议：'],
+  [/core factors=/gi, '核心因素：'],
+  [/核心因子=/g, '核心因素：'],
+  [/confidence=/gi, '可信度：'],
+  [/\bMAX_PROFIT\b/g, '利润优先'],
+  [/\bCLEARANCE\b/g, '清仓促销'],
+  [/\bMARKET_SHARE\b/g, '市场份额优先'],
+  [/\bmaintain\b/g, '维持当前价格'],
+  [/\bdiscount\b/g, '建议降价'],
+  [/\bincrease\b/g, '建议提价'],
+  [/\braise\b/g, '建议提价'],
+  [/\bconservative\b/g, '保守调整'],
+  [/\baggressive\b/g, '积极调整'],
+  [/\blow\b/g, '低'],
+  [/\bmedium\b/g, '中'],
+  [/\bhigh\b/g, '高']
+]
 
 let socket: WebSocket | null = null
 let logSyncTimer: number | null = null
@@ -699,19 +731,51 @@ const getAgentAvatar = (role: string) => {
 
 const formatContent = (content: string) => (content ? content.replace(/\n/g, '<br>') : '')
 
+const formatCoreReasons = (content?: string) => {
+  if (!content) return '-'
+  let text = content
+  for (const [pattern, replacement] of coreReasonDictionary) {
+    text = text.replace(pattern, replacement)
+  }
+  return text
+}
+
 const viewResult = async () => {
   if (!currentTaskId.value) return
 
   try {
-    const res: any = await getTaskResult(currentTaskId.value)
-    if (res.code === 200) {
-      resultList.value = (res.data || []).map((item: any) => ({
-        ...item,
-        adoptStatus: item.adoptStatus || (item.isAccepted ? 'ADOPTED' : 'PENDING')
-      }))
-      activeStep.value = 2
-      stopLogSync()
+    const [resultRes, comparisonRes]: any = await Promise.all([
+      getTaskResult(currentTaskId.value),
+      getTaskComparison(currentTaskId.value)
+    ])
+    if (resultRes.code !== 200) {
+      ElMessage.error(resultRes.message || '获取结果报告失败')
+      return
     }
+
+    const comparisonProfitMap = new Map<number, number>()
+    if (comparisonRes.code === 200 && Array.isArray(comparisonRes.data)) {
+      for (const item of comparisonRes.data) {
+        const productId = Number(item?.productId || 0)
+        if (!productId) continue
+        comparisonProfitMap.set(productId, Number(item?.profitChange || 0))
+      }
+    }
+
+    resultList.value = (resultRes.data || []).map((item: any) => {
+      const productId = Number(item?.productId || 0)
+      const profitChange = comparisonProfitMap.has(productId)
+        ? Number(comparisonProfitMap.get(productId))
+        : Number(item?.profitChange || 0)
+
+      return {
+        ...item,
+        profitChange,
+        adoptStatus: item.adoptStatus || (item.isAccepted ? 'ADOPTED' : 'PENDING')
+      }
+    })
+    activeStep.value = 2
+    stopLogSync()
   } catch {
     ElMessage.error('获取结果报告失败')
   }

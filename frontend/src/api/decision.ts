@@ -24,6 +24,10 @@ export const getTaskResult = (taskId: number) => {
   return request.get(`/decision/result/${taskId}`)
 }
 
+export const getTaskComparison = (taskId: number) => {
+  return request.get(`/decision/comparison/${taskId}`)
+}
+
 export const getTaskLogs = (taskId: number) => {
   return request.get(`/decision/logs/${taskId}`)
 }
