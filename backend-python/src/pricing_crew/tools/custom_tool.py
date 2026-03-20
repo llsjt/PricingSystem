@@ -1,28 +1,20 @@
-"""CrewAI 工具模块，负责数据库取数、淘宝竞品抓取与业务计算。"""
+"""CrewAI 工具模块，负责数据库取数、模拟竞品市场情报与业务计算。"""
 
 from __future__ import annotations
 
+import hashlib
 import json
-import os
+import random
 import re
-import subprocess
-import sys
 from datetime import datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 from statistics import mean
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 from sqlalchemy import inspect
 
-try:
-    from crewai_tools import ScrapeWebsiteTool
-except Exception:  # pragma: no cover - dependency can be optional in some envs
-    ScrapeWebsiteTool = None
-
-from pricing_crew.crawlers.taobao_web_crawler import TaobaoCrawlerBlockedError, taobao_crawler
 from pricing_crew.db.database import SessionLocal
 from pricing_crew.db.models import BizProduct, BizPromotionHistory, BizSalesDaily
 
@@ -46,165 +38,95 @@ def _safe_mean(values: List[float]) -> float:
     return float(mean(clean))
 
 
-def _run_taobao_fetch_subprocess(keyword: str, limit: int) -> Dict[str, Any]:
-    project_root = Path(__file__).resolve().parents[3]
-    env = os.environ.copy()
-    source_path = str(project_root / "src")
-    existing_pythonpath = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = source_path if not existing_pythonpath else f"{source_path}{os.pathsep}{existing_pythonpath}"
+def _stable_seed(text: str) -> int:
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return int(digest[:16], 16)
 
-    completed = subprocess.run(
-        [sys.executable, "-m", "pricing_crew.crawlers.taobao_runner", keyword, str(limit)],
-        cwd=str(project_root),
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=35,
-        check=False,
-    )
-    payload_text = (completed.stdout or "").strip()
-    if not payload_text:
-        warning = (completed.stderr or "").strip() or "淘宝抓取子进程没有返回内容。"
-        return {
-            "success": False,
-            "blocked": False,
-            "source": "taobao_live",
-            "keyword": keyword,
-            "warnings": [warning],
-            "competitors": [],
-        }
-    try:
-        payload = json.loads(payload_text)
-    except json.JSONDecodeError:
-        warning = payload_text if len(payload_text) <= 200 else payload_text[:200]
-        return {
-            "success": False,
-            "blocked": False,
-            "source": "taobao_live",
-            "keyword": keyword,
-            "warnings": [f"淘宝抓取返回无法解析：{warning}"],
-            "competitors": [],
-        }
-    if isinstance(payload, dict):
-        return payload
-    return {
-        "success": False,
-        "blocked": False,
-        "source": "taobao_live",
-        "keyword": keyword,
-        "warnings": ["淘宝抓取返回格式异常。"],
-        "competitors": [],
+
+def _category_base_price(category: str) -> float:
+    mapping = {
+        "数码配件": 129.0,
+        "家居用品": 89.0,
+        "户外服饰": 159.0,
+        "玩具": 69.0,
+        "食品": 49.0,
     }
+    return float(mapping.get(str(category or "").strip(), 99.0))
 
 
-def _extract_competitors_from_scraped_text(keyword: str, content: str, limit: int) -> List[Dict[str, Any]]:
+def _simulate_market_competitors(keyword: str, category: str, limit: int) -> List[Dict[str, Any]]:
+    keyword_text = str(keyword or "").strip() or "同类商品"
+    normalized_limit = max(1, min(int(limit or 8), 20))
+    seed = _stable_seed(f"{keyword_text}|{category}|{normalized_limit}")
+    rng = random.Random(seed)
+
+    shop_profiles = [
+        ("品牌旗舰店", "tmall", True),
+        ("官方专营店", "tmall", False),
+        ("企业店", "taobao", False),
+        ("实力商家", "taobao", False),
+        ("精选店铺", "taobao", False),
+    ]
+    promo_pool = ["限时折扣", "满减", "店铺券", "包邮", "会员价", "新品特惠"]
+    location_pool = ["杭州", "广州", "深圳", "义乌", "上海", "苏州"]
+
+    base_price = _category_base_price(category)
+    base_price *= 0.92 + min(len(keyword_text), 12) * 0.01
+    now_iso = datetime.utcnow().isoformat()
+
     competitors: List[Dict[str, Any]] = []
-    seen: set[str] = set()
+    for idx in range(normalized_limit):
+        ladder = 0.82 + idx * 0.05
+        noise = rng.uniform(-0.04, 0.06)
+        current_price = round(max(5.9, base_price * (ladder + noise)), 2)
+        original_price = round(current_price * rng.uniform(1.05, 1.22), 2)
+        sales_volume = max(15, int(rng.gauss(260 - idx * 16, 42)))
+        rating = round(min(5.0, max(4.1, rng.gauss(4.65, 0.15))), 1)
+        review_count = max(20, int(abs(rng.gauss(520 - idx * 30, 120))))
+        shop_name, shop_type, is_self_operated = shop_profiles[idx % len(shop_profiles)]
+        promotion_tags: List[str] = []
+        if rng.random() < 0.75:
+            promotion_tags.append(rng.choice(promo_pool))
+        if rng.random() < 0.25:
+            extra = rng.choice(promo_pool)
+            if extra not in promotion_tags:
+                promotion_tags.append(extra)
 
-    json_like_pattern = re.compile(
-        r'"title"\s*:\s*"(?P<title>[^"]{2,120})".{0,220}?"(?:view_price|price)"\s*:\s*"?(?P<price>\d+(?:\.\d{1,2})?)"?',
-        re.S,
-    )
-    for match in json_like_pattern.finditer(content):
-        title = match.group("title").strip()
-        price = float(match.group("price"))
-        dedup = f"{title}|{price:.2f}"
-        if dedup in seen:
-            continue
-        seen.add(dedup)
         competitors.append(
             {
-                "competitor_id": f"SCRAPE_{len(competitors) + 1}",
-                "product_name": title[:120],
-                "current_price": round(price, 2),
-                "original_price": None,
-                "sales_volume": 0,
-                "rating": 0.0,
-                "review_count": 0,
-                "shop_name": "淘宝抓取兜底",
-                "shop_type": "taobao",
-                "is_self_operated": False,
-                "promotion_tags": ["scrape_fallback"],
-                "product_url": f"https://s.taobao.com/search?q={keyword}",
+                "competitor_id": f"SIM_{idx + 1}",
+                "product_name": f"{keyword_text} 同款竞品 {idx + 1}",
+                "current_price": current_price,
+                "original_price": original_price,
+                "sales_volume": sales_volume,
+                "rating": rating,
+                "review_count": review_count,
+                "shop_name": shop_name,
+                "shop_type": shop_type,
+                "is_self_operated": is_self_operated,
+                "promotion_tags": promotion_tags,
+                "product_url": f"https://simulated.market.local/item/{idx + 1}?q={keyword_text}",
                 "image_url": None,
-                "location": "CN",
-                "crawl_time": datetime.utcnow().isoformat(),
+                "location": location_pool[idx % len(location_pool)],
+                "crawl_time": now_iso,
             }
         )
-        if len(competitors) >= limit:
-            return competitors
-
-    fuzzy_pattern = re.compile(
-        r"(?P<title>[^\n]{0,24}" + re.escape(keyword[:8]) + r"[^\n]{0,48})[^\d]{0,8}(?:¥|￥)?\s*(?P<price>\d+(?:\.\d{1,2})?)",
-        re.I,
-    )
-    for match in fuzzy_pattern.finditer(content):
-        title = re.sub(r"\s+", " ", match.group("title")).strip(" -:：|")
-        if len(title) < 2:
-            continue
-        price = float(match.group("price"))
-        dedup = f"{title}|{price:.2f}"
-        if dedup in seen:
-            continue
-        seen.add(dedup)
-        competitors.append(
-            {
-                "competitor_id": f"SCRAPE_{len(competitors) + 1}",
-                "product_name": title[:120],
-                "current_price": round(price, 2),
-                "original_price": None,
-                "sales_volume": 0,
-                "rating": 0.0,
-                "review_count": 0,
-                "shop_name": "淘宝抓取兜底",
-                "shop_type": "taobao",
-                "is_self_operated": False,
-                "promotion_tags": ["scrape_fallback"],
-                "product_url": f"https://s.taobao.com/search?q={keyword}",
-                "image_url": None,
-                "location": "CN",
-                "crawl_time": datetime.utcnow().isoformat(),
-            }
-        )
-        if len(competitors) >= limit:
-            break
     return competitors
 
 
-def _run_scrape_website_fallback(keyword: str, limit: int) -> Dict[str, Any]:
-    if ScrapeWebsiteTool is None:
-        return {
-            "success": False,
-            "blocked": False,
-            "source": "taobao_scrape_tool",
-            "keyword": keyword,
-            "warnings": ["crewai-tools 未安装，无法启用 ScrapeWebsiteTool 兜底抓取"],
-            "competitors": [],
-        }
-
-    search_url = f"https://s.taobao.com/search?q={keyword}"
-    try:
-        tool = ScrapeWebsiteTool(website_url=search_url)
-        text = str(tool.run() or "")
-        competitors = _extract_competitors_from_scraped_text(keyword=keyword, content=text, limit=limit)
-        return {
-            "success": bool(competitors),
-            "blocked": False,
-            "source": "taobao_scrape_tool",
-            "keyword": keyword,
-            "warnings": [] if competitors else ["ScrapeWebsiteTool 抓取成功但未抽取到有效竞品条目"],
-            "competitors": competitors,
-        }
-    except Exception as exc:
-        return {
-            "success": False,
-            "blocked": False,
-            "source": "taobao_scrape_tool",
-            "keyword": keyword,
-            "warnings": [f"ScrapeWebsiteTool 执行失败: {exc}"],
-            "competitors": [],
-        }
+def _build_simulated_market_payload(keyword: str, category: str, limit: int) -> Dict[str, Any]:
+    competitors = _dedupe_competitors(
+        _simulate_market_competitors(keyword=keyword, category=category, limit=limit),
+        limit=max(1, min(int(limit or 8), 20)),
+    )
+    return {
+        "success": bool(competitors),
+        "blocked": False,
+        "source": "simulated_market_dataset",
+        "keyword": str(keyword or "").strip(),
+        "warnings": ["当前市场情报使用模拟真实竞品数据，非线上实时爬取结果。"],
+        "competitors": competitors,
+    }
 
 
 def _keyword_variants(keyword: str) -> List[str]:
@@ -255,49 +177,6 @@ def _dedupe_competitors(competitors: List[Dict[str, Any]], limit: int) -> List[D
     return deduped
 
 
-def _build_synthetic_competitors(keyword: str, limit: int, category: str, seed_prices: List[float]) -> List[Dict[str, Any]]:
-    base = _safe_mean(seed_prices) if seed_prices else 59.9
-    base = max(9.9, float(base))
-    title_base = str(keyword or "").strip() or "同类商品"
-    now_iso = datetime.utcnow().isoformat()
-
-    synthetic: List[Dict[str, Any]] = []
-    for idx in range(limit):
-        factor = 0.92 + 0.03 * idx
-        price = round(base * factor, 2)
-        synthetic.append(
-            {
-                "competitor_id": f"SYN_{idx + 1}",
-                "product_name": f"{title_base} 竞品{idx + 1}",
-                "current_price": price,
-                "original_price": round(price * 1.08, 2),
-                "sales_volume": max(0, 120 - idx * 9),
-                "rating": 4.4,
-                "review_count": max(10, 240 - idx * 18),
-                "shop_name": "智能兜底样本",
-                "shop_type": "taobao",
-                "is_self_operated": False,
-                "promotion_tags": ["synthetic_fallback", category] if category else ["synthetic_fallback"],
-                "product_url": f"https://s.taobao.com/search?q={keyword}",
-                "image_url": None,
-                "location": "CN",
-                "crawl_time": now_iso,
-            }
-        )
-    return synthetic
-
-
-def _ensure_minimum_competitors(payload: Dict[str, Any], keyword: str, category: str, limit: int) -> Dict[str, Any]:
-    competitors = _dedupe_competitors(list(payload.get("competitors") or []), limit=limit)
-    if len(competitors) < limit:
-        seed_prices = [float(item["current_price"]) for item in competitors if isinstance(item.get("current_price"), (int, float, Decimal))]
-        missing = limit - len(competitors)
-        competitors.extend(_build_synthetic_competitors(keyword=keyword, category=category, limit=missing, seed_prices=seed_prices))
-    payload["competitors"] = competitors[:limit]
-    payload["success"] = bool(payload["competitors"])
-    return payload
-
-
 def _slice_sales(rows: List[BizSalesDaily], window: int) -> List[int]:
     values = [int(row.daily_sales or 0) for row in rows[-window:]]
     if len(values) < window:
@@ -337,9 +216,9 @@ class ProductIdInput(BaseModel):
 
 
 class MarketFetchInput(BaseModel):
-    keyword: str = Field(..., description="淘宝搜索关键词")
+    keyword: str = Field(..., description="市场情报关键词")
     category: str = Field(default="", description="商品类目")
-    limit: int = Field(default=8, ge=1, le=20, description="抓取竞品数量")
+    limit: int = Field(default=8, ge=1, le=20, description="模拟竞品数量")
 
 
 class PayloadJsonInput(BaseModel):
@@ -518,75 +397,18 @@ class DatabaseRiskContextTool(BaseTool):
 
 
 class TaobaoCompetitorFetchTool(BaseTool):
-    name: str = "taobao_competitor_fetch_tool"
-    description: str = "尝试从淘宝搜索页抓取实时竞品数据；若被风控拦截会明确返回失败原因"
+    name: str = "simulated_competitor_dataset_tool"
+    description: str = "使用模拟真实竞品数据生成市场情报样本，用于竞品分析与策略推演"
     args_schema: type[BaseModel] = MarketFetchInput
 
     def fetch_market(self, keyword: str, category: str = "", limit: int = 8) -> Dict[str, Any]:
-        keyword = str(keyword or "").strip()
-        variants = _keyword_variants(keyword) or [keyword]
-        warnings: List[str] = []
-
-        # 仅走子进程抓取，避免在服务主进程事件循环中触发 Windows asyncio 子进程兼容问题。
-        for kw in variants:
-            primary = _run_taobao_fetch_subprocess(keyword=kw, limit=limit)
-            warnings.extend(list(primary.get("warnings", [])))
-            if primary.get("success") and primary.get("competitors"):
-                primary["warnings"] = warnings
-                primary["keyword"] = keyword
-                return _ensure_minimum_competitors(primary, keyword=keyword, category=category, limit=limit)
-
-        guaranteed = {
-            "success": False,
-            "blocked": False,
-            "source": "synthetic_fallback",
-            "keyword": keyword,
-            "warnings": warnings + ["实时抓取全部失败，已启用结构化兜底竞品样本。"],
-            "competitors": [],
-        }
-        return _ensure_minimum_competitors(guaranteed, keyword=keyword, category=category, limit=limit)
-
-    def _run_direct(self, keyword: str, category: str = "", limit: int = 8) -> Dict[str, Any]:
-        _ = category
-        try:
-            competitors = taobao_crawler.search_products(keyword=keyword, limit=limit)
-            meta = dict(taobao_crawler.last_fetch_meta)
-            return {
-                "success": bool(competitors),
-                "blocked": bool(meta.get("blocked")),
-                "source": meta.get("source", "taobao_live"),
-                "keyword": keyword,
-                "warnings": list(meta.get("warnings", [])),
-                "competitors": [
-                    {
-                        "competitor_id": item.product_id,
-                        "product_name": item.title,
-                        "current_price": item.price,
-                        "original_price": item.original_price,
-                        "sales_volume": item.sales_volume,
-                        "rating": item.rating,
-                        "review_count": item.review_count,
-                        "shop_name": item.shop_name,
-                        "shop_type": item.shop_type,
-                        "is_self_operated": item.is_self_operated,
-                        "promotion_tags": item.promotion_tags,
-                        "product_url": item.product_url,
-                        "image_url": item.image_url,
-                        "location": item.location,
-                        "crawl_time": item.crawl_time.isoformat(),
-                    }
-                    for item in competitors
-                ],
-            }
-        except TaobaoCrawlerBlockedError as exc:
-            return {
-                "success": False,
-                "blocked": True,
-                "source": "taobao_live",
-                "keyword": keyword,
-                "warnings": [str(exc)],
-                "competitors": [],
-            }
+        normalized_keyword = str(keyword or "").strip()
+        normalized_limit = max(1, min(int(limit or 8), 20))
+        return _build_simulated_market_payload(
+            keyword=normalized_keyword,
+            category=str(category or "").strip(),
+            limit=normalized_limit,
+        )
 
     def _run(self, keyword: str, category: str = "", limit: int = 8) -> str:
         return _json_dump(self.fetch_market(keyword=keyword, category=category, limit=limit))

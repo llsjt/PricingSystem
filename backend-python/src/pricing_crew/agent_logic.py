@@ -293,12 +293,15 @@ def run_market_intel_agent(request: AnalysisRequest) -> MarketIntelResult:
     live_market_available = bool(market_metrics["market_data_reliable"])
     suggestion = "maintain"
     reasons: List[str] = []
-    limitations = list(market_payload.get("warnings", []))
+    limitations = [str(item) for item in list(market_payload.get("warnings", [])) if item]
 
     if not live_market_available:
-        reasons.append("淘宝实时竞品数据未成功获取，市场情报自动降级为保守模式。")
-        if market_payload.get("blocked"):
-            limitations.append("淘宝搜索页触发风控，当前不适合把实时竞品作为强决策依据。")
+        if market_payload.get("blocked") and not any("风控" in item for item in limitations):
+            limitations.append("市场数据源不可用，未能生成可用竞品数据。")
+        if not limitations:
+            limitations.append("未生成可解析的竞品市场样本。")
+        failure_reason = "；".join(limitations[:2])
+        reasons.append(f"无法生成市场情报样本：{failure_reason}。")
         confidence = 0.32
     else:
         if price_position == "premium" and competition_level == "fierce":
@@ -311,7 +314,7 @@ def run_market_intel_agent(request: AnalysisRequest) -> MarketIntelResult:
             reasons.append("竞品价格带与当前价格接近，建议先维持价格。")
         confidence = _clamp(0.48 + competition_score * 0.25, 0.42, 0.82)
 
-    thinking = "先尝试调用淘宝抓取工具获取实时竞品，再用市场分析工具计算竞争强度和价格带。"
+    thinking = "先生成模拟真实竞品样本，再用市场分析工具计算竞争强度和价格带。"
     reasoning = (
         f"竞品数量 {len(competitors)}，竞品均价 {avg_price if avg_price is not None else '未知'}，"
         f"当前价格分位 {price_percentile:.2f}，实时市场可用={live_market_available}。"
@@ -347,10 +350,12 @@ def run_market_intel_agent(request: AnalysisRequest) -> MarketIntelResult:
         suggestion_confidence=round(confidence, 4),
         suggestion_reasons=reasons,
         analysis_details={
-            "tool_trace": ["taobao_competitor_fetch_tool", "market_snapshot_tool"],
+            "tool_trace": ["simulated_competitor_dataset_tool", "market_snapshot_tool"],
             "live_market_available": live_market_available,
             "market_source": market_payload.get("source", "unknown"),
             "competitor_count": len(competitors),
+            "fetch_failed": not live_market_available,
+            "failure_reasons": limitations if not live_market_available else [],
         },
         data_sources=[str(market_payload.get("source", "unknown"))],
         limitations=limitations,
@@ -549,8 +554,10 @@ def run_manager_coordinator_agent(
             warnings.append("策略目标要求主动调价，但被风险约束阻断，已退化为维持原价。")
     elif settings.market_live_required_for_discount and not market_live_available:
         key_factors = ["市场数据缺失", "保守模式"]
-        core_reasons = "淘宝实时竞品数据未成功获取。为避免错误降价，系统维持原价。"
-        warnings.append("实时竞品缺失时系统已自动降级为保守策略。")
+        market_failure_reasons = [str(item) for item in market_result.limitations if item]
+        failure_text = "；".join(market_failure_reasons[:2]) if market_failure_reasons else "未知原因"
+        core_reasons = f"无法获取实时竞品数据（{failure_text}）。为避免错误降价，系统维持原价。"
+        warnings.append(f"市场情报抓取失败：{failure_text}。")
     else:
         candidate_rate = 1.0
         if strategy_goal == "CLEARANCE":
@@ -692,7 +699,7 @@ def run_manager_coordinator_agent(
             AgentSummary(agent_name="市场情报", summary=market_result.decision_summary, key_points=market_result.suggestion_reasons[:3]),
             AgentSummary(agent_name="风险控制", summary=risk_result.decision_summary, key_points=risk_result.recommendation_reasons[:3]),
         ],
-        decision_framework="数据库取数 + 淘宝实时抓取 + 风控约束 + 经理协同",
+        decision_framework="数据库取数 + 模拟竞品市场数据 + 风控约束 + 经理协同",
         alternative_options=[
             {"option": "维持原价", "discount_rate": 1.0},
             {"option": "边界内最小降价", "discount_rate": risk_result.max_safe_discount},

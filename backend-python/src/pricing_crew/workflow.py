@@ -451,6 +451,22 @@ class WorkflowService:
 
             await self.stream_thought(task_id, self.MARKET_ROLE, 2, "", product_id, emit_end=False)
             market_result = await asyncio.to_thread(run_market_intel_agent, req)
+            if not bool(market_result.analysis_details.get("live_market_available")):
+                failure_reasons = market_result.analysis_details.get("failure_reasons") or market_result.limitations or []
+                failure_items = [str(item) for item in failure_reasons if item]
+                reason_text = "；".join(failure_items[:2]) if failure_items else "未知原因"
+                await manager.broadcast(
+                    json.dumps(
+                        {
+                            "type": "market_unavailable",
+                            "task_id": task_id,
+                            "product_id": product_id,
+                            "message": f"商品 {product_id} 无法生成竞品市场样本：{reason_text}",
+                        },
+                        ensure_ascii=False,
+                    ),
+                    str(task_id),
+                )
             market_text = self.compose_market_agent_output(product.title, market_result)
             await self.stream_thought(task_id, self.MARKET_ROLE, 2, market_text, product_id, emit_start=False)
             self._save_log(db, task_id, product_id, self.MARKET_ROLE, 2, market_text)

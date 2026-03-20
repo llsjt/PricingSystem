@@ -34,10 +34,6 @@ class Settings(BaseSettings):
     websocket_chunk_delay: float = 0.02
     websocket_min_stream_seconds: float = 2.0
 
-    taobao_browser_headless: bool = True
-    taobao_browser_executable: str = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-    taobao_crawler_timeout_ms: int = 18000
-    taobao_crawler_wait_ms: int = 5000
     market_live_required_for_discount: bool = True
 
     def resolved_database_url(self) -> str:

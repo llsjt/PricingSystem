@@ -124,12 +124,7 @@ def _log_startup_self_check() -> None:
         settings.websocket_chunk_delay,
         settings.websocket_min_stream_seconds,
     )
-    logger.info(
-        "[StartupCheck] crawler_mode=subprocess_only_with_synthetic_fallback headless=%s timeout_ms=%s wait_ms=%s",
-        settings.taobao_browser_headless,
-        settings.taobao_crawler_timeout_ms,
-        settings.taobao_crawler_wait_ms,
-    )
+    logger.info("[StartupCheck] market_intel_mode=simulated_realistic_dataset")
 
 
 @asynccontextmanager

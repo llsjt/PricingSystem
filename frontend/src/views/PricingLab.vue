@@ -481,6 +481,11 @@ const connectWebSocket = (taskId: number) => {
         return
       }
 
+      if (data.type === 'market_unavailable') {
+        ElMessage.warning(data.message || '无法生成竞品市场样本')
+        return
+      }
+
       if (!data.is_stream || data.agent_role === '系统') {
         return
       }

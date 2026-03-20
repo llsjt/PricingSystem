@@ -6,7 +6,6 @@ pydantic>=2.8.0
 pydantic-settings>=2.4.0
 sqlalchemy>=2.0.30
 pymysql>=1.1.1
-playwright>=1.51.0
 requests>=2.32.0
 python-dotenv>=1.0.1
 pytest>=8.3.0

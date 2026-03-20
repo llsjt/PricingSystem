@@ -59,7 +59,7 @@ Start-Sleep -Seconds 5
 Start-Process powershell -ArgumentList "-NoExit", "-Command", @"
 cd '$backendPythonDir'
 Write-Host 'Starting Python agent service...' -ForegroundColor Green
-$env:PYTHONPATH = 'src'
+`$env:PYTHONPATH = 'src'
 if (Test-Path '$venvPython') {
     & '$venvPython' -m pricing_crew.server
 } elseif (Get-Command uv -ErrorAction SilentlyContinue) {
