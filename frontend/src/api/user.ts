@@ -45,3 +45,9 @@ export const deleteUser = (id: number) => {
     method: 'delete'
   })
 }
+
+export const batchDeleteUsers = (ids: number[]) => {
+  return request.delete('/user/batch-delete', {
+    params: { ids: ids.join(',') }
+  })
+}

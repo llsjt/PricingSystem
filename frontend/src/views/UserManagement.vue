@@ -1,36 +1,27 @@
 <template>
   <div class="page-shell user-page">
-    <section class="panel-card user-hero">
-      <div class="section-title">
-        <h2>用户管理</h2>
-        <p>管理员可在这里集中维护系统账号，完成新增、修改和删除操作。</p>
-      </div>
-      <div class="metric-grid compact-metrics">
-        <article class="metric-card">
-          <div class="metric-label">用户总数</div>
-          <div class="metric-value">{{ total }}</div>
-          <div class="metric-hint">当前分页查询返回的总记录数</div>
-        </article>
-        <article class="metric-card">
-          <div class="metric-label">管理员账号</div>
-          <div class="metric-value small">admin</div>
-          <div class="metric-hint">系统保留账号，不允许删除</div>
-        </article>
-      </div>
-    </section>
-
     <section class="panel-card table-card">
       <div class="section-head">
         <div class="section-title">
           <h3>账号列表</h3>
-          <p>统一查看用户名、邮箱和创建时间，避免多级菜单跳转。</p>
+          <p>支持新增、编辑、单个删除和批量删除。</p>
         </div>
         <div class="toolbar-actions">
+          <el-button type="danger" :disabled="selectedIds.length === 0" @click="handleBatchDelete">
+            批量删除
+          </el-button>
           <el-button type="primary" @click="openCreateDialog">新增用户</el-button>
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="tableData" border stripe>
+      <el-table
+        v-loading="loading"
+        :data="tableData"
+        border
+        stripe
+        @selection-change="handleSelectionChange"
+      >
+        <el-table-column type="selection" width="52" :selectable="isRowSelectable" />
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="username" label="用户名" min-width="160" />
         <el-table-column prop="email" label="邮箱" min-width="220" />
@@ -55,6 +46,8 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-if="selectedIds.length > 0" class="selected-bar">已选择 {{ selectedIds.length }} 个用户</div>
 
       <div class="table-footer">
         <el-pagination
@@ -96,8 +89,8 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { addUser, deleteUser, getUserList, updateUser } from '../api/user'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { addUser, batchDeleteUsers, deleteUser, getUserList, updateUser } from '../api/user'
 
 const loading = ref(false)
 const tableData = ref<any[]>([])
@@ -105,6 +98,7 @@ const total = ref(0)
 const dialogVisible = ref(false)
 const isEditMode = ref(false)
 const editingUserId = ref<number | null>(null)
+const selectedIds = ref<number[]>([])
 const formRef = ref<FormInstance>()
 
 const queryParams = reactive({
@@ -149,6 +143,7 @@ const fetchUsers = async () => {
     if (res.code === 200) {
       tableData.value = res.data.records || []
       total.value = res.data.total || 0
+      selectedIds.value = []
       return
     }
     ElMessage.error(res.message || '获取用户列表失败')
@@ -157,6 +152,12 @@ const fetchUsers = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const isRowSelectable = (row: any) => row.username !== 'admin'
+
+const handleSelectionChange = (rows: any[]) => {
+  selectedIds.value = rows.map((row) => Number(row.id)).filter((id) => Number.isFinite(id))
 }
 
 const openCreateDialog = () => {
@@ -226,6 +227,39 @@ const handleDelete = async (row: any) => {
   }
 }
 
+const handleBatchDelete = async () => {
+  if (selectedIds.value.length === 0) {
+    ElMessage.warning('请先选择要删除的用户')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确定删除已选择的 ${selectedIds.value.length} 个用户吗？此操作不可恢复。`,
+      '批量删除确认',
+      {
+        type: 'warning',
+        confirmButtonText: '确认删除',
+        cancelButtonText: '取消'
+      }
+    )
+  } catch {
+    return
+  }
+
+  try {
+    const res: any = await batchDeleteUsers(selectedIds.value)
+    if (res.code === 200) {
+      ElMessage.success('批量删除成功')
+      fetchUsers()
+      return
+    }
+    ElMessage.error(res.message || '批量删除失败')
+  } catch {
+    ElMessage.error('批量删除失败')
+  }
+}
+
 onMounted(() => {
   fetchUsers()
 })
@@ -236,8 +270,14 @@ onMounted(() => {
   gap: 20px;
 }
 
-.compact-metrics {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.toolbar-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.selected-bar {
+  margin-top: 12px;
+  color: var(--el-color-success);
 }
 
 .table-footer {
@@ -256,15 +296,9 @@ onMounted(() => {
   gap: 8px;
 }
 
-@media (max-width: 1200px) {
-  .compact-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 @media (max-width: 768px) {
-  .compact-metrics {
-    grid-template-columns: 1fr;
+  .toolbar-actions {
+    flex-wrap: wrap;
   }
 
   .table-footer {

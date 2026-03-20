@@ -17,7 +17,7 @@
 
         <div class="metric-grid compact-metrics" v-if="trendData">
           <article class="metric-card trend-metric-card">
-            <div class="metric-label">日销售量增长量/增长率</div>
+            <div class="metric-label">日销售量</div>
             <div class="trend-lines">
               <div class="trend-line">
                 <span class="trend-line-label">增长量</span>
@@ -30,7 +30,7 @@
             </div>
           </article>
           <article class="metric-card trend-metric-card">
-            <div class="metric-label">月销售量增长量/增长率</div>
+            <div class="metric-label">月销售量</div>
             <div class="trend-lines">
               <div class="trend-line">
                 <span class="trend-line-label">增长量</span>
@@ -43,7 +43,7 @@
             </div>
           </article>
           <article class="metric-card trend-metric-card">
-            <div class="metric-label">日利润增长量/增长率</div>
+            <div class="metric-label">日利润</div>
             <div class="trend-lines">
               <div class="trend-line">
                 <span class="trend-line-label">增长量</span>
@@ -56,7 +56,7 @@
             </div>
           </article>
           <article class="metric-card trend-metric-card">
-            <div class="metric-label">月利润增长量/增长率</div>
+            <div class="metric-label">月利润</div>
             <div class="trend-lines">
               <div class="trend-line">
                 <span class="trend-line-label">增长量</span>

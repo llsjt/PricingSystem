@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -113,7 +114,7 @@ public class UserController {
         return Result.success(null);
     }
 
-    @DeleteMapping("/{id}")
+    @DeleteMapping("/{id:\\d+}")
     public Result<Void> deleteUser(
             @RequestHeader(value = "X-Username", required = false) String currentUsername,
             @PathVariable Long id) {
@@ -125,6 +126,26 @@ public class UserController {
         }
 
         userMapper.deleteById(id);
+        return Result.success(null);
+    }
+
+    @DeleteMapping("/batch-delete")
+    public Result<Void> batchDeleteUsers(
+            @RequestHeader(value = "X-Username", required = false) String currentUsername,
+            @RequestParam("ids") List<Long> ids) {
+        requireAdmin(currentUsername);
+
+        if (ids == null || ids.isEmpty()) {
+            return Result.error("请选择要删除的用户");
+        }
+
+        List<SysUser> users = userMapper.selectBatchIds(ids);
+        boolean containsAdmin = users.stream().anyMatch(user -> "admin".equals(user.getUsername()));
+        if (containsAdmin) {
+            return Result.error("不能删除管理员");
+        }
+
+        userMapper.deleteBatchIds(ids);
         return Result.success(null);
     }
 
