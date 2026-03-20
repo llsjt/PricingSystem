@@ -225,7 +225,7 @@ public class DecisionController {
 
                 BigDecimal newProfit = calculateProfit(suggestedPrice, cost, monthlySales);
                 vo.setNewProfit(newProfit);
-                vo.setProfitChange(result.getProfitChange());
+                vo.setProfitChange(calculateProfitChange(originalProfit, newProfit));
                 
                 vo.setDiscountRate(result.getDiscountRate());
                 vo.setIsAccepted(result.getIsAccepted());
@@ -312,6 +312,12 @@ public class DecisionController {
                 .subtract(safeCost)
                 .multiply(BigDecimal.valueOf(Math.max(monthlySales, 0)))
                 .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal calculateProfitChange(BigDecimal originalProfit, BigDecimal newProfit) {
+        BigDecimal safeOriginalProfit = originalProfit != null ? originalProfit : BigDecimal.ZERO;
+        BigDecimal safeNewProfit = newProfit != null ? newProfit : BigDecimal.ZERO;
+        return safeNewProfit.subtract(safeOriginalProfit).setScale(2, RoundingMode.HALF_UP);
     }
 
     @GetMapping("/export/{taskId}")
