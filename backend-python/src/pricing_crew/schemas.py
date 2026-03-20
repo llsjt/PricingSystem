@@ -236,5 +236,5 @@ class DecisionTaskRequest(BaseModel):
 
     task_id: Optional[int] = Field(default=None, validation_alias=AliasChoices("task_id", "taskId"))
     product_ids: List[int] = Field(default_factory=list, validation_alias=AliasChoices("product_ids", "productIds"))
-    strategy_goal: str = Field(default="MAX_PROFIT", validation_alias=AliasChoices("strategy_goal", "strategyGoal"))
+    strategy_goal: str = Field(default="", validation_alias=AliasChoices("strategy_goal", "strategyGoal"))
     constraints: str = ""

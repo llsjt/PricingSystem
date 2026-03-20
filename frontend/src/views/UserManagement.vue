@@ -282,7 +282,7 @@ onMounted(() => {
 
 .table-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   margin-top: 20px;
 }
 
@@ -299,10 +299,6 @@ onMounted(() => {
 @media (max-width: 768px) {
   .toolbar-actions {
     flex-wrap: wrap;
-  }
-
-  .table-footer {
-    justify-content: center;
   }
 }
 </style>

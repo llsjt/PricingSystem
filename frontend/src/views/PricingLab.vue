@@ -130,8 +130,7 @@
           <article
             v-for="message in orderedMessages"
             :key="buildMessageDomKey(message)"
-            class="message-card"
-            :class="getAgentClass(message.agent_role)"
+            :class="['message-card', getAgentClass(message.agent_role), { streaming: message.streaming }]"
           >
             <div class="message-avatar">{{ getAgentAvatar(message.agent_role) }}</div>
             <div class="message-main">
@@ -140,7 +139,10 @@
                 <span>{{ message.timestamp }}</span>
               </div>
               <div class="message-body">
-                <p v-html="formatContent(message.thought_content)"></p>
+                <p v-if="message.streaming && !message.thought_content" class="typing-placeholder">
+                  正在生成分析内容...
+                </p>
+                <p v-else v-html="formatContent(message.thought_content)"></p>
               </div>
             </div>
           </article>
@@ -300,7 +302,7 @@ const currentQuery = ref('')
 
 const taskConfig = reactive({
   productIds: [] as number[],
-  strategyGoal: 'MAX_PROFIT',
+  strategyGoal: '',
   constraints: ''
 })
 
@@ -324,6 +326,7 @@ const strategyGoalText = computed(() => {
     CLEARANCE: '清仓促销',
     MARKET_SHARE: '市场份额优先'
   }
+  if (!taskConfig.strategyGoal) return '未选择'
   return mapping[taskConfig.strategyGoal] || taskConfig.strategyGoal
 })
 
@@ -415,6 +418,10 @@ const startTask = async () => {
     ElMessage.warning('请至少选择一个商品')
     return
   }
+  if (!taskConfig.strategyGoal) {
+    ElMessage.warning('请选择策略目标')
+    return
+  }
 
   starting.value = true
   try {
@@ -431,7 +438,7 @@ const startTask = async () => {
     chatMessages.value = []
 
     connectWebSocket(res.data)
-    await fetchTaskLogs(res.data)
+    fetchTaskLogs(res.data)
     startLogSync(res.data)
   } catch {
     ElMessage.error('启动智能决策失败')
@@ -644,7 +651,7 @@ const startLogSync = (taskId: number) => {
   stopLogSync()
   logSyncTimer = window.setInterval(() => {
     fetchTaskLogs(taskId)
-  }, 1500)
+  }, 800)
 }
 
 const stopLogSync = () => {
@@ -905,6 +912,11 @@ onUnmounted(() => {
   border: 1px solid var(--line-soft);
 }
 
+.message-card.streaming {
+  border-color: rgba(31, 111, 235, 0.35);
+  box-shadow: 0 0 0 1px rgba(31, 111, 235, 0.12) inset;
+}
+
 .message-avatar {
   width: 54px;
   height: 54px;
@@ -945,6 +957,29 @@ onUnmounted(() => {
 
 .message-body p {
   margin: 0;
+}
+
+.typing-placeholder {
+  color: var(--text-2);
+  font-style: italic;
+}
+
+.message-card.streaming .message-body p::after {
+  content: '▍';
+  margin-left: 2px;
+  color: var(--brand);
+  animation: cursor-blink 1s infinite;
+}
+
+@keyframes cursor-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
 }
 
 .agent-data .message-avatar {

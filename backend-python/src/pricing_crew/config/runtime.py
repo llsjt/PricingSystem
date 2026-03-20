@@ -30,8 +30,9 @@ class Settings(BaseSettings):
     mysql_db: str = "pricing_system"
     bootstrap_demo_data: bool = False
 
-    websocket_chunk_size: int = 48
-    websocket_chunk_delay: float = 0.01
+    websocket_chunk_size: int = 24
+    websocket_chunk_delay: float = 0.02
+    websocket_min_stream_seconds: float = 2.0
 
     taobao_browser_headless: bool = True
     taobao_browser_executable: str = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"

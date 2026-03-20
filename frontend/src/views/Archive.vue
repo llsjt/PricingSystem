@@ -709,7 +709,7 @@ onBeforeUnmount(() => {
 
 .table-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   margin-top: 20px;
 }
 
@@ -813,10 +813,6 @@ onBeforeUnmount(() => {
   .drawer-meta,
   .compact-metrics {
     grid-template-columns: 1fr;
-  }
-
-  .table-footer {
-    justify-content: center;
   }
 
   .drawer-actions {

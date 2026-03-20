@@ -52,7 +52,7 @@ public class DecisionController {
         String strategyGoal = (String) body.get("strategyGoal");
         String constraints = (String) body.get("constraints");
         if (strategyGoal == null || strategyGoal.isBlank()) {
-            strategyGoal = "MAX_PROFIT";
+            return Result.error("请选择策略目标");
         }
         if (constraints == null) {
             constraints = "";

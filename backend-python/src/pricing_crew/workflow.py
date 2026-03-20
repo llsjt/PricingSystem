@@ -18,7 +18,12 @@ from pricing_crew.config.runtime import settings
 from pricing_crew.db import init_database, seed_realistic_demo_data
 from pricing_crew.db.database import SessionLocal
 from pricing_crew.db.models import BizProduct, BizSalesDaily, DecAgentLog, DecResult, DecTask
-from pricing_crew.decision_service import decision_service
+from pricing_crew.agent_logic import (
+    run_data_analysis_agent,
+    run_manager_coordinator_agent,
+    run_market_intel_agent,
+    run_risk_control_agent,
+)
 from pricing_crew.schemas import AnalysisRequest, CompetitorData, ProductBase, RiskData, SalesData
 from pricing_crew.ws_manager import manager
 
@@ -435,21 +440,33 @@ class WorkflowService:
             if not product:
                 raise ValueError(f"商品 {product_id} 不存在")
             parsed = self.parse_constraint_bundle(constraints)
-            req = AnalysisRequest(task_id=str(task_id), product=ProductBase(product_id=str(product.id), product_name=product.title, category=product.category or "未分类", current_price=_f(product.current_price), cost=_f(product.cost_price), original_price=_f(product.market_price) if product.market_price is not None else None, stock=int(product.stock or 0), stock_age_days=max(14, int((int(product.stock or 0) / max(int(product.monthly_sales or 1) / 30.0, 1.0)) * 1.25))), sales_data=SalesData(), competitor_data=CompetitorData(competitors=[]), risk_data=self.build_risk_data(product, parsed), customer_reviews=[], strategy_goal=strategy_goal or "MAX_PROFIT", strategy_constraints=constraints, business_context={"product_id": int(product.id), "prefer_db_tools": True, "parsed_constraints": parsed})
-            # 将重计算放入线程池，避免阻塞主事件循环导致 WebSocket 握手超时。
-            def _run_decision():
-                return asyncio.run(decision_service.run_full_decision(req))
+            req = AnalysisRequest(task_id=str(task_id), product=ProductBase(product_id=str(product.id), product_name=product.title, category=product.category or "未分类", current_price=_f(product.current_price), cost=_f(product.cost_price), original_price=_f(product.market_price) if product.market_price is not None else None, stock=int(product.stock or 0), stock_age_days=max(14, int((int(product.stock or 0) / max(int(product.monthly_sales or 1) / 30.0, 1.0)) * 1.25))), sales_data=SalesData(), competitor_data=CompetitorData(competitors=[]), risk_data=self.build_risk_data(product, parsed), customer_reviews=[], strategy_goal=strategy_goal, strategy_constraints=constraints, business_context={"product_id": int(product.id), "prefer_db_tools": True, "parsed_constraints": parsed})
 
-            data_result, market_result, risk_result, final_result = await asyncio.to_thread(_run_decision)
-            texts = [
-                (self.DATA_ROLE, 1, self.compose_data_agent_output(product.title, data_result)),
-                (self.MARKET_ROLE, 2, self.compose_market_agent_output(product.title, market_result)),
-                (self.RISK_ROLE, 3, self.compose_risk_agent_output(product.title, risk_result)),
-                (self.MANAGER_ROLE, 4, self.compose_manager_agent_output(product.title, final_result)),
-            ]
-            for role, order, text in texts:
-                await self.stream_thought(task_id, role, order, text, product_id)
-                self._save_log(db, task_id, product_id, role, order, text)
+            # 每个 agent 完成后立即推流，避免前端长时间无输出。
+            await self.stream_thought(task_id, self.DATA_ROLE, 1, "", product_id, emit_end=False)
+            data_result = await asyncio.to_thread(run_data_analysis_agent, req)
+            data_text = self.compose_data_agent_output(product.title, data_result)
+            await self.stream_thought(task_id, self.DATA_ROLE, 1, data_text, product_id, emit_start=False)
+            self._save_log(db, task_id, product_id, self.DATA_ROLE, 1, data_text)
+
+            await self.stream_thought(task_id, self.MARKET_ROLE, 2, "", product_id, emit_end=False)
+            market_result = await asyncio.to_thread(run_market_intel_agent, req)
+            market_text = self.compose_market_agent_output(product.title, market_result)
+            await self.stream_thought(task_id, self.MARKET_ROLE, 2, market_text, product_id, emit_start=False)
+            self._save_log(db, task_id, product_id, self.MARKET_ROLE, 2, market_text)
+
+            await self.stream_thought(task_id, self.RISK_ROLE, 3, "", product_id, emit_end=False)
+            risk_result = await asyncio.to_thread(run_risk_control_agent, req)
+            risk_text = self.compose_risk_agent_output(product.title, risk_result)
+            await self.stream_thought(task_id, self.RISK_ROLE, 3, risk_text, product_id, emit_start=False)
+            self._save_log(db, task_id, product_id, self.RISK_ROLE, 3, risk_text)
+
+            await self.stream_thought(task_id, self.MANAGER_ROLE, 4, "", product_id, emit_end=False)
+            final_result = await asyncio.to_thread(run_manager_coordinator_agent, req, data_result, market_result, risk_result)
+            manager_text = self.compose_manager_agent_output(product.title, final_result)
+            await self.stream_thought(task_id, self.MANAGER_ROLE, 4, manager_text, product_id, emit_start=False)
+            self._save_log(db, task_id, product_id, self.MANAGER_ROLE, 4, manager_text)
+
             self._save_result(db, task_id, product_id, final_result)
             await manager.broadcast(json.dumps({"type": "result", "task_id": task_id, "product_id": product_id, "data": final_result.model_dump(mode="json")}, ensure_ascii=False), str(task_id))
         finally:
@@ -476,12 +493,71 @@ class WorkflowService:
             db.add(DecResult(id=self._next_id(db, DecResult), task_id=task_id, product_id=product_id, decision=final.decision, discount_rate=self._dec(final.discount_rate), suggested_price=self._dec(final.suggested_price), profit_change=self._dec(final.expected_outcomes.profit_change if final.expected_outcomes else 0), core_reasons=final.core_reasons, is_accepted=False, adopt_status="PENDING"))
         db.commit()
 
-    async def stream_thought(self, task_id: int, role: str, step: int, content: str, product_id: int) -> None:
-        await manager.broadcast(json.dumps({"is_stream": True, "is_start": True, "agent_role": role, "step_order": step, "product_id": product_id, "timestamp": datetime.now().strftime("%H:%M:%S")}, ensure_ascii=False), str(task_id))
-        for i in range(0, len(content), 60):
-            await manager.broadcast(json.dumps({"is_stream": True, "agent_role": role, "step_order": step, "product_id": product_id, "thought_content": content[i : i + 60], "timestamp": datetime.now().strftime("%H:%M:%S")}, ensure_ascii=False), str(task_id))
-            await asyncio.sleep(0.01)
-        await manager.broadcast(json.dumps({"is_stream": True, "is_end": True, "agent_role": role, "step_order": step, "product_id": product_id, "timestamp": datetime.now().strftime("%H:%M:%S")}, ensure_ascii=False), str(task_id))
+    async def stream_thought(
+        self,
+        task_id: int,
+        role: str,
+        step: int,
+        content: str,
+        product_id: int,
+        emit_start: bool = True,
+        emit_end: bool = True,
+    ) -> None:
+        if emit_start:
+            await manager.broadcast(
+                json.dumps(
+                    {
+                        "is_stream": True,
+                        "is_start": True,
+                        "agent_role": role,
+                        "step_order": step,
+                        "product_id": product_id,
+                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    },
+                    ensure_ascii=False,
+                ),
+                str(task_id),
+            )
+
+        chunk_size = max(4, int(settings.websocket_chunk_size or 24))
+        raw_delay = max(0.0, float(settings.websocket_chunk_delay or 0.0))
+        min_stream_seconds = max(0.0, float(settings.websocket_min_stream_seconds or 0.0))
+        chunk_count = max(1, (len(content) + chunk_size - 1) // chunk_size)
+        # 让每条 agent 消息有可感知的流式时长，避免“瞬间刷完”的体感。
+        chunk_delay = max(raw_delay, 0.03, (min_stream_seconds / chunk_count))
+
+        for i in range(0, len(content), chunk_size):
+            await manager.broadcast(
+                json.dumps(
+                    {
+                        "is_stream": True,
+                        "agent_role": role,
+                        "step_order": step,
+                        "product_id": product_id,
+                        "thought_content": content[i : i + chunk_size],
+                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    },
+                    ensure_ascii=False,
+                ),
+                str(task_id),
+            )
+            await asyncio.sleep(chunk_delay)
+
+        if emit_end:
+            await manager.broadcast(
+                json.dumps(
+                    {
+                        "is_stream": True,
+                        "is_end": True,
+                        "agent_role": role,
+                        "step_order": step,
+                        "product_id": product_id,
+                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    },
+                    ensure_ascii=False,
+                ),
+                str(task_id),
+            )
 
     def get_task_results(self, task_id: int) -> List[Dict[str, Any]]:
         db: Session = SessionLocal()

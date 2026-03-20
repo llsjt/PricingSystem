@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
 if sys.platform.startswith("win"):
+    # 服务进程使用 Selector 更稳定；需要子进程能力的抓取逻辑已改为独立 Python 子进程执行。
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
@@ -102,9 +103,39 @@ def _mask_key(value: str) -> str:
     return f"{text[:4]}***{text[-4:]}"
 
 
+def _log_startup_self_check() -> None:
+    policy_name = asyncio.get_event_loop_policy().__class__.__name__
+    try:
+        loop_name = asyncio.get_running_loop().__class__.__name__
+    except RuntimeError:
+        loop_name = "N/A"
+
+    logger.info(
+        "[StartupCheck] app=%s version=%s platform=%s policy=%s loop=%s",
+        settings.app_name,
+        settings.app_version,
+        sys.platform,
+        policy_name,
+        loop_name,
+    )
+    logger.info(
+        "[StartupCheck] ws_chunk_size=%s ws_chunk_delay=%s ws_min_stream_seconds=%s",
+        settings.websocket_chunk_size,
+        settings.websocket_chunk_delay,
+        settings.websocket_min_stream_seconds,
+    )
+    logger.info(
+        "[StartupCheck] crawler_mode=subprocess_only_with_synthetic_fallback headless=%s timeout_ms=%s wait_ms=%s",
+        settings.taobao_browser_headless,
+        settings.taobao_crawler_timeout_ms,
+        settings.taobao_crawler_wait_ms,
+    )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     workflow_service.bootstrap()
+    _log_startup_self_check()
     yield
 
 
@@ -354,6 +385,8 @@ async def update_config(payload: Dict[str, Any] = Body(...)):
 async def start_decision_task(request: DecisionTaskRequest, background_tasks: BackgroundTasks):
     if not request.product_ids:
         raise HTTPException(status_code=400, detail="至少选择一个商品")
+    if not str(request.strategy_goal or "").strip():
+        raise HTTPException(status_code=400, detail="请选择策略目标")
     try:
         # 业务任务在 Spring Boot 侧建单时，会把 task_id 透传到 Python；
         # Python 仅负责 agent 编排和流式输出，不再创建重复任务。
