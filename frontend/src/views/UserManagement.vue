@@ -16,11 +16,6 @@
           <div class="metric-value small">admin</div>
           <div class="metric-hint">系统保留账号，不允许删除</div>
         </article>
-        <article class="metric-card">
-          <div class="metric-label">当前页容量</div>
-          <div class="metric-value">{{ queryParams.size }}</div>
-          <div class="metric-hint">支持快速切换分页尺寸</div>
-        </article>
       </div>
     </section>
 
@@ -242,7 +237,7 @@ onMounted(() => {
 }
 
 .compact-metrics {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .table-footer {

@@ -1,29 +1,31 @@
 #!/usr/bin/env python
+"""命令行入口模块，支持按请求负载运行四智能体流程。"""
+
 from __future__ import annotations
 
 import asyncio
 import json
 from typing import Any, Dict, Optional
 
-from app.schemas.decision import AnalysisRequest
-
-from .orchestrator import pricing_crew_orchestrator
+from pricing_crew.orchestrator import pricing_crew_orchestrator
+from pricing_crew.schemas import AnalysisRequest
 
 
 def run_with_request(request: AnalysisRequest):
-    """Run the full 4-agent crew workflow from an AnalysisRequest."""
     return asyncio.run(pricing_crew_orchestrator.run_full_workflow(request))
 
 
 def run_with_payload(payload: Dict[str, Any]):
-    """Run the full 4-agent crew workflow from raw payload dict."""
     request = AnalysisRequest.model_validate(payload)
     return run_with_request(request)
 
 
 def run(payload_json: Optional[str] = None):
-    """CLI-friendly entrypoint matching CrewAI project style."""
     if payload_json:
         payload = json.loads(payload_json)
         return run_with_payload(payload)
-    raise ValueError("payload_json is required for this project entrypoint")
+    raise ValueError("payload_json is required")
+
+
+if __name__ == "__main__":
+    raise SystemExit("Use pricing_crew.main.run(payload_json=...) or API server entrypoint.")

@@ -16,25 +16,57 @@
         </div>
 
         <div class="metric-grid compact-metrics" v-if="trendData">
-          <article class="metric-card">
-            <div class="metric-label">日销量增长</div>
-            <div class="metric-value small">{{ formatNumber(trendData.dailySalesGrowth) }}</div>
-            <div class="metric-hint">{{ formatSignedPercent(trendData.dailySalesGrowthRate) }}</div>
+          <article class="metric-card trend-metric-card">
+            <div class="metric-label">日销售量增长量/增长率</div>
+            <div class="trend-lines">
+              <div class="trend-line">
+                <span class="trend-line-label">增长量</span>
+                <span class="trend-line-value">{{ formatSignedNumber(trendData.dailySalesGrowth) }}</span>
+              </div>
+              <div class="trend-line">
+                <span class="trend-line-label">增长率</span>
+                <span class="trend-line-value">{{ formatSignedPercent(trendData.dailySalesGrowthRate) }}</span>
+              </div>
+            </div>
           </article>
-          <article class="metric-card">
-            <div class="metric-label">月销量增长</div>
-            <div class="metric-value small">{{ formatNumber(trendData.monthlySalesGrowth) }}</div>
-            <div class="metric-hint">{{ formatSignedPercent(trendData.monthlySalesGrowthRate) }}</div>
+          <article class="metric-card trend-metric-card">
+            <div class="metric-label">月销售量增长量/增长率</div>
+            <div class="trend-lines">
+              <div class="trend-line">
+                <span class="trend-line-label">增长量</span>
+                <span class="trend-line-value">{{ formatSignedNumber(trendData.monthlySalesGrowth) }}</span>
+              </div>
+              <div class="trend-line">
+                <span class="trend-line-label">增长率</span>
+                <span class="trend-line-value">{{ formatSignedPercent(trendData.monthlySalesGrowthRate) }}</span>
+              </div>
+            </div>
           </article>
-          <article class="metric-card">
-            <div class="metric-label">日利润增长</div>
-            <div class="metric-value small">{{ formatCurrency(trendData.dailyProfitGrowth) }}</div>
-            <div class="metric-hint">{{ formatSignedPercent(trendData.dailyProfitGrowthRate) }}</div>
+          <article class="metric-card trend-metric-card">
+            <div class="metric-label">日利润增长量/增长率</div>
+            <div class="trend-lines">
+              <div class="trend-line">
+                <span class="trend-line-label">增长量</span>
+                <span class="trend-line-value">{{ formatSignedCurrency(trendData.dailyProfitGrowth) }}</span>
+              </div>
+              <div class="trend-line">
+                <span class="trend-line-label">增长率</span>
+                <span class="trend-line-value">{{ formatSignedPercent(trendData.dailyProfitGrowthRate) }}</span>
+              </div>
+            </div>
           </article>
-          <article class="metric-card">
-            <div class="metric-label">月利润增长</div>
-            <div class="metric-value small">{{ formatCurrency(trendData.monthlyProfitGrowth) }}</div>
-            <div class="metric-hint">{{ formatSignedPercent(trendData.monthlyProfitGrowthRate) }}</div>
+          <article class="metric-card trend-metric-card">
+            <div class="metric-label">月利润增长量/增长率</div>
+            <div class="trend-lines">
+              <div class="trend-line">
+                <span class="trend-line-label">增长量</span>
+                <span class="trend-line-value">{{ formatSignedCurrency(trendData.monthlyProfitGrowth) }}</span>
+              </div>
+              <div class="trend-line">
+                <span class="trend-line-label">增长率</span>
+                <span class="trend-line-value">{{ formatSignedPercent(trendData.monthlyProfitGrowthRate) }}</span>
+              </div>
+            </div>
           </article>
         </div>
       </section>
@@ -94,8 +126,18 @@ const open = (row: any) => {
 defineExpose({ open })
 
 const formatCurrency = (value: number | string) => `¥${Number(value || 0).toFixed(2)}`
-const formatNumber = (value: number | string) => Number(value || 0).toFixed(0)
-const formatSignedPercent = (value: number | string) => `${(Number(value || 0) * 100).toFixed(2)}%`
+const formatSignedNumber = (value: number | string) => {
+  const numeric = Number(value || 0)
+  return `${numeric >= 0 ? '+' : ''}${numeric.toFixed(0)}`
+}
+const formatSignedCurrency = (value: number | string) => {
+  const numeric = Number(value || 0)
+  return `${numeric >= 0 ? '+' : '-'}¥${Math.abs(numeric).toFixed(2)}`
+}
+const formatSignedPercent = (value: number | string) => {
+  const numeric = Number(value || 0) * 100
+  return `${numeric >= 0 ? '+' : ''}${numeric.toFixed(2)}%`
+}
 
 const fetchTrendData = async () => {
   if (!product.value) return
@@ -240,6 +282,39 @@ onBeforeUnmount(() => {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.trend-metric-card .metric-label {
+  font-size: 17px;
+  font-weight: 700;
+  color: #2f4361;
+}
+
+.trend-lines {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.trend-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.trend-line-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #5b6f8d;
+}
+
+.trend-line-value {
+  font-size: 30px;
+  line-height: 1.08;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #1a2f4e;
+}
+
 .price-pill {
   display: inline-flex;
   align-items: center;
@@ -265,6 +340,14 @@ onBeforeUnmount(() => {
 @media (max-width: 768px) {
   .compact-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .trend-metric-card .metric-label {
+    font-size: 16px;
+  }
+
+  .trend-line-value {
+    font-size: 26px;
   }
 
   .chart-container {

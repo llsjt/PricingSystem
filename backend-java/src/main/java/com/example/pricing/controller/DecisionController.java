@@ -51,6 +51,12 @@ public class DecisionController {
         }
         String strategyGoal = (String) body.get("strategyGoal");
         String constraints = (String) body.get("constraints");
+        if (strategyGoal == null || strategyGoal.isBlank()) {
+            strategyGoal = "MAX_PROFIT";
+        }
+        if (constraints == null) {
+            constraints = "";
+        }
 
         List<String> validStrategies = java.util.Arrays.asList("MAX_PROFIT", "CLEARANCE", "MARKET_SHARE");
         if (strategyGoal != null && !validStrategies.contains(strategyGoal)) {
@@ -132,7 +138,7 @@ public class DecisionController {
     public Result<List<com.example.pricing.entity.DecAgentLog>> getTaskLogs(@PathVariable Long taskId) {
         LambdaQueryWrapper<com.example.pricing.entity.DecAgentLog> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(com.example.pricing.entity.DecAgentLog::getTaskId, taskId);
-        wrapper.orderByAsc(com.example.pricing.entity.DecAgentLog::getSpeakOrder);
+        wrapper.orderByAsc(com.example.pricing.entity.DecAgentLog::getSpeakOrder, com.example.pricing.entity.DecAgentLog::getId);
         return Result.success(logMapper.selectList(wrapper));
     }
 

@@ -1,5 +1,20 @@
-import axios from 'axios'
+import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
+
+export interface ApiResponse<T = any> {
+  code: number
+  data: T
+  message?: string
+}
+
+type RequestClient = Omit<AxiosInstance, 'get' | 'post' | 'put' | 'delete' | 'patch'> & {
+  <T = any>(config: AxiosRequestConfig): Promise<T>
+  get<T = any>(url: string, config?: AxiosRequestConfig): Promise<T>
+  post<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T>
+  put<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T>
+  delete<T = any>(url: string, config?: AxiosRequestConfig): Promise<T>
+  patch<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T>
+}
 
 const service = axios.create({
   baseURL: '/api',
@@ -10,7 +25,10 @@ service.interceptors.request.use(
   (config) => {
     const username = localStorage.getItem('username')
     if (username) {
-      config.headers['X-Username'] = username
+      config.headers = {
+        ...(config.headers || {}),
+        'X-Username': username
+      } as any
     }
     return config
   },
@@ -43,4 +61,4 @@ service.interceptors.response.use(
   }
 )
 
-export default service
+export default service as RequestClient

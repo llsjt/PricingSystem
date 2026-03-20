@@ -1,3 +1,5 @@
+"""CrewAI 编排定义模块，声明四个 Agent 与工具绑定关系。"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Type
@@ -6,18 +8,25 @@ from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
 from pydantic import BaseModel
 
-from .models import (
+from pricing_crew.models import (
     CrewDataAnalysisOutput,
     CrewManagerDecisionOutput,
     CrewMarketIntelOutput,
     CrewRiskControlOutput,
 )
-from .tools.custom_tool import MarketSnapshotTool, RiskConstraintTool, SalesMetricsTool
+from pricing_crew.tools.custom_tool import (
+    DatabaseProductContextTool,
+    DatabaseRiskContextTool,
+    MarketSnapshotTool,
+    RiskConstraintTool,
+    SalesMetricsTool,
+    TaobaoCompetitorFetchTool,
+)
 
 
 @CrewBase
 class PricingDecisionCrew:
-    """CrewAI-style 4-agent pricing decision crew."""
+    """CrewAI 风格的四智能体定价决策编排类。"""
 
     agents_config = "config/agents.yaml"
     tasks_config = "config/tasks.yaml"
@@ -26,7 +35,13 @@ class PricingDecisionCrew:
     verbose: bool = False
     use_structured_output: bool = True
 
-    def configure(self, llm: Any, *, verbose: bool = False, use_structured_output: bool = True) -> "PricingDecisionCrew":
+    def configure(
+        self,
+        llm: Any,
+        *,
+        verbose: bool = False,
+        use_structured_output: bool = True,
+    ) -> "PricingDecisionCrew":
         self.llm = llm
         self.verbose = verbose
         self.use_structured_output = use_structured_output
@@ -54,7 +69,7 @@ class PricingDecisionCrew:
         return Agent(
             config=self.agents_config["data_analysis_agent"],
             llm=self.llm,
-            tools=[SalesMetricsTool()],
+            tools=[DatabaseProductContextTool(), SalesMetricsTool()],
             allow_delegation=False,
             verbose=self.verbose,
         )
@@ -64,7 +79,7 @@ class PricingDecisionCrew:
         return Agent(
             config=self.agents_config["market_intel_agent"],
             llm=self.llm,
-            tools=[MarketSnapshotTool()],
+            tools=[TaobaoCompetitorFetchTool(), MarketSnapshotTool()],
             allow_delegation=False,
             verbose=self.verbose,
         )
@@ -74,7 +89,7 @@ class PricingDecisionCrew:
         return Agent(
             config=self.agents_config["risk_control_agent"],
             llm=self.llm,
-            tools=[RiskConstraintTool()],
+            tools=[DatabaseRiskContextTool(), RiskConstraintTool()],
             allow_delegation=False,
             verbose=self.verbose,
         )
@@ -123,26 +138,8 @@ class PricingDecisionCrew:
             context=[self.data_analysis_task(), self.market_intel_task(), self.risk_control_task()],
         )
 
-    def build_manager_only_task(self) -> Task:
-        return self._build_task(
-            task_key="manager_only_task",
-            output_model=CrewManagerDecisionOutput,
-            owner=self.decision_manager_agent(),
-        )
-
-    def build_manager_only_crew(self) -> Crew:
-        manager_task = self.build_manager_only_task()
-        manager_agent = self.decision_manager_agent()
-        return Crew(
-            agents=[manager_agent],
-            tasks=[manager_task],
-            process=Process.sequential,
-            verbose=self.verbose,
-        )
-
     @crew
     def crew(self) -> Crew:
-        """Create full 4-agent sequential crew."""
         return Crew(
             agents=[
                 self.data_analysis_agent(),

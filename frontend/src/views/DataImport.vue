@@ -96,7 +96,7 @@ const beforeUpload: UploadProps['beforeUpload'] = (rawFile) => {
   return true
 }
 
-const handleCustomUpload: UploadProps['http-request'] = async (options) => {
+const handleCustomUpload: UploadProps['httpRequest'] = async (options) => {
   const { file } = options
   const formData = new FormData()
   formData.append('file', file)
