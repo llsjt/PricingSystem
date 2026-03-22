@@ -267,7 +267,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { applyDecision, getTaskComparison, getTaskLogs, getTaskResult, startDecisionTask } from '../api/decision'
+import { applyDecision, getTaskLogs, getTaskResult, startDecisionTask } from '../api/decision'
 import { getProductList } from '../api/product'
 
 interface ProductOption {
@@ -744,33 +744,16 @@ const viewResult = async () => {
   if (!currentTaskId.value) return
 
   try {
-    const [resultRes, comparisonRes]: any = await Promise.all([
-      getTaskResult(currentTaskId.value),
-      getTaskComparison(currentTaskId.value)
-    ])
+    const resultRes: any = await getTaskResult(currentTaskId.value)
     if (resultRes.code !== 200) {
       ElMessage.error(resultRes.message || '获取结果报告失败')
       return
     }
 
-    const comparisonProfitMap = new Map<number, number>()
-    if (comparisonRes.code === 200 && Array.isArray(comparisonRes.data)) {
-      for (const item of comparisonRes.data) {
-        const productId = Number(item?.productId || 0)
-        if (!productId) continue
-        comparisonProfitMap.set(productId, Number(item?.profitChange || 0))
-      }
-    }
-
     resultList.value = (resultRes.data || []).map((item: any) => {
-      const productId = Number(item?.productId || 0)
-      const profitChange = comparisonProfitMap.has(productId)
-        ? Number(comparisonProfitMap.get(productId))
-        : Number(item?.profitChange || 0)
-
       return {
         ...item,
-        profitChange,
+        profitChange: Number(item?.profitChange || 0),
         adoptStatus: item.adoptStatus || (item.isAccepted ? 'ADOPTED' : 'PENDING')
       }
     })

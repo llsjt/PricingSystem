@@ -372,6 +372,42 @@ class WorkflowService:
         mapping = {"high": "高风险", "medium": "中风险", "low": "低风险"}
         return mapping.get(str(level or "").lower(), "中风险")
 
+    def _humanize_agent_text(self, text: str) -> str:
+        normalized = str(text or "")
+        replacements = {
+            "把握程度": "可信度",
+            "置信度": "可信度",
+            "Agent": "智能体",
+            "agent": "智能体",
+            "simulated_market_dataset": "模拟市场样本库",
+            "MAX_PROFIT": "利润优先",
+            "CLEARANCE": "清仓促销",
+            "MARKET_SHARE": "市场份额优先",
+            "maintain": "维持原价",
+            "discount": "小幅降价",
+            "increase": "适度提价",
+            "premium": "上探价格带",
+            "penetrate": "渗透定价",
+            "price_war": "竞争性降价",
+            "rising": "上升",
+            "declining": "下降",
+            "stable": "平稳",
+            "fierce": "激烈",
+            "moderate": "中等",
+            "high": "高",
+            "medium": "中",
+            "low": "低",
+            "True": "是",
+            "False": "否",
+            "true": "是",
+            "false": "否",
+            "竞争评分": "竞争热度",
+            "风险分": "风险指数",
+        }
+        for old, new in replacements.items():
+            normalized = normalized.replace(old, new)
+        return normalized
+
     def compose_data_agent_output(self, name: str, result) -> str:
         reasons = "；".join(result.recommendation_reasons[:2]) if result.recommendation_reasons else "暂无额外补充依据。"
         return (
@@ -445,7 +481,7 @@ class WorkflowService:
             # 每个 agent 完成后立即推流，避免前端长时间无输出。
             await self.stream_thought(task_id, self.DATA_ROLE, 1, "", product_id, emit_end=False)
             data_result = await asyncio.to_thread(run_data_analysis_agent, req)
-            data_text = self.compose_data_agent_output(product.title, data_result)
+            data_text = self._humanize_agent_text(self.compose_data_agent_output(product.title, data_result))
             await self.stream_thought(task_id, self.DATA_ROLE, 1, data_text, product_id, emit_start=False)
             self._save_log(db, task_id, product_id, self.DATA_ROLE, 1, data_text)
 
@@ -467,19 +503,19 @@ class WorkflowService:
                     ),
                     str(task_id),
                 )
-            market_text = self.compose_market_agent_output(product.title, market_result)
+            market_text = self._humanize_agent_text(self.compose_market_agent_output(product.title, market_result))
             await self.stream_thought(task_id, self.MARKET_ROLE, 2, market_text, product_id, emit_start=False)
             self._save_log(db, task_id, product_id, self.MARKET_ROLE, 2, market_text)
 
             await self.stream_thought(task_id, self.RISK_ROLE, 3, "", product_id, emit_end=False)
             risk_result = await asyncio.to_thread(run_risk_control_agent, req)
-            risk_text = self.compose_risk_agent_output(product.title, risk_result)
+            risk_text = self._humanize_agent_text(self.compose_risk_agent_output(product.title, risk_result))
             await self.stream_thought(task_id, self.RISK_ROLE, 3, risk_text, product_id, emit_start=False)
             self._save_log(db, task_id, product_id, self.RISK_ROLE, 3, risk_text)
 
             await self.stream_thought(task_id, self.MANAGER_ROLE, 4, "", product_id, emit_end=False)
             final_result = await asyncio.to_thread(run_manager_coordinator_agent, req, data_result, market_result, risk_result)
-            manager_text = self.compose_manager_agent_output(product.title, final_result)
+            manager_text = self._humanize_agent_text(self.compose_manager_agent_output(product.title, final_result))
             await self.stream_thought(task_id, self.MANAGER_ROLE, 4, manager_text, product_id, emit_start=False)
             self._save_log(db, task_id, product_id, self.MANAGER_ROLE, 4, manager_text)
 
@@ -671,3 +707,34 @@ class WorkflowService:
 
 
 workflow_service = WorkflowService()
+
+
+_orig_compose_data_agent_output = WorkflowService.compose_data_agent_output
+_orig_compose_market_agent_output = WorkflowService.compose_market_agent_output
+_orig_compose_risk_agent_output = WorkflowService.compose_risk_agent_output
+
+
+def _compose_data_agent_output_with_price(self, name: str, result) -> str:
+    text = _orig_compose_data_agent_output(self, name, result)
+    if getattr(result, "suggested_price", None) is not None:
+        text += f"\n4. 建议价格：{float(result.suggested_price):.2f}"
+    return text
+
+
+def _compose_market_agent_output_with_price(self, name: str, result) -> str:
+    text = _orig_compose_market_agent_output(self, name, result)
+    if getattr(result, "suggested_price", None) is not None:
+        text += f"\n4. 建议价格：{float(result.suggested_price):.2f}"
+    return text
+
+
+def _compose_risk_agent_output_with_price(self, name: str, result) -> str:
+    text = _orig_compose_risk_agent_output(self, name, result)
+    if getattr(result, "suggested_price", None) is not None:
+        text += f"\n4. 建议价格：{float(result.suggested_price):.2f}"
+    return text
+
+
+WorkflowService.compose_data_agent_output = _compose_data_agent_output_with_price
+WorkflowService.compose_market_agent_output = _compose_market_agent_output_with_price
+WorkflowService.compose_risk_agent_output = _compose_risk_agent_output_with_price

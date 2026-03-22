@@ -109,6 +109,8 @@ class DataAnalysisResult(BaseModel):
     thinking_process: str = ""
     reasoning: str = ""
     decision_summary: str = ""
+    suggested_price: Optional[float] = None
+    expected_profit_change: Optional[float] = None
     confidence: float = 0.5
 
 
@@ -138,6 +140,8 @@ class MarketIntelResult(BaseModel):
     thinking_process: str = ""
     reasoning: str = ""
     decision_summary: str = ""
+    suggested_price: Optional[float] = None
+    expected_profit_change: Optional[float] = None
     confidence: float = 0.5
 
 
@@ -165,6 +169,8 @@ class RiskControlResult(BaseModel):
     thinking_process: str = ""
     reasoning: str = ""
     decision_summary: str = ""
+    suggested_price: Optional[float] = None
+    expected_profit_change: Optional[float] = None
     confidence: float = 0.5
 
 

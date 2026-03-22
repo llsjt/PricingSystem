@@ -223,9 +223,16 @@ public class DecisionController {
                 BigDecimal originalProfit = calculateProfit(originalPrice, cost, monthlySales);
                 vo.setOriginalProfit(originalProfit);
 
-                BigDecimal newProfit = calculateProfit(suggestedPrice, cost, monthlySales);
-                vo.setNewProfit(newProfit);
-                vo.setProfitChange(calculateProfitChange(originalProfit, newProfit));
+                BigDecimal storedProfitChange = result.getProfitChange();
+                if (storedProfitChange != null) {
+                    BigDecimal normalizedProfitChange = storedProfitChange.setScale(2, RoundingMode.HALF_UP);
+                    vo.setProfitChange(normalizedProfitChange);
+                    vo.setNewProfit(originalProfit.add(normalizedProfitChange).setScale(2, RoundingMode.HALF_UP));
+                } else {
+                    BigDecimal newProfit = calculateProfit(suggestedPrice, cost, monthlySales);
+                    vo.setNewProfit(newProfit);
+                    vo.setProfitChange(calculateProfitChange(originalProfit, newProfit));
+                }
                 
                 vo.setDiscountRate(result.getDiscountRate());
                 vo.setIsAccepted(result.getIsAccepted());

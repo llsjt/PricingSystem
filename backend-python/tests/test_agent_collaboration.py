@@ -2,14 +2,18 @@
 
 import asyncio
 
+from pricing_crew.agent_logic import run_manager_coordinator_agent
 from pricing_crew.decision_service import decision_service
 from pricing_crew.schemas import (
     AnalysisRequest,
     CompetitorData,
     CompetitorInfo,
+    DataAnalysisResult,
+    MarketIntelResult,
     ProductBase,
     ReviewData,
     RiskData,
+    RiskControlResult,
     SalesData,
 )
 
@@ -135,3 +139,179 @@ def test_price_floor_constraint_forces_increase():
     assert risk_result.required_min_price >= 189.0
     assert final_result.decision == "increase"
     assert final_result.suggested_price == 189.0
+
+
+def _build_manager_inputs(elasticity: float):
+    request = AnalysisRequest(
+        task_id="MANAGER_PROFIT_CASE",
+        product=ProductBase(
+            product_id="P_MANAGER_001",
+            product_name="Profit Case Product",
+            category="Electronics",
+            current_price=100.0,
+            cost=40.0,
+            stock=500,
+            stock_age_days=90,
+        ),
+        sales_data=SalesData(
+            sales_history_7d=[100] * 7,
+            sales_history_30d=[100] * 30,
+            sales_history_90d=[95] * 90,
+        ),
+        competitor_data=CompetitorData(competitors=[]),
+        risk_data=RiskData(min_profit_margin=0.15, enforce_hard_constraints=True),
+        strategy_goal="MAX_PROFIT",
+    )
+
+    data_result = DataAnalysisResult(
+        sales_trend="declining",
+        sales_trend_score=-0.3,
+        inventory_status="overstock",
+        inventory_health_score=42.0,
+        demand_elasticity=elasticity,
+        recommended_action="discount",
+        recommended_discount_range=(0.95, 0.97),
+        recommendation_confidence=0.8,
+        recommendation_reasons=["库存偏高，需要测试降价"],
+        analysis_details={"avg_sales_30d": 100.0},
+        decision_summary="数据分析建议：discount",
+        confidence=0.8,
+    )
+
+    market_result = MarketIntelResult(
+        competition_level="moderate",
+        competition_score=0.45,
+        price_position="mid-range",
+        price_percentile=0.5,
+        market_suggestion="maintain",
+        suggestion_confidence=0.7,
+        suggestion_reasons=["市场价格带稳定"],
+        analysis_details={"live_market_available": True},
+        decision_summary="市场情报建议：maintain",
+        confidence=0.7,
+    )
+
+    risk_result = RiskControlResult(
+        current_profit_margin=0.6,
+        break_even_price=40.0,
+        min_safe_price=47.06,
+        required_min_price=47.06,
+        risk_level="low",
+        risk_score=20.0,
+        allow_promotion=True,
+        max_safe_discount=0.9,
+        recommendation="discount",
+        recommendation_reasons=["风险可控"],
+        calculation_details={
+            "constraint_conflict": False,
+            "floor_breach": False,
+            "ceiling_breach": False,
+            "total_cost": 40.0,
+        },
+        confidence=0.8,
+    )
+
+    return request, data_result, market_result, risk_result
+
+
+def test_manager_profit_change_uses_expected_profit_delta():
+    request, data_result, market_result, risk_result = _build_manager_inputs(elasticity=-2.5)
+
+    final_result = run_manager_coordinator_agent(request, data_result, market_result, risk_result)
+
+    assert final_result.decision == "discount"
+    assert final_result.expected_outcomes is not None
+    assert final_result.expected_outcomes.sales_lift > 1.0
+    assert final_result.expected_outcomes.profit_change > 0
+
+
+def test_manager_can_choose_profitable_increase_for_max_profit():
+    request = AnalysisRequest(
+        task_id="MANAGER_INCREASE_CASE",
+        product=ProductBase(
+            product_id="P_MANAGER_002",
+            product_name="Increase Case Product",
+            category="Electronics",
+            current_price=100.0,
+            cost=40.0,
+            stock=180,
+            stock_age_days=45,
+        ),
+        sales_data=SalesData(
+            sales_history_7d=[100] * 7,
+            sales_history_30d=[100] * 30,
+            sales_history_90d=[98] * 90,
+        ),
+        competitor_data=CompetitorData(competitors=[]),
+        risk_data=RiskData(min_profit_margin=0.15, enforce_hard_constraints=True),
+        strategy_goal="MAX_PROFIT",
+    )
+
+    data_result = DataAnalysisResult(
+        sales_trend="stable",
+        sales_trend_score=0.0,
+        inventory_status="normal",
+        inventory_health_score=76.0,
+        demand_elasticity=-0.9,
+        recommended_action="maintain",
+        recommended_discount_range=(1.0, 1.0),
+        recommendation_confidence=0.8,
+        recommendation_reasons=["经营信号稳定"],
+        analysis_details={"avg_sales_30d": 100.0},
+        decision_summary="数据分析建议：maintain",
+        confidence=0.8,
+    )
+
+    market_result = MarketIntelResult(
+        competition_level="moderate",
+        competition_score=0.45,
+        price_position="mid-range",
+        price_percentile=0.5,
+        market_suggestion="maintain",
+        suggestion_confidence=0.75,
+        suggestion_reasons=["价格带稳定"],
+        analysis_details={"live_market_available": True},
+        decision_summary="市场情报建议：maintain",
+        confidence=0.75,
+    )
+
+    risk_result = RiskControlResult(
+        current_profit_margin=0.6,
+        break_even_price=40.0,
+        min_safe_price=47.06,
+        required_min_price=47.06,
+        risk_level="low",
+        risk_score=18.0,
+        allow_promotion=True,
+        max_safe_discount=0.9,
+        recommendation="maintain",
+        recommendation_reasons=["风险可控"],
+        calculation_details={
+            "constraint_conflict": False,
+            "floor_breach": False,
+            "ceiling_breach": False,
+            "total_cost": 40.0,
+        },
+        confidence=0.82,
+    )
+
+    final_result = run_manager_coordinator_agent(request, data_result, market_result, risk_result)
+
+    assert final_result.decision == "increase"
+    assert final_result.suggested_price > 100.0
+    assert final_result.expected_outcomes is not None
+    assert final_result.expected_outcomes.profit_change > 0
+
+
+def test_manager_avoids_unprofitable_discount_for_max_profit():
+    request, data_result, market_result, risk_result = _build_manager_inputs(elasticity=-0.3)
+    market_result.market_suggestion = "discount"
+    market_result.competition_level = "fierce"
+    market_result.price_position = "premium"
+
+    final_result = run_manager_coordinator_agent(request, data_result, market_result, risk_result)
+
+    assert final_result.decision in {"maintain", "increase"}
+    assert final_result.suggested_price >= 100.0
+    assert final_result.expected_outcomes is not None
+    assert final_result.expected_outcomes.profit_change >= 0.0
