@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def _f(value: Any, default: float = 0.0) -> float:
+    """把 Decimal、None 等值统一转成 float，减少金额和销量字段的类型分支。"""
     if isinstance(value, Decimal):
         return float(value)
     if value is None:
@@ -45,20 +46,24 @@ class WorkflowService:
     MANAGER_ROLE = "决策经理"
 
     def bootstrap(self) -> None:
+        """启动服务时初始化数据库，并按配置写入演示数据。"""
         init_database()
         if settings.bootstrap_demo_data:
             seed_realistic_demo_data()
 
     def _next_id(self, db: Session, model) -> int:
+        """在演示环境中通过“当前最大值 + 1”生成主键。"""
         return int(db.query(func.max(model.id)).scalar() or 0) + 1
 
     def _dec(self, value: Any, default: float = 0.0) -> Decimal:
+        """把输入安全地转成 Decimal，统一数据库金额字段写入格式。"""
         try:
             return Decimal(str(float(value if value is not None else default)))
         except Exception:
             return Decimal(str(default))
 
     def _parse_time(self, text: str) -> Optional[datetime]:
+        """兼容完整时间和纯日期两种输入格式。"""
         s = (text or "").strip()
         if not s:
             return None
@@ -70,6 +75,7 @@ class WorkflowService:
         return None
 
     def _fill_sales(self, db: Session, product_id: int, price: float, monthly_sales: int, days: int = 30) -> None:
+        """为商品补齐演示销量明细，确保趋势页和定价分析有基础数据可用。"""
         db.query(BizSalesDaily).filter(BizSalesDaily.product_id == product_id).delete(synchronize_session=False)
         baseline = max(monthly_sales / 30.0, 1.0)
         next_id = self._next_id(db, BizSalesDaily)
@@ -90,6 +96,7 @@ class WorkflowService:
             next_id += 1
 
     def get_product_list(self, page: int, size: int, keyword: str = "", data_source: str = "") -> Dict[str, Any]:
+        """查询商品列表，并按前端字段格式返回分页结果。"""
         db: Session = SessionLocal()
         try:
             q = db.query(BizProduct)
@@ -123,6 +130,7 @@ class WorkflowService:
             db.close()
 
     def add_product_manual(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """处理手工新增商品，并同步生成一段基础销量数据。"""
         db: Session = SessionLocal()
         try:
             title = str(payload.get("title") or "").strip()
@@ -154,6 +162,7 @@ class WorkflowService:
             db.close()
 
     def batch_delete_products(self, ids: List[int]) -> int:
+        """批量删除商品及其销量明细，避免留下孤立趋势数据。"""
         db: Session = SessionLocal()
         try:
             id_set = {int(x) for x in ids if str(x).strip()}
@@ -170,6 +179,7 @@ class WorkflowService:
             db.close()
 
     def build_product_template(self) -> bytes:
+        """生成商品导入模板，供前端下载。"""
         wb = Workbook()
         ws = wb.active
         ws.title = "products"
@@ -180,6 +190,7 @@ class WorkflowService:
         return output.getvalue()
 
     def import_products_from_excel(self, data: bytes, filename: str = "") -> Dict[str, Any]:
+        """导入 Excel 商品数据，并为每个新商品补齐演示销量明细。"""
         if not data:
             raise ValueError("上传文件为空")
         if filename.lower().endswith(".xls"):
@@ -229,6 +240,7 @@ class WorkflowService:
         return {"imported": ok, "skipped": skip, "message": f"导入完成：成功 {ok} 条，跳过 {skip} 条"}
 
     def get_product_trend(self, product_id: int, days: int = 30) -> Dict[str, Any]:
+        """返回商品趋势图和趋势卡片需要的销售、利润汇总数据。"""
         days = max(7, min(int(days or 30), 180))
         db: Session = SessionLocal()
         try:
@@ -257,6 +269,7 @@ class WorkflowService:
             db.close()
 
     def task_exists(self, task_id: int) -> bool:
+        """判断指定任务是否已经存在，避免重复创建同一个任务。"""
         db: Session = SessionLocal()
         try:
             return bool(db.query(DecTask).filter(DecTask.id == task_id).first())
@@ -270,6 +283,7 @@ class WorkflowService:
         constraints: str,
         predefined_task_id: Optional[int] = None,
     ) -> int:
+        """创建定价任务主记录，供 Python 与 Java 共同引用。"""
         db: Session = SessionLocal()
         try:
             if predefined_task_id is not None:
@@ -294,6 +308,7 @@ class WorkflowService:
             db.close()
 
     def update_task_status(self, task_id: int, status: str) -> None:
+        """更新任务状态，并在关键状态下补齐开始/完成时间。"""
         db: Session = SessionLocal()
         try:
             t = db.query(DecTask).filter(DecTask.id == task_id).first()
@@ -311,6 +326,7 @@ class WorkflowService:
             db.close()
 
     def parse_constraint_bundle(self, constraints: str) -> Dict[str, Any]:
+        """从自然语言约束里提取利润率、折扣、价格上下限等结构化参数。"""
         parsed: Dict[str, Any] = {"raw_text": constraints or "", "min_profit_margin": None, "min_profit_markup": None, "max_discount_allowed": None, "price_floor": None, "price_ceiling": None, "summary": []}
         if not constraints:
             return parsed
@@ -333,6 +349,7 @@ class WorkflowService:
         return parsed
 
     def build_risk_data(self, product: BizProduct, parsed: Dict[str, Any]) -> RiskData:
+        """把数据库商品信息和解析后的约束，拼成风控智能体需要的输入对象。"""
         return RiskData(min_profit_margin=parsed.get("min_profit_margin") or (0.2 if (product.category or "") == "数码配件" else 0.18), min_profit_markup=parsed.get("min_profit_markup"), target_profit_margin=0.30, max_discount_allowed=parsed.get("max_discount_allowed"), price_floor=parsed.get("price_floor"), price_ceiling=parsed.get("price_ceiling"), enforce_hard_constraints=True, constraint_summary=list(parsed.get("summary") or []))
 
     def _to_cn_action(self, action: str) -> str:
@@ -392,6 +409,7 @@ class WorkflowService:
         return "实时竞品数据暂不可用或样本不足，结果已按保守策略处理。"
 
     def _humanize_agent_text(self, text: str) -> str:
+        """把内部术语、英文标签和技术字段替换成前端用户能读懂的中文文案。"""
         normalized = str(text or "")
         replacements = {
             "把握程度": "可信度",
@@ -440,6 +458,7 @@ class WorkflowService:
         return normalized
 
     def compose_data_agent_output(self, name: str, result) -> str:
+        """把数据分析结果拼成前端流式展示用的话术。"""
         reasons = "；".join(result.recommendation_reasons[:2]) if result.recommendation_reasons else "暂无额外补充依据。"
         discount_text = self._format_discount_guidance(
             result.recommended_discount_range[0],
@@ -463,6 +482,7 @@ class WorkflowService:
         )
 
     def compose_market_agent_output(self, name: str, result) -> str:
+        """把市场情报结果拼成前端流式展示用的话术。"""
         reasons = "；".join(result.suggestion_reasons[:2]) if result.suggestion_reasons else "暂无额外补充依据。"
         data_sources = "、".join(result.data_sources[:2]) if result.data_sources else "无可用市场源"
         live_market_text = self._format_live_market_status(bool(result.analysis_details.get("live_market_available")))
@@ -477,6 +497,7 @@ class WorkflowService:
         )
 
     def compose_risk_agent_output(self, name: str, result) -> str:
+        """把风控结果拼成前端流式展示用的话术。"""
         reasons = "；".join(result.recommendation_reasons[:2]) if result.recommendation_reasons else "暂无额外补充依据。"
         warning_text = "；".join(result.warnings[:2]) if result.warnings else "暂无阻断型风险预警。"
         return (
@@ -490,6 +511,7 @@ class WorkflowService:
         )
 
     def compose_manager_agent_output(self, name: str, result) -> str:
+        """把经理协调结果拼成前端流式展示用的话术。"""
         factors = "、".join(result.key_factors[:3]) if result.key_factors else "暂无关键因子"
         warnings = "；".join(result.warnings[:2]) if result.warnings else "无"
         next_step = result.execution_plan[0].action if result.execution_plan else "按建议价格上线并持续监测。"
@@ -503,6 +525,7 @@ class WorkflowService:
         )
 
     async def execute_task(self, task_id: int, product_ids: List[int], strategy_goal: str, constraints: str) -> None:
+        """按商品逐个执行完整的四智能体定价流程。"""
         self.update_task_status(task_id, "RUNNING")
         for product_id in product_ids:
             await self.process_single_product(task_id, product_id, strategy_goal, constraints)
@@ -510,9 +533,11 @@ class WorkflowService:
         await manager.broadcast(json.dumps({"type": "complete", "task_id": task_id}, ensure_ascii=False), str(task_id))
 
     async def process_single_product(self, task_id: int, product_id: int, strategy_goal: str, constraints: str) -> None:
+        """处理单个商品的完整定价链路：取数、跑四个智能体、落库并推送。"""
         db: Session = SessionLocal()
         try:
             # 仅在执行 agent 时从数据库读取商品上下文，避免在 Python 层承载通用业务逻辑。
+            # 先从数据库读取当前商品快照，并据此组装四个智能体共享的分析请求。
             product = db.query(BizProduct).filter(BizProduct.id == product_id).first()
             if not product:
                 raise ValueError(f"商品 {product_id} 不存在")
@@ -520,6 +545,7 @@ class WorkflowService:
             req = AnalysisRequest(task_id=str(task_id), product=ProductBase(product_id=str(product.id), product_name=product.title, category=product.category or "未分类", current_price=_f(product.current_price), cost=_f(product.cost_price), original_price=_f(product.market_price) if product.market_price is not None else None, stock=int(product.stock or 0), stock_age_days=max(14, int((int(product.stock or 0) / max(int(product.monthly_sales or 1) / 30.0, 1.0)) * 1.25))), sales_data=SalesData(), competitor_data=CompetitorData(competitors=[]), risk_data=self.build_risk_data(product, parsed), customer_reviews=[], strategy_goal=strategy_goal, strategy_constraints=constraints, business_context={"product_id": int(product.id), "prefer_db_tools": True, "parsed_constraints": parsed})
 
             # 每个 agent 完成后立即推流，避免前端长时间无输出。
+            # 四个智能体按照“数据 -> 市场 -> 风控 -> 经理”的固定顺序依次发言。
             await self.stream_thought(task_id, self.DATA_ROLE, 1, "", product_id, emit_end=False)
             data_result = await asyncio.to_thread(run_data_analysis_agent, req)
             data_text = self._humanize_agent_text(self.compose_data_agent_output(product.title, data_result))
@@ -566,6 +592,7 @@ class WorkflowService:
             db.close()
 
     def _save_log(self, db: Session, task_id: int, product_id: int, role: str, order: int, content: str) -> None:
+        """保存单个智能体的发言日志，供前端任务详情页回放。"""
         text = f"商品 {product_id}\n{content}"
         db.add(
             DecAgentLog(
@@ -579,6 +606,7 @@ class WorkflowService:
         db.commit()
 
     def _save_result(self, db: Session, task_id: int, product_id: int, final) -> None:
+        """保存最终定价结果，若已有记录则执行覆盖更新。"""
         row = db.query(DecResult).filter(DecResult.task_id == task_id, DecResult.product_id == product_id).first()
         if row:
             row.decision, row.discount_rate, row.suggested_price, row.profit_change, row.core_reasons = final.decision, self._dec(final.discount_rate), self._dec(final.suggested_price), self._dec(final.expected_outcomes.profit_change if final.expected_outcomes else 0), final.core_reasons
@@ -596,6 +624,7 @@ class WorkflowService:
         emit_start: bool = True,
         emit_end: bool = True,
     ) -> None:
+        """把智能体输出拆成小片段逐步推送，模拟实时协作讨论过程。"""
         if emit_start:
             await manager.broadcast(
                 json.dumps(
@@ -653,6 +682,7 @@ class WorkflowService:
             )
 
     def get_task_results(self, task_id: int) -> List[Dict[str, Any]]:
+        """读取任务结果列表，并补齐原价、采纳状态等前端字段。"""
         db: Session = SessionLocal()
         try:
             rows = db.query(DecResult, BizProduct).join(BizProduct, BizProduct.id == DecResult.product_id).filter(DecResult.task_id == task_id).order_by(DecResult.id.asc()).all()

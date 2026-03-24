@@ -39,9 +39,13 @@ public class DecisionController {
     private final com.example.pricing.mapper.DecAgentLogMapper logMapper;
     private final RestTemplate restTemplate = new RestTemplate();
 
+    /**
+     * 创建定价任务，并把任务参数转发给 Python 智能体服务。
+     * Java 侧负责落任务主记录，Python 侧负责真正执行 4 个 agent。
+     */
     @PostMapping("/start")
     public Result<Long> startDecisionTask(@RequestBody Map<String, Object> body) {
-        // Adapt input to map because Frontend sends productIds, strategyGoal, constraints
+        // 前端直接传商品 ID、策略目标和约束文本，这里先做一层兼容解析。
         List<Number> productIdsObj = (List<Number>) body.get("productIds");
         List<Long> productIds = new java.util.ArrayList<>();
         if (productIdsObj != null) {
@@ -67,14 +71,14 @@ public class DecisionController {
             else return Result.error("无效的策略目标");
         }
 
-        // 1. Create Task
+        // 先在本地数据库创建任务主记录，保证前端能马上拿到任务编号。
         DecTask task = new DecTask();
         task.setTaskNo(UUID.randomUUID().toString());
         task.setStrategyType(strategyGoal);
         task.setConstraints(constraints);
         task.setStatus("RUNNING");
 
-        // Fetch product names for snapshot
+        // 保存商品名称快照，避免后续商品名变更导致历史任务展示不一致。
         if (!productIds.isEmpty()) {
             List<com.example.pricing.entity.BizProduct> products = productMapper.selectBatchIds(productIds);
             String names = products.stream()
@@ -86,7 +90,7 @@ public class DecisionController {
 
         taskMapper.insert(task);
 
-        // 2. Call Python Agent Service
+        // 再把任务参数转发给 Python 服务，真正开始 4 个 agent 的执行流程。
         String pythonServiceUrl = "http://localhost:8000/api/decision/start";
         Map<String, Object> request = new HashMap<>();
         request.put("task_id", task.getId());
@@ -95,7 +99,7 @@ public class DecisionController {
         request.put("constraints", constraints);
 
         try {
-            // Note: In production, use async call or message queue
+            // 当前演示环境直接同步调用，生产场景更适合改成异步消息或任务队列。
             restTemplate.postForObject(pythonServiceUrl, request, Map.class);
         } catch (Exception e) {
             log.error("Failed to call Python service", e);
@@ -107,6 +111,9 @@ public class DecisionController {
         return Result.success(task.getId());
     }
 
+    /**
+     * 查询任务结果，并补齐商品标题和原价等前端展示字段。
+     */
     @GetMapping("/result/{taskId}")
     public Result<List<DecResult>> getTaskResult(@PathVariable Long taskId) {
         LambdaQueryWrapper<DecResult> wrapper = new LambdaQueryWrapper<>();
@@ -147,6 +154,9 @@ public class DecisionController {
         return Result.success(results);
     }
 
+    /**
+     * 查询任务中的 agent 发言日志，前端据此回放“协同过程”。
+     */
     @GetMapping("/logs/{taskId}")
     public Result<List<com.example.pricing.entity.DecAgentLog>> getTaskLogs(@PathVariable Long taskId) {
         LambdaQueryWrapper<com.example.pricing.entity.DecAgentLog> wrapper = new LambdaQueryWrapper<>();
@@ -155,6 +165,9 @@ public class DecisionController {
         return Result.success(logMapper.selectList(wrapper));
     }
 
+    /**
+     * 分页查询任务列表，支持按状态、策略和时间区间筛选。
+     */
     @GetMapping("/tasks")
     public Result<Page<DecTask>> getTasks(
             @RequestParam(defaultValue = "1") int page,
@@ -181,6 +194,9 @@ public class DecisionController {
         return Result.success(taskMapper.selectPage(pageParam, wrapper));
     }
 
+    /**
+     * 统计任务总数、完成数和执行中数量，供档案页概览卡片使用。
+     */
     @GetMapping("/tasks/stats")
     public Result<Map<String, Long>> getTaskStats(
             @RequestParam(required = false) String strategyType,
@@ -207,6 +223,9 @@ public class DecisionController {
         return Result.success(stats);
     }
 
+    /**
+     * 生成某个任务的价格对比视图，展示原价、建议价和利润变化。
+     */
     @GetMapping("/comparison/{taskId}")
     public Result<List<com.example.pricing.vo.DecisionComparisonVO>> getComparison(@PathVariable Long taskId) {
         LambdaQueryWrapper<DecResult> wrapper = new LambdaQueryWrapper<>();
@@ -258,6 +277,9 @@ public class DecisionController {
         return Result.success(comparisonList);
     }
 
+    /**
+     * 采纳某条定价建议，同时把商品现价更新为建议价。
+     */
     @PostMapping("/apply/{resultId}")
     public Result<Void> applyDecision(@PathVariable Long resultId) {
         DecResult result = resultMapper.selectById(resultId);
@@ -265,14 +287,14 @@ public class DecisionController {
             return Result.error("Result not found");
         }
         
-        // Update product price
+        // 先把商品现价更新为建议价，保证后续页面和下一次分析看到的是最新价格。
         com.example.pricing.entity.BizProduct product = productMapper.selectById(result.getProductId());
         if (product != null) {
             product.setCurrentPrice(result.getSuggestedPrice());
             productMapper.updateById(product);
         }
         
-        // Update result status
+        // 再把结果状态标记为“已采纳”，方便档案页追踪。
         result.setIsAccepted(true);
         result.setAdoptStatus("ADOPTED");
         resultMapper.updateById(result);
@@ -280,6 +302,9 @@ public class DecisionController {
         return Result.success(null);
     }
 
+    /**
+     * 驳回某条建议，并记录驳回原因，便于后续复盘。
+     */
     @PostMapping("/reject/{resultId}")
     public Result<Void> rejectDecision(@PathVariable Long resultId, @RequestBody Map<String, String> body) {
         DecResult result = resultMapper.selectById(resultId);
@@ -287,7 +312,7 @@ public class DecisionController {
             return Result.error("Result not found");
         }
         
-        // Update result status
+        // 这里只改结果状态，不回滚商品价格，因为驳回意味着本次建议未执行。
         result.setIsAccepted(false);
         result.setAdoptStatus("REJECTED");
         result.setRejectReason(body.get("reason"));
@@ -296,6 +321,9 @@ public class DecisionController {
         return Result.success(null);
     }
 
+    /**
+     * 统一拼装任务列表和统计接口共用的筛选条件。
+     */
     private void applyCommonFilters(
             LambdaQueryWrapper<DecTask> wrapper,
             String strategyType,
@@ -312,6 +340,10 @@ public class DecisionController {
         }
     }
 
+    /**
+     * 归一化结果报告中的原价展示。
+     * 优先用“建议价 / 折扣系数”反推原价，反推失败时退回商品当前价。
+     */
     private BigDecimal normalizeOriginalPrice(BigDecimal currentPrice, BigDecimal suggestedPrice, BigDecimal discountRate) {
         if (suggestedPrice != null && discountRate != null && discountRate.compareTo(BigDecimal.ZERO) > 0) {
             return suggestedPrice.divide(discountRate, 2, RoundingMode.HALF_UP);
@@ -325,6 +357,9 @@ public class DecisionController {
         return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     }
 
+    /**
+     * 按“(售价 - 成本) * 月销量”估算利润，供结果对比页展示。
+     */
     private BigDecimal calculateProfit(BigDecimal price, BigDecimal cost, int monthlySales) {
         BigDecimal safePrice = price != null ? price : BigDecimal.ZERO;
         BigDecimal safeCost = cost != null ? cost : BigDecimal.ZERO;
@@ -334,15 +369,21 @@ public class DecisionController {
                 .setScale(2, RoundingMode.HALF_UP);
     }
 
+    /**
+     * 计算新旧方案之间的利润变化额。
+     */
     private BigDecimal calculateProfitChange(BigDecimal originalProfit, BigDecimal newProfit) {
         BigDecimal safeOriginalProfit = originalProfit != null ? originalProfit : BigDecimal.ZERO;
         BigDecimal safeNewProfit = newProfit != null ? newProfit : BigDecimal.ZERO;
         return safeNewProfit.subtract(safeOriginalProfit).setScale(2, RoundingMode.HALF_UP);
     }
 
+    /**
+     * 导出任务的价格对比报告，便于线下汇报或归档。
+     */
     @GetMapping("/export/{taskId}")
     public void exportDecisionReport(@PathVariable Long taskId, HttpServletResponse response) throws IOException {
-        // Fetch comparison data
+        // 先复用对比接口的计算结果，避免导出和页面展示口径不一致。
         List<com.example.pricing.vo.DecisionComparisonVO> comparisonList = getComparison(taskId).getData();
         
         response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");

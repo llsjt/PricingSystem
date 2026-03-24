@@ -39,6 +39,10 @@ public class ProductServiceImpl implements ProductService {
     private final SysImportBatchMapper batchMapper;
     private final com.example.pricing.mapper.BizProductDailyStatMapper statMapper;
 
+    /**
+     * 导入 Excel 商品数据。
+     * 这里负责文件校验、批次记录落库，以及驱动 EasyExcel 逐行解析。
+     */
     @Override
     public Result<String> importData(MultipartFile file) {
         if (file.isEmpty()) {
@@ -86,6 +90,10 @@ public class ProductServiceImpl implements ProductService {
         return Result.success("导入完成: 成功 " + listener.getSuccessCount() + " 行, 失败 " + listener.getFailCount() + " 行");
     }
 
+    /**
+     * 保存单条导入商品。
+     * 如果商品标题已存在则更新，否则新增，并在有日销数据时同步维护趋势明细。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void saveImportedProduct(ProductImportDTO data, Long batchId) {
@@ -139,6 +147,9 @@ public class ProductServiceImpl implements ProductService {
         }
     }
     
+    /**
+     * 保存商品当天的销量统计，供趋势图和趋势卡片计算使用。
+     */
     private void saveDailyStat(Long productId, ProductImportDTO data) {
         java.time.LocalDate today = java.time.LocalDate.now();
         
@@ -191,6 +202,9 @@ public class ProductServiceImpl implements ProductService {
         }
     }
 
+    /**
+     * 解析百分比字符串，兼容“12%”和“0.12”两种输入格式。
+     */
     private BigDecimal parsePercentage(String str) {
         if (str == null || str.trim().isEmpty()) {
             return BigDecimal.ZERO;
@@ -214,6 +228,9 @@ public class ProductServiceImpl implements ProductService {
         }
     }
 
+    /**
+     * 手工新增商品。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Result<Void> addProductManual(ProductManualDTO dto) {
@@ -241,6 +258,9 @@ public class ProductServiceImpl implements ProductService {
         return Result.success();
     }
 
+    /**
+     * 分页查询商品列表，并把实体对象转换成前端展示用 VO。
+     */
     @Override
     public Result<Page<ProductListVO>> getProductList(int page, int size, String keyword, String dataSource) {
         // 校验分页参数
@@ -294,6 +314,9 @@ public class ProductServiceImpl implements ProductService {
         return Result.success(resultPage);
     }
 
+    /**
+     * 下载商品导入模板，方便运营同学按统一格式准备数据。
+     */
     @Override
     public void downloadTemplate(HttpServletResponse response) {
         try {
@@ -323,6 +346,9 @@ public class ProductServiceImpl implements ProductService {
         }
     }
 
+    /**
+     * 批量删除商品。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Result<Void> batchDelete(List<Long> ids) {
@@ -341,6 +367,10 @@ public class ProductServiceImpl implements ProductService {
         }
     }
 
+    /**
+     * 查询商品经营趋势。
+     * 这个方法既返回图表序列，也会返回日/月销售量和日/月利润等卡片指标。
+     */
     @Override
     public Result<com.example.pricing.vo.ProductTrendVO> getProductTrend(Long id, int days) {
         // 1. Check if product exists
@@ -361,7 +391,7 @@ public class ProductServiceImpl implements ProductService {
         
         List<com.example.pricing.entity.BizProductDailyStat> stats = statMapper.selectList(wrapper);
         
-        // 3. Transform to VO
+        // 先组装趋势图所需的基础序列：日期、销量、客单价等。
         com.example.pricing.vo.ProductTrendVO vo = new com.example.pricing.vo.ProductTrendVO();
         List<String> dates = new ArrayList<>();
         List<Integer> visitors = new ArrayList<>();
@@ -388,22 +418,22 @@ public class ProductServiceImpl implements ProductService {
         vo.setConversionRates(conversionRates);
         vo.setAvgOrderValues(avgOrderValues);
         
-        // Calculate insights
+        // 再计算卡片区展示的绝对值和增长值。
         if (!stats.isEmpty()) {
-            // Current day (or last available day)
+            // 以最后一个有数据的自然日作为“当前日”口径。
             com.example.pricing.entity.BizProductDailyStat lastStat = stats.get(stats.size() - 1);
             java.time.LocalDate lastDate = lastStat.getStatDate();
             
-            // Previous day
+            // 对比前一日，计算日环比。
             com.example.pricing.entity.BizProductDailyStat prevDayStat = findStatByDate(id, lastDate.minusDays(1));
 
-            // 30-day and previous 30-day windows for absolute monthly values and month-over-month growth.
+            // 使用最近 30 天和再往前 30 天两个窗口，计算月累计值和月环比。
             List<com.example.pricing.entity.BizProductDailyStat> currentMonthStats =
                     findStatsByRange(id, lastDate.minusDays(29), lastDate);
             List<com.example.pricing.entity.BizProductDailyStat> previousMonthStats =
                     findStatsByRange(id, lastDate.minusDays(59), lastDate.minusDays(30));
 
-            // Profit Calculation (Turnover - Cost * Sales)
+            // 利润统一按“营业额 - 销量 * 成本价”口径计算。
             BigDecimal costPrice = product.getCostPrice() != null ? product.getCostPrice() : BigDecimal.ZERO;
 
             int currentDailySales = lastStat.getSalesCount() != null ? lastStat.getSalesCount() : 0;
@@ -416,25 +446,25 @@ public class ProductServiceImpl implements ProductService {
             BigDecimal currentMonthlyProfit = sumProfit(currentMonthStats, costPrice);
             BigDecimal previousMonthlyProfit = sumProfit(previousMonthStats, costPrice);
 
-            // Current absolute values (for dashboard cards)
+            // 这四个字段是趋势弹窗顶部卡片直接展示的当前值。
             vo.setCurrentDailySales(currentDailySales);
             vo.setCurrentMonthlySales(currentMonthlySales);
             vo.setCurrentDailyProfit(currentDailyProfit.doubleValue());
             vo.setCurrentMonthlyProfit(currentMonthlyProfit.doubleValue());
 
-            // Daily Sales Growth
+            // 日销量增长：当前日对比前一日。
             vo.setDailySalesGrowth(currentDailySales - prevDaySales);
             vo.setDailySalesGrowthRate(calculateGrowthRate(new BigDecimal(currentDailySales), new BigDecimal(prevDaySales)));
 
-            // Monthly Sales Growth
+            // 月销量增长：最近 30 天对比前 30 天。
             vo.setMonthlySalesGrowth(currentMonthlySales - previousMonthlySales);
             vo.setMonthlySalesGrowthRate(calculateGrowthRate(new BigDecimal(currentMonthlySales), new BigDecimal(previousMonthlySales)));
 
-            // Daily Profit Growth
+            // 日利润增长：当前日利润对比前一日利润。
             vo.setDailyProfitGrowth(currentDailyProfit.subtract(prevDayProfit).doubleValue());
             vo.setDailyProfitGrowthRate(calculateGrowthRate(currentDailyProfit, prevDayProfit));
 
-            // Monthly Profit Growth
+            // 月利润增长：最近 30 天利润对比前 30 天利润。
             vo.setMonthlyProfitGrowth(currentMonthlyProfit.subtract(previousMonthlyProfit).doubleValue());
             vo.setMonthlyProfitGrowthRate(calculateGrowthRate(currentMonthlyProfit, previousMonthlyProfit));
         }
@@ -442,6 +472,9 @@ public class ProductServiceImpl implements ProductService {
         return Result.success(vo);
     }
 
+    /**
+     * 查询某个商品某一天的统计明细。
+     */
     private com.example.pricing.entity.BizProductDailyStat findStatByDate(Long productId, java.time.LocalDate date) {
         LambdaQueryWrapper<com.example.pricing.entity.BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(com.example.pricing.entity.BizProductDailyStat::getProductId, productId);
@@ -449,6 +482,9 @@ public class ProductServiceImpl implements ProductService {
         return statMapper.selectOne(wrapper);
     }
 
+    /**
+     * 查询某个商品在指定日期区间内的统计明细。
+     */
     private List<com.example.pricing.entity.BizProductDailyStat> findStatsByRange(
             Long productId,
             java.time.LocalDate startDate,
@@ -461,6 +497,9 @@ public class ProductServiceImpl implements ProductService {
         return statMapper.selectList(wrapper);
     }
 
+    /**
+     * 汇总区间内总销量。
+     */
     private int sumSales(List<com.example.pricing.entity.BizProductDailyStat> stats) {
         int total = 0;
         for (com.example.pricing.entity.BizProductDailyStat stat : stats) {
@@ -469,6 +508,9 @@ public class ProductServiceImpl implements ProductService {
         return total;
     }
 
+    /**
+     * 汇总区间内总利润。
+     */
     private BigDecimal sumProfit(List<com.example.pricing.entity.BizProductDailyStat> stats, BigDecimal costPrice) {
         BigDecimal total = BigDecimal.ZERO;
         for (com.example.pricing.entity.BizProductDailyStat stat : stats) {
@@ -477,6 +519,9 @@ public class ProductServiceImpl implements ProductService {
         return total;
     }
 
+    /**
+     * 计算增长率；前值为 0 时直接返回 0，避免除零。
+     */
     private Double calculateGrowthRate(BigDecimal current, BigDecimal previous) {
         if (previous == null || previous.compareTo(BigDecimal.ZERO) == 0) {
             return 0.0;
@@ -486,6 +531,9 @@ public class ProductServiceImpl implements ProductService {
                 .doubleValue();
     }
     
+    /**
+     * 计算单条统计记录对应的利润。
+     */
     private BigDecimal calculateProfit(com.example.pricing.entity.BizProductDailyStat stat, BigDecimal costPrice) {
         if (stat == null) return BigDecimal.ZERO;
         BigDecimal turnover = stat.getTurnover() != null ? stat.getTurnover() : BigDecimal.ZERO;
@@ -495,14 +543,17 @@ public class ProductServiceImpl implements ProductService {
         return turnover.subtract(cost);
     }
 
+    /**
+     * 为没有真实趋势数据的商品生成演示用历史数据。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void generateMockTrendData(Long productId) {
-        // Generate data for past 90 days
+        // 生成最近 90 天的模拟销量和营业额，用于演示趋势图。
         java.time.LocalDate today = java.time.LocalDate.now();
         java.util.Random random = new java.util.Random();
-        
-        // Check if data exists to avoid duplicates
+
+        // 如果已经存在趋势数据，就不重复造数。
         LambdaQueryWrapper<com.example.pricing.entity.BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(com.example.pricing.entity.BizProductDailyStat::getProductId, productId);
         if (statMapper.selectCount(wrapper) > 0) return;

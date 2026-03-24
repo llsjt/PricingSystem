@@ -1,10 +1,10 @@
-"""Local 4-agent pricing logic.
+"""本地四智能体定价逻辑。
 
-This module implements a deterministic workflow:
-1. Data analysis agent
-2. Market intelligence agent
-3. Risk control agent
-4. Manager coordinator agent
+主链路分为四步：
+1. 数据分析智能体读取销量与库存信号
+2. 市场情报智能体读取竞品与市场价格信号
+3. 风险控制智能体计算利润底线与约束边界
+4. 决策经理综合前三者方案，产出最终建议
 """
 
 from __future__ import annotations
@@ -38,10 +38,12 @@ from pricing_crew.tools.custom_tool import (
 
 
 def _clamp(value: float, low: float, high: float) -> float:
+    """把数值限制在给定区间内，避免评分或价格越界。"""
     return max(low, min(high, value))
 
 
 def _safe_mean(values: Sequence[float | int]) -> float:
+    """在过滤空值和异常类型后计算均值，供销量与趋势计算复用。"""
     numeric = [float(v) for v in values if isinstance(v, (int, float))]
     if not numeric:
         return 0.0
@@ -49,6 +51,7 @@ def _safe_mean(values: Sequence[float | int]) -> float:
 
 
 def _extract_product_id(request: AnalysisRequest) -> Optional[int]:
+    """从请求对象中提取商品 ID，方便后续按需走数据库工具链。"""
     try:
         return int(request.product.product_id)
     except (TypeError, ValueError):
@@ -56,6 +59,11 @@ def _extract_product_id(request: AnalysisRequest) -> Optional[int]:
 
 
 def _load_data_agent_payload(request: AnalysisRequest) -> Dict[str, Any]:
+    """为数据分析智能体准备输入。
+
+    优先使用数据库上下文工具读取真实经营数据；如果当前场景不走数据库，
+    就退回到请求体里携带的商品与销量数据。
+    """
     product_id = _extract_product_id(request)
     prefer_db_tools = bool(request.business_context.get("prefer_db_tools"))
     if prefer_db_tools and product_id is not None:
@@ -72,6 +80,7 @@ def _load_data_agent_payload(request: AnalysisRequest) -> Dict[str, Any]:
 
 
 def _load_risk_agent_payload(request: AnalysisRequest) -> Dict[str, Any]:
+    """为风控智能体准备输入，并把前端约束合并到风险上下文里。"""
     product_id = _extract_product_id(request)
     prefer_db_tools = bool(request.business_context.get("prefer_db_tools"))
     if prefer_db_tools and product_id is not None:
@@ -94,6 +103,11 @@ def _load_risk_agent_payload(request: AnalysisRequest) -> Dict[str, Any]:
 
 
 def _build_market_payload(request: AnalysisRequest) -> Dict[str, Any]:
+    """为市场情报智能体准备竞品数据。
+
+    如果请求已经提供竞品，就直接使用；否则调用抓取工具补足一份市场样本。
+    在异步环境里会切到线程池，避免阻塞事件循环。
+    """
     if request.competitor_data.competitors:
         return {
             "success": True,
@@ -119,6 +133,7 @@ def _build_market_payload(request: AnalysisRequest) -> Dict[str, Any]:
 
 
 def _demand_elasticity(promotion_history: List[Dict[str, Any]], current_price: float, category: str) -> float:
+    """根据历史促销前后销量变化估算价格弹性。"""
     points: List[float] = []
     for row in promotion_history:
         before = float(row.get("sales_before") or 0)
@@ -142,6 +157,7 @@ def _demand_elasticity(promotion_history: List[Dict[str, Any]], current_price: f
 
 
 def _estimate_monthly_sales(request: AnalysisRequest, data_result: Optional[DataAnalysisResult] = None) -> float:
+    """估算当前价格下的月销量基线，供利润变化计算使用。"""
     avg_sales_30d = 0.0
     if data_result is not None:
         avg_sales_30d = float(data_result.analysis_details.get("avg_sales_30d") or 0.0)
@@ -155,6 +171,7 @@ def _estimate_monthly_sales(request: AnalysisRequest, data_result: Optional[Data
 
 
 def _required_min_price_from_request(request: AnalysisRequest) -> float:
+    """根据成本、最低利润率和显式价格下限，算出请求层面的最低可卖价。"""
     declared_floor = float(request.risk_data.price_floor) if request.risk_data.price_floor is not None else 0.0
     min_profit_margin = _clamp(float(request.risk_data.min_profit_margin or 0.0), 0.0, 0.95)
     cost = max(float(request.product.cost or 0.0), 0.0)
@@ -167,6 +184,7 @@ def _apply_request_price_bounds(
     price: float,
     required_min_price: Optional[float] = None,
 ) -> float:
+    """把候选价格压到约束区间内，统一处理价格上限和最低安全价。"""
     normalized = max(float(price), 0.01)
     ceiling = request.risk_data.price_ceiling
     if ceiling is not None:
@@ -179,6 +197,7 @@ def _apply_request_price_bounds(
 
 
 def _estimate_sales_lift(current_price: float, suggested_price: float, elasticity: Optional[float]) -> float:
+    """根据价格弹性估算调价后的销量变化倍数。"""
     if current_price <= 0:
         return 1.0
     demand_elasticity = _clamp(float(elasticity if elasticity is not None else -0.9), -3.0, 0.0)
@@ -196,6 +215,7 @@ def _estimate_profit_change(
     unit_total_cost: Optional[float] = None,
     data_result: Optional[DataAnalysisResult] = None,
 ) -> float:
+    """估算调价后相对当前价格的月利润增减额。"""
     monthly_sales = _estimate_monthly_sales(request, data_result)
     unit_cost = (
         float(unit_total_cost)
@@ -211,6 +231,7 @@ def _estimate_profit_change(
 
 
 def _candidate_decision(current_price: float, suggested_price: float) -> str:
+    """把建议价转换成业务动作：提价、降价或维持原价。"""
     if suggested_price > current_price + 0.01:
         return "increase"
     if suggested_price < current_price - 0.01:
@@ -219,6 +240,7 @@ def _candidate_decision(current_price: float, suggested_price: float) -> str:
 
 
 def _to_cn_action(action: str) -> str:
+    """把内部动作码翻译成前端可读的中文动作描述。"""
     mapping = {
         "maintain": "维持原价",
         "discount": "小幅降价",
@@ -232,6 +254,7 @@ def _to_cn_action(action: str) -> str:
 
 
 def _to_cn_agent_name(agent_name: str) -> str:
+    """把内部智能体名称翻译成中文角色名。"""
     mapping = {
         "data": "数据分析",
         "market": "市场情报",
@@ -249,6 +272,7 @@ def _to_cn_risk_level(level: str) -> str:
 
 
 def _describe_discount_range(min_rate: float, max_rate: float) -> str:
+    """把折扣系数区间转换成自然语言描述。"""
     min_rate = float(min_rate)
     max_rate = float(max_rate)
     if abs(min_rate - 1.0) < 1e-6 and abs(max_rate - 1.0) < 1e-6:
@@ -261,6 +285,7 @@ def _describe_discount_range(min_rate: float, max_rate: float) -> str:
 
 
 def _goal_code(request: AnalysisRequest) -> str:
+    """统一读取策略目标，避免各个智能体分别处理大小写和空值。"""
     return str(request.strategy_goal or "MAX_PROFIT").upper()
 
 
@@ -268,6 +293,11 @@ def _forced_decision_by_constraints(
     request: AnalysisRequest,
     required_min_price: Optional[float] = None,
 ) -> Optional[tuple[str, float]]:
+    """先判断是否存在必须立即执行的硬约束动作。
+
+    例如当前价格已经低于最低安全价，或者高于价格上限，这类情况不再交给
+    智能体自由讨论，而是直接返回强制动作和对应价格。
+    """
     current_price = max(float(request.product.current_price), 0.01)
     price_ceiling = request.risk_data.price_ceiling
     floor = float(required_min_price) if required_min_price is not None else _required_min_price_from_request(request)
@@ -282,6 +312,7 @@ def _forced_decision_by_constraints(
 
 
 def _market_suggestion_to_decision(suggestion: str) -> str:
+    """把市场智能体的建议类型归一成统一决策动作。"""
     normalized = str(suggestion or "maintain").lower()
     if normalized in {"discount", "penetrate", "price_war"}:
         return "discount"
@@ -291,6 +322,7 @@ def _market_suggestion_to_decision(suggestion: str) -> str:
 
 
 def _decision_to_market_suggestion(decision: str) -> str:
+    """把统一决策动作翻回市场智能体使用的建议标签。"""
     normalized = str(decision or "maintain").lower()
     if normalized == "discount":
         return "discount"
@@ -305,6 +337,11 @@ def _evaluate_request_candidate(
     elasticity: Optional[float],
     required_min_price: Optional[float] = None,
 ) -> Dict[str, float | str]:
+    """评估单个候选价格的业务效果。
+
+    这里统一输出动作方向、建议价、折扣系数、销量变化和利润变化，
+    让三类智能体与经理都能使用同一套评分口径。
+    """
     current_price = max(float(request.product.current_price), 0.01)
     bounded_price = _apply_request_price_bounds(request, candidate_price, required_min_price=required_min_price)
     decision = _candidate_decision(current_price, bounded_price)
@@ -347,6 +384,11 @@ def _pick_best_candidate(
     required_min_price: Optional[float] = None,
     allowed_decisions: Optional[Sequence[str]] = None,
 ) -> Dict[str, float | str]:
+    """从一组候选调价系数中挑选最优方案。
+
+    先把所有候选统一换算成完整评估结果，再按允许方向过滤，
+    最后优先选择“满足目标方向且利润更优”的方案。
+    """
     current_price = max(float(request.product.current_price), 0.01)
     by_price: Dict[float, Dict[str, float | str]] = {}
 
@@ -416,6 +458,7 @@ def _pick_best_candidate(
 
 
 def _derive_data_agent_suggested_price(request: AnalysisRequest, result: DataAnalysisResult) -> float:
+    """把数据分析结论转换成一个可执行的建议价格。"""
     current_price = max(float(request.product.current_price), 0.01)
     action = str(result.recommended_action or "maintain").lower()
     inventory_status = str(result.inventory_status or "normal").lower()
@@ -457,6 +500,7 @@ def _derive_data_agent_suggested_price(request: AnalysisRequest, result: DataAna
 
 
 def _derive_market_agent_suggested_price(request: AnalysisRequest, result: MarketIntelResult) -> float:
+    """把市场判断转成具体价格，确保方向和文案结论一致。"""
     current_price = max(float(request.product.current_price), 0.01)
     market_suggestion = str(result.market_suggestion or "maintain").lower()
     competition_level = str(result.competition_level or "moderate").lower()
@@ -501,6 +545,7 @@ def _derive_market_agent_suggested_price(request: AnalysisRequest, result: Marke
 
 
 def _derive_risk_agent_suggested_price(request: AnalysisRequest, result: RiskControlResult) -> float:
+    """在风控边界内生成最终可落地的风控建议价格。"""
     current_price = max(float(request.product.current_price), 0.01)
     price_ceiling = request.risk_data.price_ceiling
 
@@ -541,12 +586,18 @@ def _derive_risk_agent_suggested_price(request: AnalysisRequest, result: RiskCon
 
 
 def run_data_analysis_agent(request: AnalysisRequest) -> DataAnalysisResult:
+    """运行数据分析智能体。
+
+    这一层只关心经营数据本身：销量趋势、库存周转、库存平衡度，
+    然后据此给出数据视角下的动作方向和建议价格。
+    """
     payload = _load_data_agent_payload(request)
     metrics = SalesMetricsTool().calculate(payload)
     product = payload["product"]
     sales_data = payload["sales_data"]
     strategy_goal = _goal_code(request)
 
+    # 先把销量趋势和库存周转类指标统一取出，后面所有判断都基于这一组底层信号。
     trend_score = float(metrics.get("trend_score") or 0.0)
     turnover_days_value = float(metrics.get("turnover_days") or 999.0)
     stock_age_days = int(product.get("stock_age_days") or 0)
@@ -558,15 +609,15 @@ def run_data_analysis_agent(request: AnalysisRequest) -> DataAnalysisResult:
     else:
         sales_trend = "stable"
 
-    # Inventory health reflects stock balance instead of only overstock pressure:
-    # both severe overstock and potential shortage should reduce the score.
+    # 库存分数看的是“平衡度”，不是单纯看是否积压。
+    # 也就是说，库存过多和库存过紧都会扣分。
     inventory_health_score = 100.0
     inventory_health_score -= abs(turnover_days_value - 28.0) * 2.2
     inventory_health_score -= max(0, stock_age_days - 45) * 0.28
     inventory_health_score -= max(0.0, 8.0 - turnover_days_value) * 6.5
     inventory_health_score = _clamp(inventory_health_score, 0.0, 100.0)
 
-    # Use turnover days as the primary stock-position signal.
+    # 先根据库存周转速度判断库存位置，再补充平衡度分数作为解释依据。
     if turnover_days_value <= 10:
         inventory_status = "tight"
     elif turnover_days_value >= 75:
@@ -582,6 +633,7 @@ def run_data_analysis_agent(request: AnalysisRequest) -> DataAnalysisResult:
         category=str(product.get("category") or ""),
     )
 
+    # 根据目标、库存状态和趋势决定动作方向。
     action = "maintain"
     min_rate, max_rate = 1.0, 1.0
     reasons: List[str] = []
@@ -606,6 +658,7 @@ def run_data_analysis_agent(request: AnalysisRequest) -> DataAnalysisResult:
     else:
         reasons.append("需求与库存总体稳定。")
 
+    # 最终信心由趋势强弱和数据完整度共同决定。
     confidence = _clamp(0.55 + abs(trend_score) * 0.3 + (0.08 if sales_data.get("promotion_history") else 0.0), 0.35, 0.86)
     limitations: List[str] = []
     if payload["tool_trace"][0] != "database_product_context_tool":
@@ -649,6 +702,7 @@ def run_data_analysis_agent(request: AnalysisRequest) -> DataAnalysisResult:
         confidence=round(confidence, 4),
     )
 
+    # 先生成基础结论，再统一换算成可执行价格，避免“建议降价却报出涨价”的不一致。
     suggested_price = _derive_data_agent_suggested_price(request, base_result)
     current_price = float(request.product.current_price or 0.0)
     actual_action = _candidate_decision(current_price, suggested_price)
@@ -689,10 +743,16 @@ def run_data_analysis_agent(request: AnalysisRequest) -> DataAnalysisResult:
 
 
 def run_market_intel_agent(request: AnalysisRequest) -> MarketIntelResult:
+    """运行市场情报智能体。
+
+    这一层聚焦外部市场：竞品多少、均价在哪、当前商品位于高价位还是低价位，
+    再结合策略目标给出市场视角下的建议价格。
+    """
     market_payload = _build_market_payload(request)
     market_metrics = MarketSnapshotTool().calculate(market_payload)
     strategy_goal = _goal_code(request)
 
+    # 先把原始竞品样本转换成结构化对象，方便后面统一做市场统计。
     competitors: List[CompetitorInfo] = [
         CompetitorInfo(
             competitor_id=str(item.get("competitor_id") or f"COMP_{idx}"),
@@ -709,6 +769,7 @@ def run_market_intel_agent(request: AnalysisRequest) -> MarketIntelResult:
         for idx, item in enumerate(market_payload.get("competitors", []), start=1)
     ]
 
+    # 价格分位和竞争强度是市场智能体最核心的两个判断依据。
     current_price = float(request.product.current_price)
     prices = [item.current_price for item in competitors if item.current_price > 0]
     competitor_count = max(int(market_metrics.get("competitor_count") or 0), len(prices))
@@ -742,6 +803,7 @@ def run_market_intel_agent(request: AnalysisRequest) -> MarketIntelResult:
     else:
         price_position = "mid-range"
 
+    # 先判断市场数据是否可靠，再决定是否可以激进地给出降价或提价建议。
     live_market_available = bool(market_metrics.get("market_data_reliable"))
     suggestion = "maintain"
     reasons: List[str] = []
@@ -820,6 +882,7 @@ def run_market_intel_agent(request: AnalysisRequest) -> MarketIntelResult:
         confidence=round(confidence, 4),
     )
 
+    # 先生成基础市场判断，再换算成具体价格，保持“结论”和“报价”一致。
     suggested_price = _derive_market_agent_suggested_price(request, base_result)
     current_price = float(request.product.current_price or 0.0)
     actual_decision = _candidate_decision(current_price, suggested_price)
@@ -855,12 +918,18 @@ def run_market_intel_agent(request: AnalysisRequest) -> MarketIntelResult:
 
 
 def run_risk_control_agent(request: AnalysisRequest) -> RiskControlResult:
+    """运行风险控制智能体。
+
+    风控不负责追求最优销量，而是负责守住利润、价格上下限和经营风险底线，
+    因此这里会优先判断是否存在一票否决或强制调价场景。
+    """
     payload = _load_risk_agent_payload(request)
     calc = RiskConstraintTool().calculate(payload)
     product = payload["product"]
     risk = payload["risk_data"]
     strategy_goal = _goal_code(request)
 
+    # 先把会影响风控结论的关键边界全部算出来：当前价格、安全价和价格上限。
     current_price = float(product.get("current_price") or 0.0)
     required_min_price = float(calc["required_min_price"])
     price_ceiling = risk.get("price_ceiling")
@@ -873,6 +942,7 @@ def run_risk_control_agent(request: AnalysisRequest) -> RiskControlResult:
     refund_rate = float(risk.get("refund_rate") or 0.0)
     complaint_rate = float(risk.get("complaint_rate") or 0.0)
 
+    # 风险分由利润风险、库存风险、售后风险和约束冲突共同组成。
     profit_risk = 85 if floor_breach else 60 if current_margin < float(risk.get("min_profit_margin") or 0.18) else 22
     stock_risk = 72 if stock_age_days >= 120 else 50 if stock_age_days >= 80 else 18
     refund_risk = _clamp(refund_rate * 650, 0.0, 100.0)
@@ -908,6 +978,7 @@ def run_risk_control_agent(request: AnalysisRequest) -> RiskControlResult:
     if constraint_conflict:
         warnings.append("价格约束与最低安全价冲突。")
 
+    # 先判断是否存在必须强制处理的风险，再判断是否允许为了目标主动降价。
     recommendation = "maintain"
     veto_reason: Optional[str] = None
     allow_promotion = False
@@ -979,6 +1050,7 @@ def run_risk_control_agent(request: AnalysisRequest) -> RiskControlResult:
         confidence=round(_clamp(1.0 - risk_score / 120.0, 0.2, 0.92), 4),
     )
 
+    # 基础结论生成后，再换算成风控口径下真正可执行的价格。
     suggested_price = _derive_risk_agent_suggested_price(request, base_result)
     actual_recommendation = _candidate_decision(float(request.product.current_price or 0.0), suggested_price)
     updated_reasons = list(reasons)
@@ -1017,6 +1089,7 @@ def _evaluate_agent_price(
     risk_result: RiskControlResult,
     proposed_price: float,
 ) -> Dict[str, float | str]:
+    """按经理统一口径复核单个提案价格。"""
     current_price = max(float(request.product.current_price), 0.01)
     price_ceiling = request.risk_data.price_ceiling
     required_min_price = float(risk_result.required_min_price)
@@ -1067,6 +1140,7 @@ def _evaluate_agent_price(
 
 
 def _build_price_conflicts(evaluated_proposals: List[Dict[str, Any]], current_price: float) -> List[ConflictResolution]:
+    """识别三类智能体之间的方向冲突和价差冲突，供经理协调时引用。"""
     conflicts: List[ConflictResolution] = []
 
     increase_items = [item for item in evaluated_proposals if str(item.get("decision")) == "increase"]
@@ -1101,6 +1175,7 @@ def _build_price_conflicts(evaluated_proposals: List[Dict[str, Any]], current_pr
 
 
 def _manager_revision_prices(current_price: float, base_prices: Sequence[float]) -> List[float]:
+    """生成经理额外复核时要尝试的一批中间候选价。"""
     revision_rates = [0.97, 0.98, 0.99, 1.01, 1.02, 1.03, 1.04, 1.05, 1.06]
     revisions = [current_price * rate for rate in revision_rates]
     if base_prices:
@@ -1115,12 +1190,14 @@ def run_manager_coordinator_agent(
     market_result: MarketIntelResult,
     risk_result: RiskControlResult,
 ) -> FinalDecision:
+    """运行决策经理，综合三方提案后给出最终定价。"""
     current_price = max(float(request.product.current_price), 0.01)
     price_ceiling = request.risk_data.price_ceiling
     strategy_goal = (request.strategy_goal or "MAX_PROFIT").upper()
     market_live_available = bool(market_result.analysis_details.get("live_market_available"))
     warnings = list(risk_result.warnings[:3])
 
+    # 先收集前三位智能体的建议价，必要时补一个经理中位协调价。
     data_price = float(data_result.suggested_price or _derive_data_agent_suggested_price(request, data_result))
     market_price = float(market_result.suggested_price or _derive_market_agent_suggested_price(request, market_result))
     risk_price = float(risk_result.suggested_price or _derive_risk_agent_suggested_price(request, risk_result))
@@ -1134,6 +1211,7 @@ def run_manager_coordinator_agent(
     if len(unique_prices) >= 2:
         proposals.append(("manager_midpoint", round((unique_prices[0] + unique_prices[-1]) / 2, 2)))
 
+    # 所有提案都先过一次统一复核，避免不同智能体各自按不同口径比较。
     evaluated_proposals: List[Dict[str, Any]] = []
     for agent_name, proposed_price in proposals:
         evaluated = _evaluate_agent_price(request, data_result, risk_result, proposed_price)
@@ -1146,6 +1224,7 @@ def run_manager_coordinator_agent(
         or (risk_result.calculation_details.get("ceiling_breach") and price_ceiling is not None)
     )
 
+    # 如果存在硬约束冲突或必须强制移动价格的场景，经理优先服从风控边界。
     if risk_result.calculation_details.get("constraint_conflict"):
         chosen = {
             "agent_name": "manager",
@@ -1191,6 +1270,8 @@ def run_manager_coordinator_agent(
                 if str(item["decision"]) != "maintain" and float(item["profit_change"]) > 0
             ]
 
+        # 不同策略目标采用不同的选价逻辑：
+        # 利润优先看利润提升，清仓优先看可执行降价，份额优先看市场份额增量。
         if strategy_goal == "MAX_PROFIT":
             if profitable:
                 chosen = max(
@@ -1251,6 +1332,7 @@ def run_manager_coordinator_agent(
                 key=lambda item: (float(item["profit_change"]), -abs(float(item["suggested_price"]) - current_price)),
             )
 
+    # 最后把选中的方案、冲突解释和预期收益汇总成最终报告。
     final_decision = str(chosen["decision"])
     final_price = float(chosen["suggested_price"])
     expected_outcomes = ExpectedOutcomes(
