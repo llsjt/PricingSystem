@@ -372,6 +372,25 @@ class WorkflowService:
         mapping = {"high": "高风险", "medium": "中风险", "low": "低风险"}
         return mapping.get(str(level or "").lower(), "中风险")
 
+    def _format_trend_change(self, score: float) -> str:
+        return f"近7日相对近30日的销量变化率为{float(score):.1%}"
+
+    def _format_discount_guidance(self, min_rate: float, max_rate: float) -> str:
+        min_rate = float(min_rate)
+        max_rate = float(max_rate)
+        if abs(min_rate - 1.0) < 1e-6 and abs(max_rate - 1.0) < 1e-6:
+            return "当前建议维持原价，不打折。"
+        if min_rate <= 1.0 and max_rate <= 1.0:
+            min_drop = max(0.0, 1.0 - max_rate)
+            max_drop = max(0.0, 1.0 - min_rate)
+            return f"建议折扣系数区间为{min_rate:.2f}-{max_rate:.2f}（约降价{min_drop:.0%}-{max_drop:.0%}）。"
+        return f"建议价格调整系数区间为{min_rate:.2f}-{max_rate:.2f}。"
+
+    def _format_live_market_status(self, available: bool) -> str:
+        if available:
+            return "实时竞品数据可用，样本量满足分析要求。"
+        return "实时竞品数据暂不可用或样本不足，结果已按保守策略处理。"
+
     def _humanize_agent_text(self, text: str) -> str:
         normalized = str(text or "")
         replacements = {
@@ -401,38 +420,60 @@ class WorkflowService:
             "False": "否",
             "true": "是",
             "false": "否",
+            "required_min_price": "最低安全价",
+            "current_margin": "当前毛利率",
+            "risk_score": "风险指数",
+            "constraint_conflict": "约束冲突",
+            "manual_review": "人工复核",
+            "risk_boundary": "风险边界",
+            "forced_adjustment": "强制调价",
+            "three_agent_proposals": "三方提案",
+            "manager_coordination": "经理协调",
+            "profit_validation": "利润校验",
             "竞争评分": "竞争热度",
             "风险分": "风险指数",
         }
         for old, new in replacements.items():
             normalized = normalized.replace(old, new)
+        # 前端展示文案统一去掉等号，避免机器化表达
+        normalized = normalized.replace("=", "：")
         return normalized
 
     def compose_data_agent_output(self, name: str, result) -> str:
         reasons = "；".join(result.recommendation_reasons[:2]) if result.recommendation_reasons else "暂无额外补充依据。"
+        discount_text = self._format_discount_guidance(
+            result.recommended_discount_range[0],
+            result.recommended_discount_range[1],
+        )
+        if str(result.recommended_action or "").lower() == "maintain" and "维持原价" in discount_text:
+            conclusion_text = f"简要结论：{discount_text}可信度 {result.confidence:.0%}。"
+        else:
+            conclusion_text = (
+                f"简要结论：建议{self._to_cn_action(result.recommended_action)}，"
+                f"{discount_text}可信度 {result.confidence:.0%}。"
+            )
         return (
             f"思考过程：{result.thinking_process or '已完成经营数据读取并完成趋势判断。'}\n"
             "依据：\n"
             f"1. {result.reasoning}\n"
-            f"2. 销量趋势={self._to_cn_trend(result.sales_trend)}，趋势得分={result.sales_trend_score:.2f}；"
-            f"库存状态={self._to_cn_inventory(result.inventory_status)}，库存健康分={result.inventory_health_score:.1f}。\n"
+            f"2. 销量趋势为{self._to_cn_trend(result.sales_trend)}，{self._format_trend_change(result.sales_trend_score)}；"
+            f"库存状态为{self._to_cn_inventory(result.inventory_status)}，库存平衡度为{result.inventory_health_score:.1f}分。\n"
             f"3. {reasons}\n"
-            f"简要结论：建议{self._to_cn_action(result.recommended_action)}，"
-            f"建议折扣区间 {result.recommended_discount_range[0]:.2f}-{result.recommended_discount_range[1]:.2f}，"
-            f"置信度 {result.confidence:.2f}。"
+            f"{conclusion_text}"
         )
 
     def compose_market_agent_output(self, name: str, result) -> str:
         reasons = "；".join(result.suggestion_reasons[:2]) if result.suggestion_reasons else "暂无额外补充依据。"
         data_sources = "、".join(result.data_sources[:2]) if result.data_sources else "无可用市场源"
+        live_market_text = self._format_live_market_status(bool(result.analysis_details.get("live_market_available")))
         return (
             f"思考过程：{result.thinking_process or '已完成竞品抓取与市场对位分析。'}\n"
             "依据：\n"
             f"1. {result.reasoning}\n"
-            f"2. 竞争强度={self._to_cn_competition(result.competition_level)}，竞争评分={result.competition_score:.2f}；"
-            f"价格位置={self._to_cn_price_position(result.price_position)}，价格分位={result.price_percentile:.2f}。\n"
-            f"3. 数据来源={data_sources}；{reasons}\n"
-            f"简要结论：建议{self._to_cn_action(result.market_suggestion)}，置信度 {result.confidence:.2f}。"
+            f"2. 竞争强度为{self._to_cn_competition(result.competition_level)}，竞争热度为{result.competition_score:.2f}分；"
+            f"价格位置为{self._to_cn_price_position(result.price_position)}，价格分位为{result.price_percentile:.1%}。\n"
+            f"3. 数据来源：{data_sources}；{live_market_text}；{reasons}\n"
+            f"简要结论：建议{self._to_cn_action(result.market_suggestion)}，可信度 {result.confidence:.0%}。"
         )
 
     def compose_risk_agent_output(self, name: str, result) -> str:
@@ -442,8 +483,8 @@ class WorkflowService:
             f"思考过程：{result.thinking_process or '已完成利润底线与约束合规校验。'}\n"
             "依据：\n"
             f"1. {result.reasoning}\n"
-            f"2. 最低安全价={result.required_min_price:.2f}，当前毛利率={result.current_profit_margin:.2%}，"
-            f"风险等级={self._to_cn_risk_level(result.risk_level)}，风险分={result.risk_score:.1f}。\n"
+            f"2. 最低安全价为{result.required_min_price:.2f}元，当前毛利率为{result.current_profit_margin:.2%}，"
+            f"风险等级为{self._to_cn_risk_level(result.risk_level)}，风险指数为{result.risk_score:.1f}分。\n"
             f"3. {reasons}；{warning_text}\n"
             f"简要结论：建议{self._to_cn_action(result.recommendation)}，允许最大折扣系数 {result.max_safe_discount:.2f}。"
         )
@@ -453,12 +494,12 @@ class WorkflowService:
         warnings = "；".join(result.warnings[:2]) if result.warnings else "无"
         next_step = result.execution_plan[0].action if result.execution_plan else "按建议价格上线并持续监测。"
         return (
-            f"思考过程：{result.thinking_process or '已汇总三位 Agent 的分析并做约束校验。'}\n"
+            f"思考过程：{result.thinking_process or '已汇总三位智能体的分析并做约束校验。'}\n"
             "依据：\n"
             f"1. {result.reasoning}\n"
-            f"2. 核心因子={factors}；风险提示={warnings}。\n"
+            f"2. 核心因子：{factors}；风险提示：{warnings}。\n"
             f"3. 执行动作：{next_step}\n"
-            f"简要结论：最终建议{self._to_cn_action(result.decision)}，建议价格 {result.suggested_price:.2f}，置信度 {result.confidence:.2f}。"
+            f"简要结论：最终建议{self._to_cn_action(result.decision)}，建议价格 {result.suggested_price:.2f}元，可信度 {result.confidence:.0%}。"
         )
 
     async def execute_task(self, task_id: int, product_ids: List[int], strategy_goal: str, constraints: str) -> None:
@@ -615,7 +656,30 @@ class WorkflowService:
         db: Session = SessionLocal()
         try:
             rows = db.query(DecResult, BizProduct).join(BizProduct, BizProduct.id == DecResult.product_id).filter(DecResult.task_id == task_id).order_by(DecResult.id.asc()).all()
-            return [{"id": int(r.id), "taskId": int(r.task_id), "productId": int(r.product_id), "productTitle": p.title, "decision": r.decision, "suggestedPrice": _f(r.suggested_price), "profitChange": _f(r.profit_change), "discountRate": _f(r.discount_rate), "coreReasons": r.core_reasons, "isAccepted": bool(r.is_accepted), "adoptStatus": r.adopt_status or "PENDING", "createdAt": r.created_at.isoformat() if r.created_at else None} for r, p in rows]
+            results: List[Dict[str, Any]] = []
+            for r, p in rows:
+                suggested_price = _f(r.suggested_price)
+                discount_rate = _f(r.discount_rate)
+                current_price = _f(p.current_price)
+                original_price = round(suggested_price / discount_rate, 2) if discount_rate > 0 else round(current_price, 2)
+                results.append(
+                    {
+                        "id": int(r.id),
+                        "taskId": int(r.task_id),
+                        "productId": int(r.product_id),
+                        "productTitle": p.title,
+                        "decision": r.decision,
+                        "originalPrice": original_price,
+                        "suggestedPrice": suggested_price,
+                        "profitChange": _f(r.profit_change),
+                        "discountRate": discount_rate,
+                        "coreReasons": r.core_reasons,
+                        "isAccepted": bool(r.is_accepted),
+                        "adoptStatus": r.adopt_status or "PENDING",
+                        "createdAt": r.created_at.isoformat() if r.created_at else None,
+                    }
+                )
+            return results
         finally:
             db.close()
 
@@ -716,22 +780,32 @@ _orig_compose_risk_agent_output = WorkflowService.compose_risk_agent_output
 
 def _compose_data_agent_output_with_price(self, name: str, result) -> str:
     text = _orig_compose_data_agent_output(self, name, result)
-    if getattr(result, "suggested_price", None) is not None:
-        text += f"\n4. 建议价格：{float(result.suggested_price):.2f}"
+    display_price = getattr(result, "suggested_price", None)
+    if str(getattr(result, "recommended_action", "")).lower() == "maintain":
+        # Keep wording and numeric output consistent for maintain decisions.
+        current_price = None
+        try:
+            current_price = float((result.analysis_details or {}).get("current_price"))
+        except Exception:
+            current_price = None
+        if current_price is not None and current_price > 0:
+            display_price = current_price
+    if display_price is not None:
+        text += f"\n4. 建议价格：{float(display_price):.2f}元"
     return text
 
 
 def _compose_market_agent_output_with_price(self, name: str, result) -> str:
     text = _orig_compose_market_agent_output(self, name, result)
     if getattr(result, "suggested_price", None) is not None:
-        text += f"\n4. 建议价格：{float(result.suggested_price):.2f}"
+        text += f"\n4. 建议价格：{float(result.suggested_price):.2f}元"
     return text
 
 
 def _compose_risk_agent_output_with_price(self, name: str, result) -> str:
     text = _orig_compose_risk_agent_output(self, name, result)
     if getattr(result, "suggested_price", None) is not None:
-        text += f"\n4. 建议价格：{float(result.suggested_price):.2f}"
+        text += f"\n4. 建议价格：{float(result.suggested_price):.2f}元"
     return text
 
 

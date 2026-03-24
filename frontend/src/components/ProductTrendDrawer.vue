@@ -20,8 +20,12 @@
             <div class="metric-label">日销售量</div>
             <div class="trend-lines">
               <div class="trend-line">
+                <span class="trend-line-label">当前值</span>
+                <span class="trend-line-value">{{ formatQuantity(trendData.currentDailySales) }}</span>
+              </div>
+              <div class="trend-line">
                 <span class="trend-line-label">增长量</span>
-                <span class="trend-line-value">{{ formatSignedNumber(trendData.dailySalesGrowth) }}</span>
+                <span class="trend-line-value">{{ formatSignedQuantity(trendData.dailySalesGrowth) }}</span>
               </div>
               <div class="trend-line">
                 <span class="trend-line-label">增长率</span>
@@ -33,8 +37,12 @@
             <div class="metric-label">月销售量</div>
             <div class="trend-lines">
               <div class="trend-line">
+                <span class="trend-line-label">当前值</span>
+                <span class="trend-line-value">{{ formatQuantity(trendData.currentMonthlySales) }}</span>
+              </div>
+              <div class="trend-line">
                 <span class="trend-line-label">增长量</span>
-                <span class="trend-line-value">{{ formatSignedNumber(trendData.monthlySalesGrowth) }}</span>
+                <span class="trend-line-value">{{ formatSignedQuantity(trendData.monthlySalesGrowth) }}</span>
               </div>
               <div class="trend-line">
                 <span class="trend-line-label">增长率</span>
@@ -45,6 +53,10 @@
           <article class="metric-card trend-metric-card">
             <div class="metric-label">日利润</div>
             <div class="trend-lines">
+              <div class="trend-line">
+                <span class="trend-line-label">当前值</span>
+                <span class="trend-line-value">{{ formatCurrency(trendData.currentDailyProfit) }}</span>
+              </div>
               <div class="trend-line">
                 <span class="trend-line-label">增长量</span>
                 <span class="trend-line-value">{{ formatSignedCurrency(trendData.dailyProfitGrowth) }}</span>
@@ -58,6 +70,10 @@
           <article class="metric-card trend-metric-card">
             <div class="metric-label">月利润</div>
             <div class="trend-lines">
+              <div class="trend-line">
+                <span class="trend-line-label">当前值</span>
+                <span class="trend-line-value">{{ formatCurrency(trendData.currentMonthlyProfit) }}</span>
+              </div>
               <div class="trend-line">
                 <span class="trend-line-label">增长量</span>
                 <span class="trend-line-value">{{ formatSignedCurrency(trendData.monthlyProfitGrowth) }}</span>
@@ -125,14 +141,20 @@ const open = (row: any) => {
 
 defineExpose({ open })
 
-const formatCurrency = (value: number | string) => `¥${Number(value || 0).toFixed(2)}`
-const formatSignedNumber = (value: number | string) => {
+const formatNumber = (value: number | string, fractionDigits = 0) =>
+  Number(value || 0).toLocaleString('zh-CN', {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits
+  })
+const formatQuantity = (value: number | string) => `${formatNumber(value, 0)}件`
+const formatCurrency = (value: number | string) => `¥${formatNumber(value, 2)}`
+const formatSignedQuantity = (value: number | string) => {
   const numeric = Number(value || 0)
-  return `${numeric >= 0 ? '+' : ''}${numeric.toFixed(0)}`
+  return `${numeric >= 0 ? '+' : '-'}${formatNumber(Math.abs(numeric), 0)}件`
 }
 const formatSignedCurrency = (value: number | string) => {
   const numeric = Number(value || 0)
-  return `${numeric >= 0 ? '+' : '-'}¥${Math.abs(numeric).toFixed(2)}`
+  return `${numeric >= 0 ? '+' : '-'}¥${formatNumber(Math.abs(numeric), 2)}`
 }
 const formatSignedPercent = (value: number | string) => {
   const numeric = Number(value || 0) * 100
@@ -308,7 +330,7 @@ onBeforeUnmount(() => {
 }
 
 .trend-line-value {
-  font-size: 30px;
+  font-size: 24px;
   line-height: 1.08;
   font-weight: 700;
   letter-spacing: -0.01em;
@@ -347,7 +369,7 @@ onBeforeUnmount(() => {
   }
 
   .trend-line-value {
-    font-size: 26px;
+    font-size: 22px;
   }
 
   .chart-container {

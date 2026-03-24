@@ -10,6 +10,7 @@ export interface DecResult {
   id: number
   taskId: number
   productId: number
+  originalPrice?: number
   suggestedPrice: number
   profitChange: number
   isAccepted: boolean

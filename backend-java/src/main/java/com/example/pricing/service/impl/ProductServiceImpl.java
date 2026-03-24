@@ -389,47 +389,54 @@ public class ProductServiceImpl implements ProductService {
         vo.setAvgOrderValues(avgOrderValues);
         
         // Calculate insights
-        // 1. Get recent stats for calculation (last 30 days)
         if (!stats.isEmpty()) {
-            // Need data for comparison, query extended range if necessary or use what we have
-            // For simplicity, let's query specific date ranges for growth calculation
-            
             // Current day (or last available day)
             com.example.pricing.entity.BizProductDailyStat lastStat = stats.get(stats.size() - 1);
             java.time.LocalDate lastDate = lastStat.getStatDate();
             
             // Previous day
             com.example.pricing.entity.BizProductDailyStat prevDayStat = findStatByDate(id, lastDate.minusDays(1));
-            
-            // Last month same day (or approx)
-            com.example.pricing.entity.BizProductDailyStat lastMonthStat = findStatByDate(id, lastDate.minusMonths(1));
-            
-            // Daily Sales Growth
-            int currentSales = lastStat.getSalesCount();
-            int prevDaySales = prevDayStat != null ? prevDayStat.getSalesCount() : 0;
-            vo.setDailySalesGrowth(currentSales - prevDaySales);
-            vo.setDailySalesGrowthRate(calculateGrowthRate(new BigDecimal(currentSales), new BigDecimal(prevDaySales)));
-            
-            // Monthly Sales Growth
-            int lastMonthSales = lastMonthStat != null ? lastMonthStat.getSalesCount() : 0;
-            vo.setMonthlySalesGrowth(currentSales - lastMonthSales);
-            vo.setMonthlySalesGrowthRate(calculateGrowthRate(new BigDecimal(currentSales), new BigDecimal(lastMonthSales)));
-            
+
+            // 30-day and previous 30-day windows for absolute monthly values and month-over-month growth.
+            List<com.example.pricing.entity.BizProductDailyStat> currentMonthStats =
+                    findStatsByRange(id, lastDate.minusDays(29), lastDate);
+            List<com.example.pricing.entity.BizProductDailyStat> previousMonthStats =
+                    findStatsByRange(id, lastDate.minusDays(59), lastDate.minusDays(30));
+
             // Profit Calculation (Turnover - Cost * Sales)
-            // Note: Cost price is in BizProduct, need to fetch it
-            BigDecimal costPrice = product.getCostPrice();
-            
-            BigDecimal currentProfit = calculateProfit(lastStat, costPrice);
+            BigDecimal costPrice = product.getCostPrice() != null ? product.getCostPrice() : BigDecimal.ZERO;
+
+            int currentDailySales = lastStat.getSalesCount() != null ? lastStat.getSalesCount() : 0;
+            int prevDaySales = prevDayStat != null && prevDayStat.getSalesCount() != null ? prevDayStat.getSalesCount() : 0;
+            int currentMonthlySales = sumSales(currentMonthStats);
+            int previousMonthlySales = sumSales(previousMonthStats);
+
+            BigDecimal currentDailyProfit = calculateProfit(lastStat, costPrice);
             BigDecimal prevDayProfit = calculateProfit(prevDayStat, costPrice);
-            BigDecimal lastMonthProfit = calculateProfit(lastMonthStat, costPrice);
-            
+            BigDecimal currentMonthlyProfit = sumProfit(currentMonthStats, costPrice);
+            BigDecimal previousMonthlyProfit = sumProfit(previousMonthStats, costPrice);
+
+            // Current absolute values (for dashboard cards)
+            vo.setCurrentDailySales(currentDailySales);
+            vo.setCurrentMonthlySales(currentMonthlySales);
+            vo.setCurrentDailyProfit(currentDailyProfit.doubleValue());
+            vo.setCurrentMonthlyProfit(currentMonthlyProfit.doubleValue());
+
+            // Daily Sales Growth
+            vo.setDailySalesGrowth(currentDailySales - prevDaySales);
+            vo.setDailySalesGrowthRate(calculateGrowthRate(new BigDecimal(currentDailySales), new BigDecimal(prevDaySales)));
+
+            // Monthly Sales Growth
+            vo.setMonthlySalesGrowth(currentMonthlySales - previousMonthlySales);
+            vo.setMonthlySalesGrowthRate(calculateGrowthRate(new BigDecimal(currentMonthlySales), new BigDecimal(previousMonthlySales)));
+
             // Daily Profit Growth
-            vo.setDailyProfitGrowth(currentProfit.subtract(prevDayProfit).doubleValue());
-            vo.setDailyProfitGrowthRate(calculateGrowthRate(currentProfit, prevDayProfit));
-            
+            vo.setDailyProfitGrowth(currentDailyProfit.subtract(prevDayProfit).doubleValue());
+            vo.setDailyProfitGrowthRate(calculateGrowthRate(currentDailyProfit, prevDayProfit));
+
             // Monthly Profit Growth
-            vo.setMonthlyProfitGrowth(currentProfit.subtract(lastMonthProfit).doubleValue());
-            vo.setMonthlyProfitGrowthRate(calculateGrowthRate(currentProfit, lastMonthProfit));
+            vo.setMonthlyProfitGrowth(currentMonthlyProfit.subtract(previousMonthlyProfit).doubleValue());
+            vo.setMonthlyProfitGrowthRate(calculateGrowthRate(currentMonthlyProfit, previousMonthlyProfit));
         }
         
         return Result.success(vo);
@@ -440,6 +447,34 @@ public class ProductServiceImpl implements ProductService {
         wrapper.eq(com.example.pricing.entity.BizProductDailyStat::getProductId, productId);
         wrapper.eq(com.example.pricing.entity.BizProductDailyStat::getStatDate, date);
         return statMapper.selectOne(wrapper);
+    }
+
+    private List<com.example.pricing.entity.BizProductDailyStat> findStatsByRange(
+            Long productId,
+            java.time.LocalDate startDate,
+            java.time.LocalDate endDate
+    ) {
+        LambdaQueryWrapper<com.example.pricing.entity.BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(com.example.pricing.entity.BizProductDailyStat::getProductId, productId);
+        wrapper.ge(com.example.pricing.entity.BizProductDailyStat::getStatDate, startDate);
+        wrapper.le(com.example.pricing.entity.BizProductDailyStat::getStatDate, endDate);
+        return statMapper.selectList(wrapper);
+    }
+
+    private int sumSales(List<com.example.pricing.entity.BizProductDailyStat> stats) {
+        int total = 0;
+        for (com.example.pricing.entity.BizProductDailyStat stat : stats) {
+            total += stat.getSalesCount() != null ? stat.getSalesCount() : 0;
+        }
+        return total;
+    }
+
+    private BigDecimal sumProfit(List<com.example.pricing.entity.BizProductDailyStat> stats, BigDecimal costPrice) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (com.example.pricing.entity.BizProductDailyStat stat : stats) {
+            total = total.add(calculateProfit(stat, costPrice));
+        }
+        return total;
     }
 
     private Double calculateGrowthRate(BigDecimal current, BigDecimal previous) {
@@ -454,7 +489,9 @@ public class ProductServiceImpl implements ProductService {
     private BigDecimal calculateProfit(com.example.pricing.entity.BizProductDailyStat stat, BigDecimal costPrice) {
         if (stat == null) return BigDecimal.ZERO;
         BigDecimal turnover = stat.getTurnover() != null ? stat.getTurnover() : BigDecimal.ZERO;
-        BigDecimal cost = costPrice.multiply(new BigDecimal(stat.getSalesCount()));
+        BigDecimal safeCostPrice = costPrice != null ? costPrice : BigDecimal.ZERO;
+        int salesCount = stat.getSalesCount() != null ? stat.getSalesCount() : 0;
+        BigDecimal cost = safeCostPrice.multiply(new BigDecimal(salesCount));
         return turnover.subtract(cost);
     }
 

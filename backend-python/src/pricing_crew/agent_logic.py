@@ -243,6 +243,62 @@ def _to_cn_agent_name(agent_name: str) -> str:
     return mapping.get(str(agent_name or "").lower(), str(agent_name or "未知"))
 
 
+def _to_cn_risk_level(level: str) -> str:
+    mapping = {"high": "高风险", "medium": "中风险", "low": "低风险"}
+    return mapping.get(str(level or "").lower(), "中风险")
+
+
+def _describe_discount_range(min_rate: float, max_rate: float) -> str:
+    min_rate = float(min_rate)
+    max_rate = float(max_rate)
+    if abs(min_rate - 1.0) < 1e-6 and abs(max_rate - 1.0) < 1e-6:
+        return "当前建议维持原价，不做折扣。"
+    if min_rate <= 1.0 and max_rate <= 1.0:
+        min_drop = max(0.0, 1.0 - max_rate)
+        max_drop = max(0.0, 1.0 - min_rate)
+        return f"建议折扣系数区间 {min_rate:.2f}-{max_rate:.2f}（约降价 {min_drop:.0%}-{max_drop:.0%}）。"
+    return f"建议价格调整系数区间 {min_rate:.2f}-{max_rate:.2f}。"
+
+
+def _goal_code(request: AnalysisRequest) -> str:
+    return str(request.strategy_goal or "MAX_PROFIT").upper()
+
+
+def _forced_decision_by_constraints(
+    request: AnalysisRequest,
+    required_min_price: Optional[float] = None,
+) -> Optional[tuple[str, float]]:
+    current_price = max(float(request.product.current_price), 0.01)
+    price_ceiling = request.risk_data.price_ceiling
+    floor = float(required_min_price) if required_min_price is not None else _required_min_price_from_request(request)
+
+    if price_ceiling is not None and float(price_ceiling) < floor - 0.01:
+        return None
+    if current_price + 1e-6 < floor:
+        return "increase", round(floor, 2)
+    if price_ceiling is not None and current_price > float(price_ceiling) + 1e-6:
+        return "discount", round(float(price_ceiling), 2)
+    return None
+
+
+def _market_suggestion_to_decision(suggestion: str) -> str:
+    normalized = str(suggestion or "maintain").lower()
+    if normalized in {"discount", "penetrate", "price_war"}:
+        return "discount"
+    if normalized == "premium":
+        return "increase"
+    return "maintain"
+
+
+def _decision_to_market_suggestion(decision: str) -> str:
+    normalized = str(decision or "maintain").lower()
+    if normalized == "discount":
+        return "discount"
+    if normalized == "increase":
+        return "premium"
+    return "maintain"
+
+
 def _evaluate_request_candidate(
     request: AnalysisRequest,
     candidate_price: float,
@@ -289,6 +345,7 @@ def _pick_best_candidate(
     elasticity: Optional[float],
     preferred_decision: Optional[str] = None,
     required_min_price: Optional[float] = None,
+    allowed_decisions: Optional[Sequence[str]] = None,
 ) -> Dict[str, float | str]:
     current_price = max(float(request.product.current_price), 0.01)
     by_price: Dict[float, Dict[str, float | str]] = {}
@@ -323,6 +380,24 @@ def _pick_best_candidate(
             "market_share_change": 0.0,
         }
 
+    if allowed_decisions:
+        allowed = {str(item).lower() for item in allowed_decisions}
+        filtered = [item for item in candidates if str(item["decision"]).lower() in allowed]
+        if filtered:
+            candidates = filtered
+        else:
+            maintain = next((item for item in by_price.values() if str(item["decision"]).lower() == "maintain"), None)
+            if maintain is not None:
+                return maintain
+            return {
+                "decision": "maintain",
+                "suggested_price": round(current_price, 2),
+                "discount_rate": 1.0,
+                "sales_lift": 1.0,
+                "profit_change": 0.0,
+                "market_share_change": 0.0,
+            }
+
     def _score(item: Dict[str, float | str]) -> tuple[float, float]:
         return float(item["profit_change"]), -abs(float(item["suggested_price"]) - current_price)
 
@@ -341,9 +416,16 @@ def _pick_best_candidate(
 
 
 def _derive_data_agent_suggested_price(request: AnalysisRequest, result: DataAnalysisResult) -> float:
+    current_price = max(float(request.product.current_price), 0.01)
     action = str(result.recommended_action or "maintain").lower()
     inventory_status = str(result.inventory_status or "normal").lower()
     sales_trend = str(result.sales_trend or "stable").lower()
+
+    forced = _forced_decision_by_constraints(request)
+    if forced is not None:
+        return float(forced[1])
+    if action == "maintain":
+        return round(current_price, 2)
 
     candidate_rates: List[float] = [1.0]
     if inventory_status == "severe_overstock":
@@ -369,6 +451,7 @@ def _derive_data_agent_suggested_price(request: AnalysisRequest, result: DataAna
         candidate_rates=candidate_rates,
         elasticity=result.demand_elasticity,
         preferred_decision=preferred_decision,
+        allowed_decisions=[preferred_decision],
     )
     return float(best["suggested_price"])
 
@@ -379,6 +462,13 @@ def _derive_market_agent_suggested_price(request: AnalysisRequest, result: Marke
     competition_level = str(result.competition_level or "moderate").lower()
     price_position = str(result.price_position or "mid-range").lower()
     avg_price = float(result.avg_competitor_price) if result.avg_competitor_price is not None else None
+
+    forced = _forced_decision_by_constraints(request)
+    if forced is not None:
+        return float(forced[1])
+    target_decision = _market_suggestion_to_decision(market_suggestion)
+    if target_decision == "maintain":
+        return round(current_price, 2)
 
     candidate_rates: List[float] = [0.99, 1.0, 1.01]
     preferred_decision: Optional[str] = None
@@ -405,6 +495,7 @@ def _derive_market_agent_suggested_price(request: AnalysisRequest, result: Marke
         candidate_rates=candidate_rates,
         elasticity=elasticity_hint,
         preferred_decision=preferred_decision,
+        allowed_decisions=[target_decision],
     )
     return float(best["suggested_price"])
 
@@ -415,10 +506,13 @@ def _derive_risk_agent_suggested_price(request: AnalysisRequest, result: RiskCon
 
     if result.calculation_details.get("constraint_conflict"):
         return round(current_price, 2)
-    if result.calculation_details.get("floor_breach"):
-        return round(float(result.required_min_price), 2)
-    if result.calculation_details.get("ceiling_breach") and price_ceiling is not None:
-        return round(float(price_ceiling), 2)
+    forced = _forced_decision_by_constraints(request, required_min_price=float(result.required_min_price))
+    if forced is not None:
+        return float(forced[1])
+
+    target_decision = str(result.recommendation or "maintain").lower()
+    if target_decision == "maintain":
+        return round(current_price, 2)
 
     candidate_rates: List[float] = [1.0, 1.01, 1.02, 1.03]
     if str(result.risk_level or "").lower() == "low":
@@ -426,7 +520,7 @@ def _derive_risk_agent_suggested_price(request: AnalysisRequest, result: RiskCon
 
     if result.allow_promotion:
         candidate_rates.extend([0.99, 0.98, float(result.max_safe_discount or 1.0)])
-        preferred_decision = "discount" if str(result.recommendation or "").lower() == "discount" else "increase"
+        preferred_decision = "discount" if target_decision == "discount" else "increase"
     else:
         preferred_decision = "increase"
 
@@ -436,6 +530,7 @@ def _derive_risk_agent_suggested_price(request: AnalysisRequest, result: RiskCon
         elasticity=-0.8,
         preferred_decision=preferred_decision,
         required_min_price=float(result.required_min_price),
+        allowed_decisions=[target_decision],
     )
     chosen_price = float(best["suggested_price"])
     if price_ceiling is not None:
@@ -450,6 +545,7 @@ def run_data_analysis_agent(request: AnalysisRequest) -> DataAnalysisResult:
     metrics = SalesMetricsTool().calculate(payload)
     product = payload["product"]
     sales_data = payload["sales_data"]
+    strategy_goal = _goal_code(request)
 
     trend_score = float(metrics.get("trend_score") or 0.0)
     turnover_days_value = float(metrics.get("turnover_days") or 999.0)
@@ -462,17 +558,21 @@ def run_data_analysis_agent(request: AnalysisRequest) -> DataAnalysisResult:
     else:
         sales_trend = "stable"
 
+    # Inventory health reflects stock balance instead of only overstock pressure:
+    # both severe overstock and potential shortage should reduce the score.
     inventory_health_score = 100.0
-    inventory_health_score -= max(0.0, turnover_days_value - 28.0) * 1.35
+    inventory_health_score -= abs(turnover_days_value - 28.0) * 2.2
     inventory_health_score -= max(0, stock_age_days - 45) * 0.28
+    inventory_health_score -= max(0.0, 8.0 - turnover_days_value) * 6.5
     inventory_health_score = _clamp(inventory_health_score, 0.0, 100.0)
 
-    if inventory_health_score < 25:
-        inventory_status = "severe_overstock"
-    elif inventory_health_score < 48:
-        inventory_status = "overstock"
-    elif inventory_health_score > 88:
+    # Use turnover days as the primary stock-position signal.
+    if turnover_days_value <= 10:
         inventory_status = "tight"
+    elif turnover_days_value >= 75:
+        inventory_status = "severe_overstock"
+    elif turnover_days_value >= 45 or inventory_health_score < 48:
+        inventory_status = "overstock"
     else:
         inventory_status = "normal"
 
@@ -493,8 +593,16 @@ def run_data_analysis_agent(request: AnalysisRequest) -> DataAnalysisResult:
         action = "discount"
         min_rate, max_rate = 0.95, 0.98
         reasons.append("需求走弱且库存偏高。")
+    elif strategy_goal == "CLEARANCE" and inventory_status != "tight":
+        action = "discount"
+        min_rate, max_rate = 0.97, 0.99
+        reasons.append("任务目标为清仓促销，数据面建议先测试小幅降价。")
+    elif strategy_goal == "MARKET_SHARE" and inventory_status != "tight":
+        action = "discount"
+        min_rate, max_rate = 0.98, 0.99
+        reasons.append("任务目标为市场份额优先，数据面建议用小幅降价换取转化。")
     elif inventory_status == "tight" and sales_trend == "rising":
-        reasons.append("需求和库存结构良好，暂无降价必要。")
+        reasons.append("库存周转偏快，存在潜在缺货风险，暂不建议激进降价。")
     else:
         reasons.append("需求与库存总体稳定。")
 
@@ -525,22 +633,44 @@ def run_data_analysis_agent(request: AnalysisRequest) -> DataAnalysisResult:
             "avg_sales_7d": metrics.get("avg_sales_7d"),
             "avg_sales_30d": metrics.get("avg_sales_30d"),
             "avg_sales_90d": metrics.get("avg_sales_90d"),
+            "current_price": float(product.get("current_price") or 0.0),
             "tool_trace": payload["tool_trace"],
             "data_source": payload["database_context"].get("source", "request_payload"),
         },
         data_quality_score=float(metrics.get("data_quality_score") or 1.0),
         limitations=limitations,
-        thinking_process="先调用销售指标工具分析商品与销量上下文，再判断趋势和库存压力。",
+        thinking_process="先汇总近7/30/90天销量、库存与周转等经营数据，再判断趋势和库存压力。",
         reasoning=(
-            f"近7日均销={float(metrics.get('avg_sales_7d') or 0):.2f}，"
-            f"近30日均销={float(metrics.get('avg_sales_30d') or 0):.2f}，"
-            f"趋势分={trend_score:.2f}，库存周转天数={turnover_days_value:.1f}。"
+            f"近7日均销为{float(metrics.get('avg_sales_7d') or 0):.2f}件/天，"
+            f"近30日均销为{float(metrics.get('avg_sales_30d') or 0):.2f}件/天，"
+            f"短期销量变化率（近7日对比近30日）为{trend_score:.1%}，库存周转天数为{turnover_days_value:.1f}天。"
         ),
-        decision_summary=f"数据分析建议：{_to_cn_action(action)}，建议系数区间 {min_rate:.2f}-{max_rate:.2f}。",
+        decision_summary=f"数据分析建议：{_to_cn_action(action)}，{_describe_discount_range(min_rate, max_rate)}",
         confidence=round(confidence, 4),
     )
 
     suggested_price = _derive_data_agent_suggested_price(request, base_result)
+    current_price = float(request.product.current_price or 0.0)
+    actual_action = _candidate_decision(current_price, suggested_price)
+    updated_reasons = list(reasons)
+    updated_min_rate, updated_max_rate = min_rate, max_rate
+    if actual_action != action:
+        if actual_action == "maintain":
+            updated_min_rate, updated_max_rate = 1.0, 1.0
+            updated_reasons.append("结合当前利润底线与价格约束，本轮数据侧不建议直接调价。")
+        elif actual_action == "increase":
+            updated_min_rate = round(suggested_price / max(current_price, 0.01), 4)
+            updated_max_rate = updated_min_rate
+            updated_reasons.append("为满足当前价格约束，数据侧建议先回到安全价格区间。")
+        action = actual_action
+        base_result = base_result.model_copy(
+            update={
+                "recommended_action": action,
+                "recommended_discount_range": (updated_min_rate, updated_max_rate),
+                "recommendation_reasons": updated_reasons,
+                "decision_summary": f"数据分析建议：{_to_cn_action(action)}，{_describe_discount_range(updated_min_rate, updated_max_rate)}",
+            }
+        )
     sales_lift = _estimate_sales_lift(float(request.product.current_price), suggested_price, base_result.demand_elasticity)
     expected_profit_change = _estimate_profit_change(
         request=request,
@@ -561,6 +691,7 @@ def run_data_analysis_agent(request: AnalysisRequest) -> DataAnalysisResult:
 def run_market_intel_agent(request: AnalysisRequest) -> MarketIntelResult:
     market_payload = _build_market_payload(request)
     market_metrics = MarketSnapshotTool().calculate(market_payload)
+    strategy_goal = _goal_code(request)
 
     competitors: List[CompetitorInfo] = [
         CompetitorInfo(
@@ -631,6 +762,13 @@ def run_market_intel_agent(request: AnalysisRequest) -> MarketIntelResult:
             reasons.append("当前定价偏低且竞争压力较弱。")
         else:
             reasons.append("当前价格带与竞品接近。")
+
+        if strategy_goal == "CLEARANCE" and price_position != "budget":
+            suggestion = "discount"
+            reasons.append("任务目标为清仓促销，市场侧优先给出可执行降价方案。")
+        elif strategy_goal == "MARKET_SHARE" and competition_level in {"moderate", "fierce"}:
+            suggestion = "discount"
+            reasons.append("任务目标为市场份额优先，竞争环境下优先换取销量。")
         confidence = _clamp(0.48 + competition_score * 0.25, 0.42, 0.82)
 
     base_result = MarketIntelResult(
@@ -674,14 +812,31 @@ def run_market_intel_agent(request: AnalysisRequest) -> MarketIntelResult:
         limitations=limitations,
         thinking_process="先生成竞品样本，再评估价格定位与竞争压力。",
         reasoning=(
-            f"竞品数={len(competitors)}，竞品均价={avg_price if avg_price is not None else '未知'}，"
-            f"价格分位={price_percentile:.2f}，实时市场可用={live_market_available}。"
+            f"竞品数量为{len(competitors)}个，竞品均价为{(f'{avg_price:.2f}元' if avg_price is not None else '未知')}，"
+            f"价格分位为{price_percentile:.1%}，"
+            f"{'实时竞品数据已获取，可用于本次定价决策。' if live_market_available else '实时竞品数据不足，当前仅作保守参考。'}"
         ),
         decision_summary=f"市场情报建议：{_to_cn_action(suggestion)}。",
         confidence=round(confidence, 4),
     )
 
     suggested_price = _derive_market_agent_suggested_price(request, base_result)
+    current_price = float(request.product.current_price or 0.0)
+    actual_decision = _candidate_decision(current_price, suggested_price)
+    aligned_suggestion = _decision_to_market_suggestion(actual_decision)
+    updated_reasons = list(reasons)
+    if _market_suggestion_to_decision(suggestion) != actual_decision:
+        if actual_decision == "maintain":
+            updated_reasons.append("结合利润底线与当前约束，本轮市场侧暂不建议直接调价。")
+        elif actual_decision == "increase":
+            updated_reasons.append("受价格底线约束影响，市场侧本轮不能执行降价方案。")
+        base_result = base_result.model_copy(
+            update={
+                "market_suggestion": aligned_suggestion,
+                "suggestion_reasons": updated_reasons,
+                "decision_summary": f"市场情报建议：{_to_cn_action(aligned_suggestion)}。",
+            }
+        )
     elasticity_hint = -1.1 if competition_level == "fierce" else -0.95 if competition_level == "moderate" else -0.8
     sales_lift = _estimate_sales_lift(float(request.product.current_price), suggested_price, elasticity_hint)
     expected_profit_change = _estimate_profit_change(
@@ -704,6 +859,7 @@ def run_risk_control_agent(request: AnalysisRequest) -> RiskControlResult:
     calc = RiskConstraintTool().calculate(payload)
     product = payload["product"]
     risk = payload["risk_data"]
+    strategy_goal = _goal_code(request)
 
     current_price = float(product.get("current_price") or 0.0)
     required_min_price = float(calc["required_min_price"])
@@ -739,9 +895,9 @@ def run_risk_control_agent(request: AnalysisRequest) -> RiskControlResult:
 
     warnings: List[str] = []
     reasons = [
-        f"required_min_price={required_min_price:.2f}",
-        f"current_margin={current_margin:.1%}",
-        f"risk_score={risk_score:.2f}",
+        f"最低安全价为 {required_min_price:.2f}元",
+        f"当前毛利率为 {current_margin:.1%}",
+        f"风险指数为 {risk_score:.2f}分",
     ]
     if refund_rate > 0.05:
         warnings.append(f"退款率偏高（{refund_rate:.1%}）。")
@@ -760,13 +916,16 @@ def run_risk_control_agent(request: AnalysisRequest) -> RiskControlResult:
         veto_reason = "约束冲突，需先修正条件后再自动定价。"
     elif floor_breach:
         recommendation = "increase"
-        veto_reason = f"当前价格 {current_price:.2f} 低于最低安全价 {required_min_price:.2f}。"
+        veto_reason = f"当前价格 {current_price:.2f}元低于最低安全价 {required_min_price:.2f}元。"
     elif ceiling_breach:
         recommendation = "discount"
         allow_promotion = True
     else:
         allow_promotion = risk_level != "high" and max_safe_discount < 1.0
-        recommendation = "discount" if allow_promotion else "maintain"
+        if strategy_goal in {"CLEARANCE", "MARKET_SHARE"} and allow_promotion:
+            recommendation = "discount"
+        else:
+            recommendation = "maintain"
         if not allow_promotion:
             veto_reason = "当前风险状态不支持主动降价。"
 
@@ -812,14 +971,29 @@ def run_risk_control_agent(request: AnalysisRequest) -> RiskControlResult:
         veto_reason=veto_reason,
         thinking_process="先计算硬约束边界，再汇总经营风险因子。",
         reasoning=(
-            f"总成本={unit_total_cost:.2f}，最低安全价={required_min_price:.2f}，"
-            f"价格上限={price_ceiling if price_ceiling is not None else '无'}，风险等级={risk_level}。"
+            f"总成本为{unit_total_cost:.2f}元，最低安全价为{required_min_price:.2f}元，"
+            f"价格上限为{(f'{float(price_ceiling):.2f}元' if price_ceiling is not None else '无')}，风险等级为{_to_cn_risk_level(risk_level)}。"
+            f"最低安全价按 max(总成本, 成本/(1-最低利润率), 成本*(1+最低加价率), 价格下限) 计算。"
         ),
         decision_summary=f"风险控制建议：{_to_cn_action(recommendation)}。",
         confidence=round(_clamp(1.0 - risk_score / 120.0, 0.2, 0.92), 4),
     )
 
     suggested_price = _derive_risk_agent_suggested_price(request, base_result)
+    actual_recommendation = _candidate_decision(float(request.product.current_price or 0.0), suggested_price)
+    updated_reasons = list(reasons)
+    if actual_recommendation != recommendation:
+        if actual_recommendation == "maintain":
+            updated_reasons.append("按利润底线与风险约束测算，本轮仅维持当前价格更稳妥。")
+        elif actual_recommendation == "increase":
+            updated_reasons.append("受最低安全价约束影响，需要先回到安全价格区间。")
+        base_result = base_result.model_copy(
+            update={
+                "recommendation": actual_recommendation,
+                "recommendation_reasons": updated_reasons,
+                "decision_summary": f"风险控制建议：{_to_cn_action(actual_recommendation)}。",
+            }
+        )
     sales_lift = _estimate_sales_lift(float(request.product.current_price), suggested_price, -0.8)
     expected_profit_change = _estimate_profit_change(
         request=request,
@@ -982,7 +1156,7 @@ def run_manager_coordinator_agent(
             "profit_change": 0.0,
             "market_share_change": 0.0,
         }
-        key_factors = ["constraint_conflict", "manual_review"]
+        key_factors = ["约束冲突", "人工复核"]
         warnings.append("约束冲突，无法给出安全可执行的自动调价结果。")
     elif mandatory_move:
         forced_price = float(risk_result.required_min_price)
@@ -990,9 +1164,9 @@ def run_manager_coordinator_agent(
             forced_price = float(price_ceiling)
         chosen = _evaluate_agent_price(request, data_result, risk_result, forced_price)
         chosen["agent_name"] = "risk"
-        key_factors = ["risk_boundary", "forced_adjustment"]
+        key_factors = ["风险边界", "强制调价"]
     else:
-        key_factors = ["three_agent_proposals", "manager_coordination", "profit_validation"]
+        key_factors = ["三方提案", "经理协调", "利润校验"]
         candidate_pool = list(evaluated_proposals)
         if settings.market_live_required_for_discount and not market_live_available:
             candidate_pool = [item for item in candidate_pool if str(item["decision"]) != "discount"]
@@ -1038,8 +1212,32 @@ def run_manager_coordinator_agent(
                 }
                 warnings.append("当前约束下未找到可执行且能提升利润的调价方案。")
         elif strategy_goal == "CLEARANCE":
-            non_negative = [item for item in candidate_pool if float(item["profit_change"]) >= 0]
-            chosen = min(non_negative or candidate_pool, key=lambda item: float(item["suggested_price"]))
+            # Clearance objective should prioritize actionable markdown plans first.
+            for rate in [0.9, 0.92, 0.94, 0.96, 0.98, 0.99]:
+                revised = _evaluate_agent_price(request, data_result, risk_result, current_price * rate)
+                revised["agent_name"] = "manager_revision"
+                evaluated_proposals.append(revised)
+                if not (
+                    settings.market_live_required_for_discount
+                    and not market_live_available
+                    and str(revised["decision"]) == "discount"
+                ):
+                    candidate_pool.append(revised)
+
+            discount_candidates = [item for item in candidate_pool if str(item["decision"]) == "discount"]
+            if discount_candidates:
+                chosen = min(
+                    discount_candidates,
+                    key=lambda item: (
+                        float(item["suggested_price"]),
+                        -float(item["market_share_change"]),
+                        -float(item["profit_change"]),
+                    ),
+                )
+            else:
+                non_negative = [item for item in candidate_pool if float(item["profit_change"]) >= 0]
+                chosen = min(non_negative or candidate_pool, key=lambda item: float(item["suggested_price"]))
+                warnings.append("清仓目标下未找到可执行的降价方案，已回退为最低可行价格。")
         elif strategy_goal == "MARKET_SHARE":
             non_negative = [item for item in candidate_pool if float(item["profit_change"]) >= 0]
             chosen = max(
@@ -1061,13 +1259,38 @@ def run_manager_coordinator_agent(
         market_share_change=float(chosen["market_share_change"]),
     )
 
+    primary_agents = ["data", "market", "risk", "manager_midpoint"]
+    proposal_items: List[Dict[str, Any]] = []
+    for agent_name in primary_agents:
+        item = next((row for row in evaluated_proposals if str(row.get("agent_name")) == agent_name), None)
+        if item is not None:
+            proposal_items.append(item)
+
+    revision_items = [row for row in evaluated_proposals if str(row.get("agent_name")) == "manager_revision"]
+    if revision_items:
+        best_revision = max(revision_items, key=lambda row: float(row.get("profit_change", 0.0)))
+        if str(chosen.get("agent_name")) == "manager_revision":
+            best_revision = chosen
+        proposal_items.append(best_revision)
+
+    chosen_name = str(chosen.get("agent_name"))
+    if chosen_name not in {str(item.get("agent_name")) for item in proposal_items}:
+        proposal_items.append(chosen)
+
     proposal_text = "；".join(
-        f"{_to_cn_agent_name(str(item['agent_name']))}={float(item['suggested_price']):.2f}(利润变化 {float(item['profit_change']):.2f})"
-        for item in evaluated_proposals[:8]
+        f"{_to_cn_agent_name(str(item['agent_name']))}建议价格为{float(item['suggested_price']):.2f}元（预计利润变化 {float(item['profit_change']):.2f}元）"
+        for item in proposal_items
+    )
+    used_revision_result = str(chosen.get("agent_name")) == "manager_revision"
+    revision_note = (
+        f"经理额外复核了 {len(revision_items)} 个候选价格，并采纳了复核方案。"
+        if revision_items and used_revision_result
+        else ""
     )
     core_reasons = (
         "经理汇总数据分析、市场情报、风险控制三方独立提案，"
         f"完成冲突协调后采纳“{_to_cn_agent_name(str(chosen['agent_name']))}”方案。{proposal_text}"
+        f"{revision_note}"
     )
 
     confidence = _clamp(
@@ -1084,7 +1307,7 @@ def run_manager_coordinator_agent(
     report_text = (
         "思考：经理比较三方提案并校验约束\n"
         f"推理：{core_reasons}\n"
-        f"决策：{_to_cn_action(final_decision)}，建议价={final_price:.2f}\n"
+        f"决策：{_to_cn_action(final_decision)}，建议价为 {final_price:.2f}元\n"
         f"冲突：{conflict_summary or '无'}"
     )
 
@@ -1100,7 +1323,7 @@ def run_manager_coordinator_agent(
         risk_warning=risk_result.veto_reason or ("风险可控" if risk_result.allow_promotion else "风险约束较强"),
         contingency_plan="若24小时内转化、毛利或退款指标恶化，立即回滚价格。",
         execution_plan=[
-            ExecutionPlan(step=1, action=f"执行价格 {final_price:.2f}", timing="立即", responsible="运营"),
+            ExecutionPlan(step=1, action=f"执行价格 {final_price:.2f}元", timing="立即", responsible="运营"),
             ExecutionPlan(step=2, action="跟踪转化率、毛利额和退款率", timing="24小时", responsible="分析师"),
         ],
         report_text=report_text,
@@ -1109,12 +1332,12 @@ def run_manager_coordinator_agent(
             AgentSummary(agent_name="market", summary=market_result.decision_summary, key_points=market_result.suggestion_reasons[:3]),
             AgentSummary(agent_name="risk", summary=risk_result.decision_summary, key_points=risk_result.recommendation_reasons[:3]),
         ],
-        decision_framework="三业务agent先提案，经理协调并裁决",
+        decision_framework="三个业务智能体先提案，经理协调并裁决",
         alternative_options=[
             {"option": "维持当前价格", "discount_rate": 1.0},
             {"option": "风险底线价格", "discount_rate": round(float(risk_result.required_min_price) / current_price, 4)},
         ],
-        thinking_process="三个业务agent先独立给价，经理处理冲突后确定最终方案。",
+        thinking_process="三个业务智能体先独立给价，经理处理冲突后确定最终方案。",
         reasoning=core_reasons,
         conflict_summary=conflict_summary,
         warnings=warnings,

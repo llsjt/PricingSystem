@@ -124,13 +124,26 @@ public class DecisionController {
             return Result.success(results);
         }
 
-        Map<Long, String> titleMap = productMapper.selectBatchIds(productIds).stream()
+        Map<Long, com.example.pricing.entity.BizProduct> productMap = productMapper.selectBatchIds(productIds).stream()
                 .collect(Collectors.toMap(
                         com.example.pricing.entity.BizProduct::getId,
-                        com.example.pricing.entity.BizProduct::getTitle,
+                        product -> product,
                         (left, right) -> left
                 ));
-        results.forEach(item -> item.setProductTitle(titleMap.get(item.getProductId())));
+        results.forEach(item -> {
+            com.example.pricing.entity.BizProduct product = productMap.get(item.getProductId());
+            if (product == null) {
+                return;
+            }
+            item.setProductTitle(product.getTitle());
+            item.setOriginalPrice(
+                    normalizeOriginalPrice(
+                            product.getCurrentPrice(),
+                            item.getSuggestedPrice(),
+                            item.getDiscountRate()
+                    )
+            );
+        });
         return Result.success(results);
     }
 

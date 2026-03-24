@@ -375,7 +375,7 @@ const formatCurrency = (value: number | string) => `¥${Number(value || 0).toFix
 
 const formatPercent = (value: number | string) => `${(Number(value || 0) * 100).toFixed(0)}%`
 
-const formatContent = (text?: string) => (text ? text.replace(/\n/g, '<br>') : '')
+const formatContent = (text?: string) => (text ? text.replace(/=/g, '：').replace(/\n/g, '<br>') : '')
 
 const handleSearch = () => {
   queryParams.page = 1

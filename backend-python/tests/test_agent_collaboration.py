@@ -2,7 +2,12 @@
 
 import asyncio
 
-from pricing_crew.agent_logic import run_manager_coordinator_agent
+from pricing_crew.agent_logic import (
+    run_data_analysis_agent,
+    run_manager_coordinator_agent,
+    run_market_intel_agent,
+    run_risk_control_agent,
+)
 from pricing_crew.decision_service import decision_service
 from pricing_crew.schemas import (
     AnalysisRequest,
@@ -315,3 +320,137 @@ def test_manager_avoids_unprofitable_discount_for_max_profit():
     assert final_result.suggested_price >= 100.0
     assert final_result.expected_outcomes is not None
     assert final_result.expected_outcomes.profit_change >= 0.0
+
+
+def test_clearance_prefers_discount_when_feasible():
+    request, data_result, market_result, risk_result = _build_manager_inputs(elasticity=-0.6)
+    request.strategy_goal = "CLEARANCE"
+    data_result.recommended_action = "maintain"
+    data_result.recommended_discount_range = (1.0, 1.0)
+    market_result.market_suggestion = "maintain"
+    risk_result.recommendation = "discount"
+    risk_result.allow_promotion = True
+
+    final_result = run_manager_coordinator_agent(request, data_result, market_result, risk_result)
+
+    assert final_result.decision == "discount"
+    assert final_result.suggested_price < request.product.current_price
+
+
+def test_tight_inventory_does_not_report_perfect_health_score():
+    request = AnalysisRequest(
+        task_id="DATA_TIGHT_STOCK_CASE",
+        product=ProductBase(
+            product_id="P_DATA_001",
+            product_name="Tight Stock Product",
+            category="Electronics",
+            current_price=59.0,
+            cost=28.0,
+            stock=40,
+            stock_age_days=20,
+        ),
+        sales_data=SalesData(
+            sales_history_7d=[22] * 7,
+            sales_history_30d=[22] * 30,
+            sales_history_90d=[21] * 90,
+        ),
+        competitor_data=CompetitorData(competitors=[]),
+        risk_data=RiskData(min_profit_margin=0.15, enforce_hard_constraints=True),
+        strategy_goal="MAX_PROFIT",
+    )
+
+    result = run_data_analysis_agent(request)
+
+    assert result.inventory_status == "tight"
+    assert result.inventory_health_score < 100.0
+
+
+def test_market_discount_signal_returns_lower_price():
+    request = AnalysisRequest(
+        task_id="MARKET_DISCOUNT_CASE",
+        product=ProductBase(
+            product_id="P_MARKET_001",
+            product_name="Premium Headphones",
+            category="Electronics",
+            current_price=214.37,
+            cost=149.0,
+            stock=260,
+            stock_age_days=29,
+        ),
+        sales_data=SalesData(
+            sales_history_7d=[10, 11, 12, 10, 11, 11, 11],
+            sales_history_30d=[11] * 30,
+            sales_history_90d=[11] * 90,
+        ),
+        competitor_data=CompetitorData(
+            competitors=[
+                CompetitorInfo(competitor_id=f"C{i}", product_name=f"Competitor {i}", current_price=131.03 + i, rating=4.5, review_count=500 + i)
+                for i in range(8)
+            ]
+        ),
+        risk_data=RiskData(min_profit_margin=0.15, enforce_hard_constraints=True),
+        strategy_goal="CLEARANCE",
+    )
+
+    result = run_market_intel_agent(request)
+
+    assert result.market_suggestion == "discount"
+    assert result.suggested_price is not None
+    assert result.suggested_price < request.product.current_price
+
+
+def test_risk_clearance_discount_returns_lower_price():
+    request = AnalysisRequest(
+        task_id="RISK_CLEARANCE_CASE",
+        product=ProductBase(
+            product_id="P_RISK_001",
+            product_name="Premium Headphones",
+            category="Electronics",
+            current_price=214.37,
+            cost=149.0,
+            stock=260,
+            stock_age_days=29,
+        ),
+        sales_data=SalesData(
+            sales_history_7d=[10, 11, 12, 10, 11, 11, 11],
+            sales_history_30d=[11] * 30,
+            sales_history_90d=[11] * 90,
+        ),
+        competitor_data=CompetitorData(competitors=[]),
+        risk_data=RiskData(min_profit_margin=0.15, refund_rate=0.01, complaint_rate=0.005, enforce_hard_constraints=True),
+        strategy_goal="CLEARANCE",
+    )
+
+    result = run_risk_control_agent(request)
+
+    assert result.recommendation == "discount"
+    assert result.suggested_price is not None
+    assert result.suggested_price < request.product.current_price
+
+
+def test_risk_max_profit_prefers_maintain_when_price_is_safe():
+    request = AnalysisRequest(
+        task_id="RISK_MAX_PROFIT_CASE",
+        product=ProductBase(
+            product_id="P_RISK_002",
+            product_name="Premium Headphones",
+            category="Electronics",
+            current_price=214.37,
+            cost=149.0,
+            stock=260,
+            stock_age_days=29,
+        ),
+        sales_data=SalesData(
+            sales_history_7d=[10, 11, 12, 10, 11, 11, 11],
+            sales_history_30d=[11] * 30,
+            sales_history_90d=[11] * 90,
+        ),
+        competitor_data=CompetitorData(competitors=[]),
+        risk_data=RiskData(min_profit_margin=0.15, refund_rate=0.01, complaint_rate=0.005, enforce_hard_constraints=True),
+        strategy_goal="MAX_PROFIT",
+    )
+
+    result = run_risk_control_agent(request)
+
+    assert result.recommendation == "maintain"
+    assert result.suggested_price == request.product.current_price

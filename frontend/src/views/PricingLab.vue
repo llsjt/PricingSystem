@@ -227,6 +227,11 @@
 
         <el-table :data="resultList" border stripe>
           <el-table-column prop="productId" label="商品 ID" width="100" />
+          <el-table-column label="原价" min-width="140">
+            <template #default="{ row }">
+              <span>￥{{ Number(row.originalPrice || 0).toFixed(2) }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="建议价格" min-width="140">
             <template #default="{ row }">
               <span class="price-text">￥{{ Number(row.suggestedPrice || 0).toFixed(2) }}</span>
@@ -729,7 +734,10 @@ const getAgentAvatar = (role: string) => {
   return '角色'
 }
 
-const formatContent = (content: string) => (content ? content.replace(/\n/g, '<br>') : '')
+const formatContent = (content: string) => {
+  if (!content) return ''
+  return content.replace(/=/g, '：').replace(/\n/g, '<br>')
+}
 
 const formatCoreReasons = (content?: string) => {
   if (!content) return '-'
@@ -737,6 +745,7 @@ const formatCoreReasons = (content?: string) => {
   for (const [pattern, replacement] of coreReasonDictionary) {
     text = text.replace(pattern, replacement)
   }
+  text = text.replace(/=/g, '：')
   return text
 }
 
@@ -753,6 +762,7 @@ const viewResult = async () => {
     resultList.value = (resultRes.data || []).map((item: any) => {
       return {
         ...item,
+        originalPrice: Number(item?.originalPrice || 0),
         profitChange: Number(item?.profitChange || 0),
         adoptStatus: item.adoptStatus || (item.isAccepted ? 'ADOPTED' : 'PENDING')
       }

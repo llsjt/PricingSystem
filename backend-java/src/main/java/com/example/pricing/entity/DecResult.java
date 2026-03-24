@@ -32,6 +32,9 @@ public class DecResult {
     @TableField(exist = false)
     private String productTitle;
 
+    @TableField(exist = false)
+    private BigDecimal originalPrice;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 }
