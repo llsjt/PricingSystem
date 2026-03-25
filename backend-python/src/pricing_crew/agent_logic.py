@@ -185,15 +185,14 @@ def _apply_request_price_bounds(
     required_min_price: Optional[float] = None,
 ) -> float:
     """把候选价格压到约束区间内，统一处理价格上限和最低安全价。"""
-    normalized = max(float(price), 0.01)
-    ceiling = request.risk_data.price_ceiling
-    if ceiling is not None:
-        normalized = min(normalized, float(ceiling))
-
-    floor = float(required_min_price) if required_min_price is not None else _required_min_price_from_request(request)
-    if ceiling is None or float(ceiling) >= floor - 0.01:
-        normalized = max(normalized, floor)
-    return round(normalized, 2)
+    current_price = max(float(request.product.current_price), 0.01)
+    inferred_decision = _candidate_decision(current_price, float(price))
+    return _constrain_price_for_decision(
+        request=request,
+        raw_price=price,
+        target_decision=inferred_decision,
+        required_min_price=required_min_price,
+    )
 
 
 def _estimate_sales_lift(current_price: float, suggested_price: float, elasticity: Optional[float]) -> float:
@@ -289,6 +288,23 @@ def _goal_code(request: AnalysisRequest) -> str:
     return str(request.strategy_goal or "MAX_PROFIT").upper()
 
 
+def _constraint_state(
+    request: AnalysisRequest,
+    required_min_price: Optional[float] = None,
+) -> Dict[str, float | bool | None]:
+    """汇总所有 agent 共用的价格边界，避免重复判断同一套约束。"""
+    current_price = max(float(request.product.current_price), 0.01)
+    floor = float(required_min_price) if required_min_price is not None else _required_min_price_from_request(request)
+    price_ceiling = float(request.risk_data.price_ceiling) if request.risk_data.price_ceiling is not None else None
+    constraint_conflict = bool(price_ceiling is not None and price_ceiling < floor - 0.01)
+    return {
+        "current_price": current_price,
+        "required_min_price": round(floor, 2),
+        "price_ceiling": round(price_ceiling, 2) if price_ceiling is not None else None,
+        "constraint_conflict": constraint_conflict,
+    }
+
+
 def _forced_decision_by_constraints(
     request: AnalysisRequest,
     required_min_price: Optional[float] = None,
@@ -298,17 +314,69 @@ def _forced_decision_by_constraints(
     例如当前价格已经低于最低安全价，或者高于价格上限，这类情况不再交给
     智能体自由讨论，而是直接返回强制动作和对应价格。
     """
-    current_price = max(float(request.product.current_price), 0.01)
-    price_ceiling = request.risk_data.price_ceiling
-    floor = float(required_min_price) if required_min_price is not None else _required_min_price_from_request(request)
+    state = _constraint_state(request, required_min_price=required_min_price)
+    current_price = float(state["current_price"])
+    floor = float(state["required_min_price"])
+    price_ceiling = state["price_ceiling"]
 
-    if price_ceiling is not None and float(price_ceiling) < floor - 0.01:
+    if bool(state["constraint_conflict"]):
         return None
     if current_price + 1e-6 < floor:
         return "increase", round(floor, 2)
     if price_ceiling is not None and current_price > float(price_ceiling) + 1e-6:
         return "discount", round(float(price_ceiling), 2)
     return None
+
+
+def _constrain_price_for_decision(
+    request: AnalysisRequest,
+    raw_price: float,
+    target_decision: str,
+    required_min_price: Optional[float] = None,
+) -> float:
+    """先套共享硬约束，再保证建议价和目标动作方向一致。"""
+    state = _constraint_state(request, required_min_price=required_min_price)
+    current_price = float(state["current_price"])
+    floor = float(state["required_min_price"])
+    price_ceiling = state["price_ceiling"]
+    constraint_conflict = bool(state["constraint_conflict"])
+    decision = str(target_decision or "maintain").lower()
+
+    if decision == "maintain":
+        return round(current_price, 2)
+
+    price = max(float(raw_price), 0.01)
+    if price_ceiling is not None:
+        price = min(price, float(price_ceiling))
+    if not constraint_conflict:
+        price = max(price, floor)
+
+    if decision == "discount":
+        if floor >= current_price - 0.01:
+            return round(current_price, 2)
+        price = min(price, current_price - 0.01)
+        return round(max(price, floor), 2)
+
+    if decision == "increase":
+        if price_ceiling is not None and float(price_ceiling) <= current_price + 0.01:
+            return round(current_price, 2)
+        price = max(price, current_price + 0.01)
+        if price_ceiling is not None:
+            price = min(price, float(price_ceiling))
+        return round(price, 2)
+
+    return round(current_price, 2)
+
+
+def _interpolate_rate(low_rate: float, high_rate: float, weight: float) -> float:
+    """在两个系数之间插值。
+
+    weight 越接近 0 越靠近 high_rate，越接近 1 越靠近 low_rate。
+    """
+    low = float(min(low_rate, high_rate))
+    high = float(max(low_rate, high_rate))
+    normalized_weight = _clamp(float(weight), 0.0, 1.0)
+    return round(high - (high - low) * normalized_weight, 4)
 
 
 def _market_suggestion_to_decision(suggestion: str) -> str:
@@ -331,10 +399,23 @@ def _decision_to_market_suggestion(decision: str) -> str:
     return "maintain"
 
 
+def _maintain_candidate(current_price: float) -> Dict[str, float | str]:
+    """构造统一的维持原价结果，避免多个代码块重复拼装同一份结构。"""
+    return {
+        "decision": "maintain",
+        "suggested_price": round(current_price, 2),
+        "discount_rate": 1.0,
+        "sales_lift": 1.0,
+        "profit_change": 0.0,
+        "market_share_change": 0.0,
+    }
+
+
 def _evaluate_request_candidate(
     request: AnalysisRequest,
     candidate_price: float,
     elasticity: Optional[float],
+    target_decision: str,
     required_min_price: Optional[float] = None,
 ) -> Dict[str, float | str]:
     """评估单个候选价格的业务效果。
@@ -343,18 +424,16 @@ def _evaluate_request_candidate(
     让三类智能体与经理都能使用同一套评分口径。
     """
     current_price = max(float(request.product.current_price), 0.01)
-    bounded_price = _apply_request_price_bounds(request, candidate_price, required_min_price=required_min_price)
+    bounded_price = _constrain_price_for_decision(
+        request=request,
+        raw_price=candidate_price,
+        target_decision=target_decision,
+        required_min_price=required_min_price,
+    )
     decision = _candidate_decision(current_price, bounded_price)
 
     if decision == "maintain":
-        return {
-            "decision": "maintain",
-            "suggested_price": round(current_price, 2),
-            "discount_rate": 1.0,
-            "sales_lift": 1.0,
-            "profit_change": 0.0,
-            "market_share_change": 0.0,
-        }
+        return _maintain_candidate(current_price)
 
     sales_lift = _estimate_sales_lift(current_price, bounded_price, elasticity)
     profit_change = _estimate_profit_change(
@@ -380,9 +459,11 @@ def _pick_best_candidate(
     request: AnalysisRequest,
     candidate_rates: Sequence[float],
     elasticity: Optional[float],
-    preferred_decision: Optional[str] = None,
+    target_decision: str,
     required_min_price: Optional[float] = None,
-    allowed_decisions: Optional[Sequence[str]] = None,
+    anchor_price: Optional[float] = None,
+    selection_mode: str = "profit",
+    allow_negative_profit: bool = False,
 ) -> Dict[str, float | str]:
     """从一组候选调价系数中挑选最优方案。
 
@@ -390,11 +471,14 @@ def _pick_best_candidate(
     最后优先选择“满足目标方向且利润更优”的方案。
     """
     current_price = max(float(request.product.current_price), 0.01)
+    normalized_decision = str(target_decision or "maintain").lower()
+    if normalized_decision == "maintain":
+        return _maintain_candidate(current_price)
     by_price: Dict[float, Dict[str, float | str]] = {}
 
     for raw_rate in candidate_rates:
         try:
-            rate = float(raw_rate)
+            rate = round(float(raw_rate), 4)
         except (TypeError, ValueError):
             continue
         if rate <= 0:
@@ -404,8 +488,11 @@ def _pick_best_candidate(
             request=request,
             candidate_price=current_price * rate,
             elasticity=elasticity,
+            target_decision=normalized_decision,
             required_min_price=required_min_price,
         )
+        if str(candidate["decision"]).lower() != normalized_decision:
+            continue
         key = float(candidate["suggested_price"])
         old = by_price.get(key)
         if old is None or float(candidate["profit_change"]) > float(old["profit_change"]):
@@ -413,53 +500,38 @@ def _pick_best_candidate(
 
     candidates = list(by_price.values())
     if not candidates:
-        return {
-            "decision": "maintain",
-            "suggested_price": round(current_price, 2),
-            "discount_rate": 1.0,
-            "sales_lift": 1.0,
-            "profit_change": 0.0,
-            "market_share_change": 0.0,
-        }
+        return _maintain_candidate(current_price)
 
-    if allowed_decisions:
-        allowed = {str(item).lower() for item in allowed_decisions}
-        filtered = [item for item in candidates if str(item["decision"]).lower() in allowed]
-        if filtered:
-            candidates = filtered
-        else:
-            maintain = next((item for item in by_price.values() if str(item["decision"]).lower() == "maintain"), None)
-            if maintain is not None:
-                return maintain
-            return {
-                "decision": "maintain",
-                "suggested_price": round(current_price, 2),
-                "discount_rate": 1.0,
-                "sales_lift": 1.0,
-                "profit_change": 0.0,
-                "market_share_change": 0.0,
-            }
+    profitable = [item for item in candidates if float(item["profit_change"]) >= 0.0]
+    candidate_pool = profitable if profitable else (candidates if allow_negative_profit else [])
+    if not candidate_pool:
+        return _maintain_candidate(current_price)
 
-    def _score(item: Dict[str, float | str]) -> tuple[float, float]:
-        return float(item["profit_change"]), -abs(float(item["suggested_price"]) - current_price)
+    desired_anchor = float(anchor_price) if anchor_price is not None else current_price
 
-    profitable = [item for item in candidates if str(item["decision"]) != "maintain" and float(item["profit_change"]) > 0]
-    if preferred_decision:
-        preferred = [item for item in profitable if str(item["decision"]) == preferred_decision]
-        if preferred:
-            return max(preferred, key=_score)
-    if profitable:
-        return max(profitable, key=_score)
+    def _score(item: Dict[str, float | str]) -> tuple[float, float, float, float]:
+        price = float(item["suggested_price"])
+        profit = float(item["profit_change"])
+        sales_lift = float(item["sales_lift"])
+        market_share = float(item["market_share_change"])
+        distance_to_anchor = -abs(price - desired_anchor)
+        adjustment_span = -abs(price - current_price)
 
-    maintain = next((item for item in candidates if str(item["decision"]) == "maintain"), None)
-    if maintain is not None:
-        return maintain
-    return max(candidates, key=_score)
+        if selection_mode == "market":
+            return distance_to_anchor, market_share, sales_lift, profit
+        if selection_mode == "risk":
+            return distance_to_anchor, profit, adjustment_span, market_share
+        if selection_mode == "data":
+            return distance_to_anchor, profit, sales_lift, market_share
+        return profit, distance_to_anchor, sales_lift, market_share
+
+    return max(candidate_pool, key=_score)
 
 
 def _derive_data_agent_suggested_price(request: AnalysisRequest, result: DataAnalysisResult) -> float:
     """把数据分析结论转换成一个可执行的建议价格。"""
     current_price = max(float(request.product.current_price), 0.01)
+    strategy_goal = _goal_code(request)
     action = str(result.recommended_action or "maintain").lower()
     inventory_status = str(result.inventory_status or "normal").lower()
     sales_trend = str(result.sales_trend or "stable").lower()
@@ -470,31 +542,51 @@ def _derive_data_agent_suggested_price(request: AnalysisRequest, result: DataAna
     if action == "maintain":
         return round(current_price, 2)
 
-    candidate_rates: List[float] = [1.0]
-    if inventory_status == "severe_overstock":
-        candidate_rates.extend([0.9, 0.92, 0.94, 0.96, 0.98])
-    elif inventory_status == "overstock" or sales_trend == "declining":
-        candidate_rates.extend([0.94, 0.96, 0.98, 0.99, 1.01, 1.02])
-    elif inventory_status == "tight" and sales_trend in {"rising", "stable"}:
-        candidate_rates.extend([1.01, 1.02, 1.03, 1.04, 1.05])
-    elif sales_trend == "rising":
-        candidate_rates.extend([1.01, 1.02, 1.03, 1.04])
-    else:
-        candidate_rates.extend([0.99, 1.01, 1.02, 1.03, 1.04, 1.05])
-
     try:
         lower_rate, upper_rate = result.recommended_discount_range
-        candidate_rates.extend([float(lower_rate), float(upper_rate)])
     except Exception:
-        pass
+        lower_rate, upper_rate = (1.0, 1.0)
 
-    preferred_decision = "discount" if action in {"discount", "clearance"} else "increase"
+    target_decision = "discount" if action in {"discount", "clearance"} else "increase"
+    if target_decision == "discount":
+        pressure = 0.35
+        if inventory_status == "severe_overstock":
+            pressure += 0.4
+        elif inventory_status == "overstock":
+            pressure += 0.22
+        if sales_trend == "declining":
+            pressure += 0.18
+        elif sales_trend == "rising":
+            pressure -= 0.08
+        if strategy_goal == "CLEARANCE":
+            pressure += 0.12
+        elif strategy_goal == "MARKET_SHARE":
+            pressure += 0.08
+    else:
+        pressure = 0.45
+        if inventory_status == "tight":
+            pressure += 0.18
+        if sales_trend == "rising":
+            pressure += 0.12
+
+    anchor_rate = _interpolate_rate(float(lower_rate), float(upper_rate), pressure)
+    mid_rate = round((float(lower_rate) + float(upper_rate)) / 2.0, 4)
+    candidate_rates = [
+        float(lower_rate),
+        round(anchor_rate * 0.995, 4),
+        anchor_rate,
+        round(anchor_rate * 1.005, 4),
+        mid_rate,
+        float(upper_rate),
+    ]
     best = _pick_best_candidate(
         request=request,
         candidate_rates=candidate_rates,
         elasticity=result.demand_elasticity,
-        preferred_decision=preferred_decision,
-        allowed_decisions=[preferred_decision],
+        target_decision=target_decision,
+        anchor_price=current_price * anchor_rate,
+        selection_mode="data",
+        allow_negative_profit=strategy_goal in {"CLEARANCE", "MARKET_SHARE"} and target_decision == "discount",
     )
     return float(best["suggested_price"])
 
@@ -502,6 +594,7 @@ def _derive_data_agent_suggested_price(request: AnalysisRequest, result: DataAna
 def _derive_market_agent_suggested_price(request: AnalysisRequest, result: MarketIntelResult) -> float:
     """把市场判断转成具体价格，确保方向和文案结论一致。"""
     current_price = max(float(request.product.current_price), 0.01)
+    strategy_goal = _goal_code(request)
     market_suggestion = str(result.market_suggestion or "maintain").lower()
     competition_level = str(result.competition_level or "moderate").lower()
     price_position = str(result.price_position or "mid-range").lower()
@@ -514,32 +607,53 @@ def _derive_market_agent_suggested_price(request: AnalysisRequest, result: Marke
     if target_decision == "maintain":
         return round(current_price, 2)
 
-    candidate_rates: List[float] = [0.99, 1.0, 1.01]
-    preferred_decision: Optional[str] = None
-    if market_suggestion in {"discount", "penetrate", "price_war"} or (
-        price_position == "premium" and competition_level in {"moderate", "fierce"}
-    ):
-        candidate_rates.extend([0.94, 0.96, 0.97, 0.98, 0.99])
-        preferred_decision = "discount"
-    elif market_suggestion == "premium" or (price_position == "budget" and competition_level in {"low", "moderate"}):
-        candidate_rates.extend([1.01, 1.02, 1.03, 1.05, 1.07])
-        preferred_decision = "increase"
+    market_rate = avg_price / current_price if avg_price is not None and current_price > 0 else 1.0
+    if target_decision == "discount":
+        pressure = 0.02
+        if competition_level == "fierce":
+            pressure += 0.04
+        elif competition_level == "moderate":
+            pressure += 0.02
+        if price_position == "premium":
+            pressure += 0.03
+        if strategy_goal == "CLEARANCE":
+            pressure += 0.02
+        elif strategy_goal == "MARKET_SHARE":
+            pressure += 0.01
+        anchor_rate = _clamp(market_rate - pressure, 0.88, 0.99)
+        candidate_rates = [
+            0.99,
+            round(anchor_rate * 1.02, 4),
+            round(anchor_rate, 4),
+            round(anchor_rate * 0.98, 4),
+            0.96,
+            0.94,
+        ]
     else:
-        candidate_rates.extend([0.98, 1.02, 1.03, 1.04])
-
-    if avg_price is not None and current_price > 0:
-        anchor_rate = avg_price / current_price
-        candidate_rates.extend(
-            [anchor_rate * 0.98, anchor_rate * 0.99, anchor_rate, anchor_rate * 1.01, anchor_rate * 1.02]
-        )
+        premium_room = 0.02
+        if competition_level == "low":
+            premium_room += 0.03
+        if price_position == "budget":
+            premium_room += 0.02
+        anchor_rate = _clamp(max(market_rate, 1.0) + premium_room, 1.01, 1.12)
+        candidate_rates = [
+            1.01,
+            round(anchor_rate * 0.99, 4),
+            round(anchor_rate, 4),
+            round(anchor_rate * 1.01, 4),
+            1.05,
+            1.08,
+        ]
 
     elasticity_hint = -1.1 if competition_level == "fierce" else -0.95 if competition_level == "moderate" else -0.8
     best = _pick_best_candidate(
         request=request,
         candidate_rates=candidate_rates,
         elasticity=elasticity_hint,
-        preferred_decision=preferred_decision,
-        allowed_decisions=[target_decision],
+        target_decision=target_decision,
+        anchor_price=current_price * anchor_rate,
+        selection_mode="market",
+        allow_negative_profit=strategy_goal in {"CLEARANCE", "MARKET_SHARE"} and target_decision == "discount",
     )
     return float(best["suggested_price"])
 
@@ -547,7 +661,7 @@ def _derive_market_agent_suggested_price(request: AnalysisRequest, result: Marke
 def _derive_risk_agent_suggested_price(request: AnalysisRequest, result: RiskControlResult) -> float:
     """在风控边界内生成最终可落地的风控建议价格。"""
     current_price = max(float(request.product.current_price), 0.01)
-    price_ceiling = request.risk_data.price_ceiling
+    strategy_goal = _goal_code(request)
 
     if result.calculation_details.get("constraint_conflict"):
         return round(current_price, 2)
@@ -559,30 +673,34 @@ def _derive_risk_agent_suggested_price(request: AnalysisRequest, result: RiskCon
     if target_decision == "maintain":
         return round(current_price, 2)
 
-    candidate_rates: List[float] = [1.0, 1.01, 1.02, 1.03]
-    if str(result.risk_level or "").lower() == "low":
-        candidate_rates.extend([1.04, 1.05])
-
-    if result.allow_promotion:
-        candidate_rates.extend([0.99, 0.98, float(result.max_safe_discount or 1.0)])
-        preferred_decision = "discount" if target_decision == "discount" else "increase"
+    if target_decision == "discount" and result.allow_promotion:
+        floor_rate = float(result.required_min_price) / current_price
+        max_safe_rate = _clamp(float(result.max_safe_discount or 1.0), floor_rate, 1.0)
+        discount_room = max(0.0, 1.0 - max_safe_rate)
+        safety_buffer_ratio = 0.45 if str(result.risk_level or "").lower() == "low" else 0.3
+        anchor_rate = round(max_safe_rate + discount_room * (1.0 - safety_buffer_ratio), 4)
+        candidate_rates = [
+            0.99,
+            round(anchor_rate * 1.01, 4),
+            anchor_rate,
+            round((anchor_rate + max_safe_rate) / 2.0, 4),
+            max_safe_rate,
+        ]
     else:
-        preferred_decision = "increase"
+        anchor_rate = 1.02 if str(result.risk_level or "").lower() == "low" else 1.01
+        candidate_rates = [1.01, anchor_rate, round(anchor_rate * 1.01, 4), 1.04]
 
     best = _pick_best_candidate(
         request=request,
         candidate_rates=candidate_rates,
         elasticity=-0.8,
-        preferred_decision=preferred_decision,
+        target_decision=target_decision,
         required_min_price=float(result.required_min_price),
-        allowed_decisions=[target_decision],
+        anchor_price=current_price * anchor_rate,
+        selection_mode="risk",
+        allow_negative_profit=strategy_goal in {"CLEARANCE", "MARKET_SHARE"} and target_decision == "discount",
     )
-    chosen_price = float(best["suggested_price"])
-    if price_ceiling is not None:
-        chosen_price = min(chosen_price, float(price_ceiling))
-    if price_ceiling is None or float(price_ceiling) >= float(result.required_min_price) - 0.01:
-        chosen_price = max(chosen_price, float(result.required_min_price))
-    return round(chosen_price, 2)
+    return float(best["suggested_price"])
 
 
 def run_data_analysis_agent(request: AnalysisRequest) -> DataAnalysisResult:
@@ -1104,14 +1222,7 @@ def _evaluate_agent_price(
 
     decision = _candidate_decision(current_price, evaluated_price)
     if decision == "maintain":
-        return {
-            "decision": "maintain",
-            "suggested_price": round(current_price, 2),
-            "discount_rate": 1.0,
-            "sales_lift": 1.0,
-            "profit_change": 0.0,
-            "market_share_change": 0.0,
-        }
+        return _maintain_candidate(current_price)
 
     sales_lift = _estimate_sales_lift(current_price, evaluated_price, data_result.demand_elasticity)
     unit_total_cost = float(risk_result.calculation_details.get("total_cost") or request.product.cost or 0.0)

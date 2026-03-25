@@ -399,6 +399,58 @@ def test_market_discount_signal_returns_lower_price():
     assert result.suggested_price < request.product.current_price
 
 
+def test_clearance_agents_produce_distinct_price_proposals():
+    request = AnalysisRequest(
+        task_id="AGENT_PRICE_DIVERGENCE_CASE",
+        product=ProductBase(
+            product_id="P_AGENT_001",
+            product_name="Premium Headphones",
+            category="Electronics",
+            current_price=214.37,
+            cost=149.0,
+            stock=260,
+            stock_age_days=29,
+        ),
+        sales_data=SalesData(
+            sales_history_7d=[10, 11, 12, 10, 11, 11, 11],
+            sales_history_30d=[11] * 30,
+            sales_history_90d=[11] * 90,
+        ),
+        competitor_data=CompetitorData(
+            competitors=[
+                CompetitorInfo(
+                    competitor_id=f"C{i}",
+                    product_name=f"Competitor {i}",
+                    current_price=131.03 + i,
+                    rating=4.5,
+                    review_count=500 + i,
+                )
+                for i in range(8)
+            ]
+        ),
+        risk_data=RiskData(min_profit_margin=0.15, refund_rate=0.01, complaint_rate=0.005, enforce_hard_constraints=True),
+        strategy_goal="CLEARANCE",
+    )
+
+    data_result = run_data_analysis_agent(request)
+    market_result = run_market_intel_agent(request)
+    risk_result = run_risk_control_agent(request)
+
+    prices = {
+        round(float(data_result.suggested_price or 0.0), 2),
+        round(float(market_result.suggested_price or 0.0), 2),
+        round(float(risk_result.suggested_price or 0.0), 2),
+    }
+
+    assert data_result.suggested_price is not None
+    assert market_result.suggested_price is not None
+    assert risk_result.suggested_price is not None
+    assert data_result.suggested_price < request.product.current_price
+    assert market_result.suggested_price < request.product.current_price
+    assert risk_result.suggested_price < request.product.current_price
+    assert len(prices) == 3
+
+
 def test_risk_clearance_discount_returns_lower_price():
     request = AnalysisRequest(
         task_id="RISK_CLEARANCE_CASE",
