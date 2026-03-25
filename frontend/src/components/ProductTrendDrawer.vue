@@ -146,11 +146,11 @@ const formatNumber = (value: number | string, fractionDigits = 0) =>
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits
   })
-const formatQuantity = (value: number | string) => `${formatNumber(value, 0)}件`
+const formatQuantity = (value: number | string) => formatNumber(value, 0)
 const formatCurrency = (value: number | string) => `¥${formatNumber(value, 2)}`
 const formatSignedQuantity = (value: number | string) => {
   const numeric = Number(value || 0)
-  return `${numeric >= 0 ? '+' : '-'}${formatNumber(Math.abs(numeric), 0)}件`
+  return `${numeric >= 0 ? '+' : '-'}${formatNumber(Math.abs(numeric), 0)}`
 }
 const formatSignedCurrency = (value: number | string) => {
   const numeric = Number(value || 0)
@@ -301,7 +301,7 @@ onBeforeUnmount(() => {
 }
 
 .compact-metrics {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
 .trend-metric-card .metric-label {
@@ -317,24 +317,31 @@ onBeforeUnmount(() => {
 }
 
 .trend-line {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
 }
 
 .trend-line-label {
   font-size: 14px;
   font-weight: 600;
   color: #5b6f8d;
+  white-space: nowrap;
+  word-break: keep-all;
 }
 
 .trend-line-value {
-  font-size: 24px;
+  min-width: 0;
+  font-size: clamp(18px, 1.5vw, 24px);
   line-height: 1.08;
   font-weight: 700;
   letter-spacing: -0.01em;
   color: #1a2f4e;
+  text-align: right;
+  white-space: nowrap;
+  word-break: keep-all;
+  font-variant-numeric: tabular-nums;
 }
 
 .price-pill {
@@ -353,12 +360,6 @@ onBeforeUnmount(() => {
   height: 420px;
 }
 
-@media (max-width: 1200px) {
-  .compact-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 @media (max-width: 768px) {
   .compact-metrics {
     grid-template-columns: 1fr;
@@ -370,6 +371,11 @@ onBeforeUnmount(() => {
 
   .trend-line-value {
     font-size: 22px;
+  }
+
+  .trend-line {
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 10px;
   }
 
   .chart-container {
