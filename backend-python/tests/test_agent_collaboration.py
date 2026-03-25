@@ -2,14 +2,14 @@
 
 import asyncio
 
-from pricing_crew.agent_logic import (
+from pricing_crew.api.decision_service import decision_service
+from pricing_crew.core.agent_logic import (
     run_data_analysis_agent,
     run_manager_coordinator_agent,
     run_market_intel_agent,
     run_risk_control_agent,
 )
-from pricing_crew.decision_service import decision_service
-from pricing_crew.schemas import (
+from pricing_crew.core.schemas import (
     AnalysisRequest,
     CompetitorData,
     CompetitorInfo,
@@ -506,3 +506,125 @@ def test_risk_max_profit_prefers_maintain_when_price_is_safe():
 
     assert result.recommendation == "maintain"
     assert result.suggested_price == request.product.current_price
+
+
+def test_below_min_safe_price_forces_increase():
+    request = AnalysisRequest(
+        task_id="FORCED_INCREASE_CASE",
+        product=ProductBase(
+            product_id="P_FORCE_001",
+            product_name="Low Margin Product",
+            category="Home",
+            current_price=30.0,
+            cost=28.0,
+            stock=160,
+            stock_age_days=20,
+        ),
+        sales_data=SalesData(
+            sales_history_7d=[5] * 7,
+            sales_history_30d=[6] * 30,
+            sales_history_90d=[7] * 90,
+        ),
+        competitor_data=CompetitorData(competitors=[]),
+        risk_data=RiskData(min_profit_margin=0.15, enforce_hard_constraints=True),
+        strategy_goal="MAX_PROFIT",
+    )
+
+    data_result = run_data_analysis_agent(request)
+    market_result = run_market_intel_agent(request)
+    risk_result = run_risk_control_agent(request)
+    final_result = run_manager_coordinator_agent(request, data_result, market_result, risk_result)
+
+    assert data_result.suggested_price == 32.94
+    assert market_result.suggested_price == 32.94
+    assert risk_result.suggested_price == 32.94
+    assert final_result.decision == "increase"
+    assert final_result.suggested_price == 32.94
+
+
+def test_price_ceiling_breach_forces_discount_to_ceiling():
+    request = AnalysisRequest(
+        task_id="CEILING_BREACH_CASE",
+        product=ProductBase(
+            product_id="P_FORCE_002",
+            product_name="Brand Limited Product",
+            category="Beauty",
+            current_price=120.0,
+            cost=60.0,
+            stock=80,
+            stock_age_days=25,
+        ),
+        sales_data=SalesData(
+            sales_history_7d=[12] * 7,
+            sales_history_30d=[11] * 30,
+            sales_history_90d=[10] * 90,
+        ),
+        competitor_data=CompetitorData(
+            competitors=[
+                CompetitorInfo(
+                    competitor_id="C1",
+                    product_name="Competitor 1",
+                    current_price=90.0,
+                    rating=4.6,
+                    review_count=320,
+                )
+            ]
+        ),
+        risk_data=RiskData(min_profit_margin=0.15, price_ceiling=99.0, enforce_hard_constraints=True),
+        strategy_goal="MAX_PROFIT",
+    )
+
+    data_result = run_data_analysis_agent(request)
+    market_result = run_market_intel_agent(request)
+    risk_result = run_risk_control_agent(request)
+    final_result = run_manager_coordinator_agent(request, data_result, market_result, risk_result)
+
+    assert data_result.suggested_price == 99.0
+    assert market_result.suggested_price == 99.0
+    assert risk_result.suggested_price == 99.0
+    assert final_result.decision == "discount"
+    assert final_result.suggested_price == 99.0
+
+
+def test_clearance_with_tight_inventory_keeps_current_price():
+    request = AnalysisRequest(
+        task_id="TIGHT_CLEARANCE_CASE",
+        product=ProductBase(
+            product_id="P_FORCE_003",
+            product_name="Thermos",
+            category="Home",
+            current_price=59.0,
+            cost=28.0,
+            stock=35,
+            stock_age_days=18,
+        ),
+        sales_data=SalesData(
+            sales_history_7d=[22] * 7,
+            sales_history_30d=[22] * 30,
+            sales_history_90d=[21] * 90,
+        ),
+        competitor_data=CompetitorData(
+            competitors=[
+                CompetitorInfo(
+                    competitor_id="C1",
+                    product_name="Competitor 1",
+                    current_price=61.0,
+                    rating=4.8,
+                    review_count=500,
+                )
+            ]
+        ),
+        risk_data=RiskData(min_profit_margin=0.15, enforce_hard_constraints=True),
+        strategy_goal="CLEARANCE",
+    )
+
+    data_result = run_data_analysis_agent(request)
+    market_result = run_market_intel_agent(request)
+    risk_result = run_risk_control_agent(request)
+    final_result = run_manager_coordinator_agent(request, data_result, market_result, risk_result)
+
+    assert data_result.recommended_action == "maintain"
+    assert market_result.market_suggestion == "maintain"
+    assert risk_result.recommendation == "discount"
+    assert final_result.decision == "maintain"
+    assert final_result.suggested_price == request.product.current_price

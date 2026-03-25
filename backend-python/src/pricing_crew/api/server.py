@@ -26,9 +26,10 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 
-from pricing_crew.config.runtime import settings
-from pricing_crew.decision_service import decision_service
-from pricing_crew.schemas import (
+from pricing_crew.api.decision_service import decision_service
+from pricing_crew.api.workflow import workflow_service
+from pricing_crew.api.ws_manager import manager
+from pricing_crew.core.schemas import (
     AnalysisRequest,
     DataAnalysisResult,
     DecisionResponse,
@@ -38,8 +39,7 @@ from pricing_crew.schemas import (
     MarketIntelResult,
     RiskControlResult,
 )
-from pricing_crew.workflow import workflow_service
-from pricing_crew.ws_manager import manager
+from pricing_crew.infrastructure.config.runtime import PROJECT_ROOT, settings
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -54,7 +54,7 @@ def api_ok(data: Any = None, message: str = "success") -> Dict[str, Any]:
 
 
 def _project_env_path() -> Path:
-    return Path(__file__).resolve().parents[2] / ".env"
+    return PROJECT_ROOT / ".env"
 
 
 def _read_env_map() -> Dict[str, str]:

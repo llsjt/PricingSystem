@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from typing import Optional, Tuple
 
-from pricing_crew.orchestrator import pricing_crew_orchestrator
-from pricing_crew.schemas import AnalysisRequest, DataAnalysisResult, FinalDecision, MarketIntelResult, RiskControlResult
+from pricing_crew.core.schemas import AnalysisRequest, DataAnalysisResult, FinalDecision, MarketIntelResult, RiskControlResult
+from pricing_crew.crews.orchestrator import pricing_crew_orchestrator
 
 
 class DecisionService:

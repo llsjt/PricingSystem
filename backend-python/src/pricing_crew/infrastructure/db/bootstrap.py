@@ -10,8 +10,8 @@ from typing import Iterable, List
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from pricing_crew.db.database import Base, SessionLocal, engine
-from pricing_crew.db.models import BizProduct, BizPromotionHistory, BizSalesDaily
+from pricing_crew.infrastructure.db.database import Base, SessionLocal, engine
+from pricing_crew.infrastructure.db.models import BizProduct, BizPromotionHistory, BizSalesDaily
 
 
 @dataclass(frozen=True)

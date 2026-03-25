@@ -5,6 +5,10 @@ const APP_TITLE = '智能定价决策平台'
 
 const routes: Array<RouteRecordRaw> = [
   {
+    path: '/index.html',
+    redirect: '/'
+  },
+  {
     path: '/login',
     name: 'Login',
     component: () => import('../views/Login.vue'),

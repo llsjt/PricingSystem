@@ -14,18 +14,13 @@ from openpyxl import Workbook, load_workbook
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
-from pricing_crew.config.runtime import settings
-from pricing_crew.db import init_database, seed_realistic_demo_data
-from pricing_crew.db.database import SessionLocal
-from pricing_crew.db.models import BizProduct, BizSalesDaily, DecAgentLog, DecResult, DecTask
-from pricing_crew.agent_logic import (
-    run_data_analysis_agent,
-    run_manager_coordinator_agent,
-    run_market_intel_agent,
-    run_risk_control_agent,
-)
-from pricing_crew.schemas import AnalysisRequest, CompetitorData, ProductBase, RiskData, SalesData
-from pricing_crew.ws_manager import manager
+from pricing_crew.api.ws_manager import manager
+from pricing_crew.core.schemas import AnalysisRequest, CompetitorData, ProductBase, RiskData, SalesData
+from pricing_crew.crews.orchestrator import pricing_crew_orchestrator
+from pricing_crew.infrastructure.config.runtime import settings
+from pricing_crew.infrastructure.db.bootstrap import init_database, seed_realistic_demo_data
+from pricing_crew.infrastructure.db.database import SessionLocal
+from pricing_crew.infrastructure.db.models import BizProduct, BizSalesDaily, DecAgentLog, DecResult, DecTask
 
 logger = logging.getLogger(__name__)
 
@@ -547,13 +542,13 @@ class WorkflowService:
             # 每个 agent 完成后立即推流，避免前端长时间无输出。
             # 四个智能体按照“数据 -> 市场 -> 风控 -> 经理”的固定顺序依次发言。
             await self.stream_thought(task_id, self.DATA_ROLE, 1, "", product_id, emit_end=False)
-            data_result = await asyncio.to_thread(run_data_analysis_agent, req)
+            data_result = await pricing_crew_orchestrator.run_data_analysis(req)
             data_text = self._humanize_agent_text(self.compose_data_agent_output(product.title, data_result))
             await self.stream_thought(task_id, self.DATA_ROLE, 1, data_text, product_id, emit_start=False)
             self._save_log(db, task_id, product_id, self.DATA_ROLE, 1, data_text)
 
             await self.stream_thought(task_id, self.MARKET_ROLE, 2, "", product_id, emit_end=False)
-            market_result = await asyncio.to_thread(run_market_intel_agent, req)
+            market_result = await pricing_crew_orchestrator.run_market_intel(req)
             if not bool(market_result.analysis_details.get("live_market_available")):
                 failure_reasons = market_result.analysis_details.get("failure_reasons") or market_result.limitations or []
                 failure_items = [str(item) for item in failure_reasons if item]
@@ -575,13 +570,13 @@ class WorkflowService:
             self._save_log(db, task_id, product_id, self.MARKET_ROLE, 2, market_text)
 
             await self.stream_thought(task_id, self.RISK_ROLE, 3, "", product_id, emit_end=False)
-            risk_result = await asyncio.to_thread(run_risk_control_agent, req)
+            risk_result = await pricing_crew_orchestrator.run_risk_control(req)
             risk_text = self._humanize_agent_text(self.compose_risk_agent_output(product.title, risk_result))
             await self.stream_thought(task_id, self.RISK_ROLE, 3, risk_text, product_id, emit_start=False)
             self._save_log(db, task_id, product_id, self.RISK_ROLE, 3, risk_text)
 
             await self.stream_thought(task_id, self.MANAGER_ROLE, 4, "", product_id, emit_end=False)
-            final_result = await asyncio.to_thread(run_manager_coordinator_agent, req, data_result, market_result, risk_result)
+            final_result = await pricing_crew_orchestrator.run_manager_with_inputs(req, data_result, market_result, risk_result)
             manager_text = self._humanize_agent_text(self.compose_manager_agent_output(product.title, final_result))
             await self.stream_thought(task_id, self.MANAGER_ROLE, 4, manager_text, product_id, emit_start=False)
             self._save_log(db, task_id, product_id, self.MANAGER_ROLE, 4, manager_text)

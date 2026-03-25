@@ -8,13 +8,13 @@ from crewai import Agent, Crew, Process, Task
 from crewai.project import CrewBase, agent, crew, task
 from pydantic import BaseModel
 
-from pricing_crew.models import (
+from pricing_crew.crews.models import (
     CrewDataAnalysisOutput,
     CrewManagerDecisionOutput,
     CrewMarketIntelOutput,
     CrewRiskControlOutput,
 )
-from pricing_crew.tools.custom_tool import (
+from pricing_crew.infrastructure.tools.custom_tool import (
     DatabaseProductContextTool,
     DatabaseRiskContextTool,
     MarketSnapshotTool,
@@ -34,18 +34,6 @@ class PricingDecisionCrew:
     llm: Any = None
     verbose: bool = False
     use_structured_output: bool = True
-
-    def configure(
-        self,
-        llm: Any,
-        *,
-        verbose: bool = False,
-        use_structured_output: bool = True,
-    ) -> "PricingDecisionCrew":
-        self.llm = llm
-        self.verbose = verbose
-        self.use_structured_output = use_structured_output
-        return self
 
     def _build_task(
         self,

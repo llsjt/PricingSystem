@@ -7,7 +7,9 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-_ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+RUNTIME_DIR = PROJECT_ROOT / "runtime"
+_ENV_PATH = PROJECT_ROOT / ".env"
 
 
 class Settings(BaseSettings):

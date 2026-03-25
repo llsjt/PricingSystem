@@ -7,8 +7,8 @@ import asyncio
 import json
 from typing import Any, Dict, Optional
 
-from pricing_crew.orchestrator import pricing_crew_orchestrator
-from pricing_crew.schemas import AnalysisRequest
+from pricing_crew.core.schemas import AnalysisRequest
+from pricing_crew.crews.orchestrator import pricing_crew_orchestrator
 
 
 def run_with_request(request: AnalysisRequest):
@@ -28,4 +28,4 @@ def run(payload_json: Optional[str] = None):
 
 
 if __name__ == "__main__":
-    raise SystemExit("Use pricing_crew.main.run(payload_json=...) or API server entrypoint.")
+    raise SystemExit("Use pricing_crew.crews.main.run(payload_json=...) or API server entrypoint.")

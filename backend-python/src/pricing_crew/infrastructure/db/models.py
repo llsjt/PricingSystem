@@ -6,7 +6,7 @@ from datetime import datetime
 
 from sqlalchemy import BIGINT, Boolean, Column, Date, DateTime, DECIMAL, ForeignKey, Integer, String, Text
 
-from pricing_crew.db.database import Base
+from pricing_crew.infrastructure.db.database import Base
 
 
 class BizProduct(Base):

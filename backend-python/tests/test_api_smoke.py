@@ -2,8 +2,8 @@
 
 from fastapi.testclient import TestClient
 
-from pricing_crew.server import app, workflow_service
-from pricing_crew.schemas import (
+from pricing_crew.api.server import app, workflow_service
+from pricing_crew.core.schemas import (
     AnalysisRequest,
     CompetitorData,
     ProductBase,

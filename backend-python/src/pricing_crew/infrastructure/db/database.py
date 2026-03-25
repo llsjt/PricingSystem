@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-from pricing_crew.config.runtime import settings
+from pricing_crew.infrastructure.config.runtime import settings
 
 
 DATABASE_URL = settings.resolved_database_url()

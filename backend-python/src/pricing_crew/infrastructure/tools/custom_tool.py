@@ -6,7 +6,7 @@ import hashlib
 import json
 import random
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from statistics import mean
 from typing import Any, Dict, List
@@ -15,8 +15,8 @@ from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 from sqlalchemy import inspect
 
-from pricing_crew.db.database import SessionLocal
-from pricing_crew.db.models import BizProduct, BizPromotionHistory, BizSalesDaily
+from pricing_crew.infrastructure.db.database import SessionLocal
+from pricing_crew.infrastructure.db.models import BizProduct, BizPromotionHistory, BizSalesDaily
 
 
 def _json_dump(payload: Dict[str, Any]) -> str:
@@ -72,7 +72,7 @@ def _simulate_market_competitors(keyword: str, category: str, limit: int) -> Lis
 
     base_price = _category_base_price(category)
     base_price *= 0.92 + min(len(keyword_text), 12) * 0.01
-    now_iso = datetime.utcnow().isoformat()
+    now_iso = datetime.now(timezone.utc).isoformat()
 
     competitors: List[Dict[str, Any]] = []
     for idx in range(normalized_limit):
