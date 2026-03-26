@@ -20,30 +20,16 @@ public class UserController {
 
     private final SysUserMapper userMapper;
 
-    @jakarta.annotation.PostConstruct
-    public void initAdmin() {
-        LambdaQueryWrapper<SysUser> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(SysUser::getUsername, "admin");
-        if (!userMapper.exists(wrapper)) {
-            SysUser admin = new SysUser();
-            admin.setUsername("admin");
-            admin.setPassword("123456");
-            admin.setEmail("admin@example.com");
-            userMapper.insert(admin);
-            System.out.println("Initialized admin user with password '123456'");
-        }
-    }
-
     @PostMapping("/login")
     public Result<Map<String, Object>> login(@RequestBody Map<String, String> body) {
         String username = body.get("username");
         String password = body.get("password");
 
         LambdaQueryWrapper<SysUser> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(SysUser::getUsername, username);
+        wrapper.and(query -> query.eq(SysUser::getUsername, username).or().eq(SysUser::getAccount, username));
         SysUser user = userMapper.selectOne(wrapper);
 
-        if (user == null || !user.getPassword().equals(password)) {
+        if (user == null || user.getStatus() != null && user.getStatus() == 0 || !user.getPassword().equals(password)) {
             return Result.error("用户名或密码错误");
         }
 
@@ -80,6 +66,8 @@ public class UserController {
             return Result.error("用户名已存在");
         }
 
+        user.setAccount(user.getUsername());
+        user.setStatus(1);
         userMapper.insert(user);
         return Result.success(null);
     }
@@ -103,12 +91,16 @@ public class UserController {
                 return Result.error("用户名已存在");
             }
             existing.setUsername(user.getUsername());
+            existing.setAccount(user.getUsername());
         }
 
         if (user.getPassword() != null && !user.getPassword().isBlank()) {
             existing.setPassword(user.getPassword());
         }
         existing.setEmail(user.getEmail());
+        if (user.getStatus() != null) {
+            existing.setStatus(user.getStatus());
+        }
 
         userMapper.updateById(existing);
         return Result.success(null);
@@ -155,7 +147,7 @@ public class UserController {
         }
 
         LambdaQueryWrapper<SysUser> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(SysUser::getUsername, currentUsername);
+        wrapper.and(query -> query.eq(SysUser::getUsername, currentUsername).or().eq(SysUser::getAccount, currentUsername));
         SysUser user = userMapper.selectOne(wrapper);
 
         if (user == null || !"admin".equals(user.getUsername())) {

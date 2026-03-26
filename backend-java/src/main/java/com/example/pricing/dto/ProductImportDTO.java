@@ -6,6 +6,9 @@ import java.math.BigDecimal;
 
 @Data
 public class ProductImportDTO {
+    @ExcelProperty("商品编号")
+    private Long itemId;
+
     @ExcelProperty("商品标题")
     private String title;
 
@@ -15,9 +18,6 @@ public class ProductImportDTO {
     @ExcelProperty("成本价")
     private BigDecimal costPrice;
 
-    @ExcelProperty("市场价")
-    private BigDecimal marketPrice;
-
     @ExcelProperty("当前售价")
     private BigDecimal currentPrice;
 
@@ -26,10 +26,6 @@ public class ProductImportDTO {
 
     @ExcelProperty("月销售量")
     private Integer monthlySales;
-
-    // Excel 中可能是 "12%" 或 "0.12"
-    @ExcelProperty("点击率")
-    private String clickRateStr;
 
     @ExcelProperty("转化率")
     private String conversionRateStr;

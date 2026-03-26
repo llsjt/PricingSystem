@@ -4,7 +4,7 @@
       <div class="section-head">
         <div class="section-title">
           <h3>商品列表</h3>
-          <p>支持搜索、新增和批量删除。</p>
+          <p>当前页面已按新商品模型展示商品编号、售价、库存与近 30 天经营指标。</p>
         </div>
         <div class="toolbar-actions">
           <el-button @click="handleSearch">刷新</el-button>
@@ -19,14 +19,9 @@
         <el-input
           v-model="queryParams.keyword"
           clearable
-          placeholder="搜索商品标题或 ID"
+          placeholder="搜索商品标题、类目、商品ID或商品编号"
           @keyup.enter="handleSearch"
         />
-        <el-select v-model="queryParams.dataSource" clearable placeholder="数据来源">
-          <el-option label="全部来源" value="" />
-          <el-option label="导入" value="IMPORT" />
-          <el-option label="手工录入" value="MANUAL" />
-        </el-select>
         <el-button type="primary" @click="handleSearch">搜索</el-button>
       </div>
 
@@ -43,13 +38,14 @@
           @selection-change="handleSelectionChange"
         >
           <el-table-column type="selection" width="52" />
-          <el-table-column prop="id" label="ID" width="82" sortable />
+          <el-table-column prop="id" label="商品ID" width="90" sortable />
+          <el-table-column prop="itemId" label="商品编号" width="140" sortable />
           <el-table-column prop="title" label="商品标题" min-width="220" show-overflow-tooltip />
-          <el-table-column prop="category" label="类别" min-width="110" />
-          <el-table-column prop="source" label="来源" width="110">
+          <el-table-column prop="category" label="类目" min-width="120" />
+          <el-table-column prop="status" label="状态" width="120">
             <template #default="{ row }">
-              <el-tag :type="row.source === 'IMPORT' ? 'info' : 'warning'">
-                {{ row.source === 'IMPORT' ? '导入' : '手工' }}
+              <el-tag :type="row.status === 'ON_SALE' ? 'success' : 'info'">
+                {{ row.status === 'ON_SALE' ? '销售中' : row.status }}
               </el-tag>
             </template>
           </el-table-column>
@@ -59,8 +55,11 @@
           <el-table-column prop="currentPrice" label="当前售价" min-width="110" sortable>
             <template #default="{ row }">¥{{ Number(row.currentPrice || 0).toFixed(2) }}</template>
           </el-table-column>
-          <el-table-column prop="stock" label="库存" width="88" sortable />
-          <el-table-column prop="monthlySales" label="月销量" width="96" sortable />
+          <el-table-column prop="stock" label="库存" width="90" sortable />
+          <el-table-column prop="monthlySales" label="近30天销量" width="110" sortable />
+          <el-table-column label="平均转化率" width="120">
+            <template #default="{ row }">{{ (Number(row.conversionRate || 0) * 100).toFixed(2) }}%</template>
+          </el-table-column>
           <el-table-column label="操作" fixed="right" width="140">
             <template #default="{ row }">
               <el-button link type="primary" @click="openTrendDrawer(row)">查看趋势</el-button>
@@ -84,22 +83,28 @@
 
     <el-dialog
       v-model="dialogVisible"
-      :title="isMobile ? '新增商品' : '新增商品（手工录入）'"
+      :title="isMobile ? '新增商品' : '新增商品（新库模型）'"
       width="560px"
     >
       <el-form ref="formRef" :model="form" :rules="rules" label-width="96px" class="product-form">
         <div class="form-grid">
+          <el-form-item label="商品编号" prop="itemId">
+            <el-input-number v-model="form.itemId" :min="1" :precision="0" :step="1" style="width: 100%" />
+          </el-form-item>
           <el-form-item label="商品标题" prop="title">
             <el-input v-model="form.title" placeholder="请输入商品标题" />
           </el-form-item>
-          <el-form-item label="商品类别" prop="category">
-            <el-input v-model="form.category" placeholder="请输入商品类别" />
+          <el-form-item label="商品类目" prop="category">
+            <el-input v-model="form.category" placeholder="请输入商品类目" />
+          </el-form-item>
+          <el-form-item label="状态" prop="status">
+            <el-select v-model="form.status" placeholder="请选择状态">
+              <el-option label="销售中" value="ON_SALE" />
+              <el-option label="下架" value="OFF_SHELF" />
+            </el-select>
           </el-form-item>
           <el-form-item label="成本价" prop="costPrice">
             <el-input-number v-model="form.costPrice" :min="0" :precision="2" :step="0.1" style="width: 100%" />
-          </el-form-item>
-          <el-form-item label="市场价" prop="marketPrice">
-            <el-input-number v-model="form.marketPrice" :min="0" :precision="2" :step="0.1" style="width: 100%" />
           </el-form-item>
           <el-form-item label="当前售价" prop="currentPrice">
             <el-input-number v-model="form.currentPrice" :min="0" :precision="2" :step="0.1" style="width: 100%" />
@@ -107,17 +112,14 @@
           <el-form-item label="库存" prop="stock">
             <el-input-number v-model="form.stock" :min="0" :precision="0" :step="1" style="width: 100%" />
           </el-form-item>
-          <el-form-item label="月销量" prop="monthlySales">
+          <el-form-item label="近30天销量" prop="monthlySales">
             <el-input-number v-model="form.monthlySales" :min="0" :precision="0" :step="1" style="width: 100%" />
           </el-form-item>
-          <el-form-item label="点击率" prop="clickRate">
-            <el-input-number v-model="form.clickRate" :min="0" :max="1" :precision="4" :step="0.0001" style="width: 100%" />
-          </el-form-item>
-          <el-form-item label="转化率" prop="conversionRate">
+          <el-form-item label="平均转化率" prop="conversionRate">
             <el-input-number v-model="form.conversionRate" :min="0" :max="1" :precision="4" :step="0.0001" style="width: 100%" />
           </el-form-item>
         </div>
-        <div class="mini-note">点击率和转化率请输入 0 到 1 之间的小数，例如 `0.05` 表示 5%。</div>
+        <div class="mini-note">商品编号可留空自动生成。近30天销量与转化率会用于初始化 `product_daily_metric`。</div>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -146,21 +148,19 @@ const trendDrawerRef = ref<InstanceType<typeof ProductTrendDrawer>>()
 const queryParams = reactive({
   page: 1,
   size: 10,
-  keyword: '',
-  dataSource: ''
+  keyword: ''
 })
 
 const form = reactive({
+  itemId: undefined as number | undefined,
   title: '',
   category: '',
   costPrice: 0,
-  marketPrice: 0,
   currentPrice: 0,
   stock: 0,
-  monthlySales: 0,
-  clickRate: 0,
-  conversionRate: 0,
-  source: 'MANUAL'
+  monthlySales: 120,
+  conversionRate: 0.04,
+  status: 'ON_SALE'
 })
 
 const rules = {
@@ -172,15 +172,15 @@ const rules = {
 const isMobile = computed(() => window.innerWidth <= 768)
 
 const resetForm = () => {
+  form.itemId = undefined
   form.title = ''
   form.category = ''
   form.costPrice = 0
-  form.marketPrice = 0
   form.currentPrice = 0
   form.stock = 0
-  form.monthlySales = 0
-  form.clickRate = 0
-  form.conversionRate = 0
+  form.monthlySales = 120
+  form.conversionRate = 0.04
+  form.status = 'ON_SALE'
 }
 
 const handleSearch = async () => {
@@ -288,7 +288,7 @@ onMounted(() => {
 
 .search-toolbar {
   display: grid;
-  grid-template-columns: minmax(260px, 460px) 220px 132px;
+  grid-template-columns: minmax(260px, 520px) 132px;
   align-items: center;
   gap: 10px;
   margin-bottom: 14px;

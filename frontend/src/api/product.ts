@@ -2,33 +2,31 @@ import request from './request'
 
 export interface ProductListVO {
   id: number
+  itemId: number
   title: string
   category?: string
   costPrice: number
-  marketPrice?: number
   currentPrice: number
   stock?: number
-  source: string
+  status: string
   monthlySales?: number
-  clickRate?: number
   conversionRate?: number
   updatedAt: string
 }
 
 export interface ProductManualDTO {
+  itemId?: number
   title: string
   category?: string
   costPrice: number
-  marketPrice?: number
   currentPrice: number
   stock?: number
   monthlySales?: number
-  clickRate?: number
   conversionRate?: number
-  source: string
+  status?: string
 }
 
-export const getProductList = (params: { page: number; size: number; keyword?: string; dataSource?: string }) => {
+export const getProductList = (params: { page: number; size: number; keyword?: string }) => {
   return request.get('/products/list', { params })
 }
 

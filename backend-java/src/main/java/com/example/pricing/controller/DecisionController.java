@@ -1,30 +1,20 @@
 package com.example.pricing.controller;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.pricing.common.Result;
-import com.example.pricing.entity.DecResult;
-import com.example.pricing.entity.DecTask;
-import com.example.pricing.mapper.DecResultMapper;
-import com.example.pricing.mapper.DecTaskMapper;
+import com.example.pricing.service.DecisionTaskService;
+import com.example.pricing.vo.DecisionComparisonVO;
+import com.example.pricing.vo.DecisionLogVO;
+import com.example.pricing.vo.DecisionTaskItemVO;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.client.RestTemplate;
 
-import java.util.HashMap;
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
-import java.util.stream.Collectors;
-
-import com.alibaba.excel.EasyExcel;
-import jakarta.servlet.http.HttpServletResponse;
-import java.io.IOException;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.net.URLEncoder;
 
 @RestController
 @RequestMapping("/api/decision")
@@ -33,366 +23,92 @@ import java.net.URLEncoder;
 @CrossOrigin(origins = "*")
 public class DecisionController {
 
-    private final DecTaskMapper taskMapper;
-    private final DecResultMapper resultMapper;
-    private final com.example.pricing.mapper.BizProductMapper productMapper;
-    private final com.example.pricing.mapper.DecAgentLogMapper logMapper;
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final DecisionTaskService decisionTaskService;
 
-    /**
-     * 创建定价任务，并把任务参数转发给 Python 智能体服务。
-     * Java 侧负责落任务主记录，Python 侧负责真正执行 4 个 agent。
-     */
     @PostMapping("/start")
     public Result<Long> startDecisionTask(@RequestBody Map<String, Object> body) {
-        // 前端直接传商品 ID、策略目标和约束文本，这里先做一层兼容解析。
-        List<Number> productIdsObj = (List<Number>) body.get("productIds");
-        List<Long> productIds = new java.util.ArrayList<>();
-        if (productIdsObj != null) {
-            for (Number id : productIdsObj) {
-                productIds.add(id.longValue());
-            }
-        }
-        String strategyGoal = (String) body.get("strategyGoal");
-        String constraints = (String) body.get("constraints");
-        if (strategyGoal == null || strategyGoal.isBlank()) {
-            return Result.error("请选择策略目标");
-        }
-        if (constraints == null) {
-            constraints = "";
-        }
-
-        List<String> validStrategies = java.util.Arrays.asList("MAX_PROFIT", "CLEARANCE", "MARKET_SHARE");
-        if (strategyGoal != null && !validStrategies.contains(strategyGoal)) {
-            // Convert legacy names for compatibility if needed, or throw error
-            if ("利润最大化".equals(strategyGoal)) strategyGoal = "MAX_PROFIT";
-            else if ("清仓大甩卖".equals(strategyGoal) || "销量最大化".equals(strategyGoal)) strategyGoal = "CLEARANCE";
-            else if ("市场份额优先".equals(strategyGoal)) strategyGoal = "MARKET_SHARE";
-            else return Result.error("无效的策略目标");
-        }
-
-        // 先在本地数据库创建任务主记录，保证前端能马上拿到任务编号。
-        DecTask task = new DecTask();
-        task.setTaskNo(UUID.randomUUID().toString());
-        task.setStrategyType(strategyGoal);
-        task.setConstraints(constraints);
-        task.setStatus("RUNNING");
-
-        // 保存商品名称快照，避免后续商品名变更导致历史任务展示不一致。
-        if (!productIds.isEmpty()) {
-            List<com.example.pricing.entity.BizProduct> products = productMapper.selectBatchIds(productIds);
-            String names = products.stream()
-                .map(com.example.pricing.entity.BizProduct::getTitle)
-                .collect(java.util.stream.Collectors.joining(", "));
-            if (names.length() > 1000) names = names.substring(0, 997) + "...";
-            task.setProductNames(names);
-        }
-
-        taskMapper.insert(task);
-
-        // 再把任务参数转发给 Python 服务，真正开始 4 个 agent 的执行流程。
-        String pythonServiceUrl = "http://localhost:8000/api/decision/start";
-        Map<String, Object> request = new HashMap<>();
-        request.put("task_id", task.getId());
-        request.put("product_ids", productIds);
-        request.put("strategy_goal", strategyGoal);
-        request.put("constraints", constraints);
-
         try {
-            // 当前演示环境直接同步调用，生产场景更适合改成异步消息或任务队列。
-            restTemplate.postForObject(pythonServiceUrl, request, Map.class);
-        } catch (Exception e) {
-            log.error("Failed to call Python service", e);
-            task.setStatus("FAILED");
-            taskMapper.updateById(task);
-            return Result.error("Failed to start agent service: " + e.getMessage());
-        }
-
-        return Result.success(task.getId());
-    }
-
-    /**
-     * 查询任务结果，并补齐商品标题和原价等前端展示字段。
-     */
-    @GetMapping("/result/{taskId}")
-    public Result<List<DecResult>> getTaskResult(@PathVariable Long taskId) {
-        LambdaQueryWrapper<DecResult> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(DecResult::getTaskId, taskId);
-        List<DecResult> results = resultMapper.selectList(wrapper);
-        if (results.isEmpty()) {
-            return Result.success(results);
-        }
-
-        Set<Long> productIds = results.stream()
-                .map(DecResult::getProductId)
-                .filter(id -> id != null && id > 0)
-                .collect(Collectors.toSet());
-        if (productIds.isEmpty()) {
-            return Result.success(results);
-        }
-
-        Map<Long, com.example.pricing.entity.BizProduct> productMap = productMapper.selectBatchIds(productIds).stream()
-                .collect(Collectors.toMap(
-                        com.example.pricing.entity.BizProduct::getId,
-                        product -> product,
-                        (left, right) -> left
-                ));
-        results.forEach(item -> {
-            com.example.pricing.entity.BizProduct product = productMap.get(item.getProductId());
-            if (product == null) {
-                return;
+            List<Long> productIds = parseProductIds(body.get("productIds"));
+            String strategyGoal = String.valueOf(body.getOrDefault("strategyGoal", "")).trim();
+            String constraints = String.valueOf(body.getOrDefault("constraints", "")).trim();
+            if (productIds.isEmpty()) {
+                return Result.error("请至少选择一个商品");
             }
-            item.setProductTitle(product.getTitle());
-            item.setOriginalPrice(
-                    normalizeOriginalPrice(
-                            product.getCurrentPrice(),
-                            item.getSuggestedPrice(),
-                            item.getDiscountRate()
-                    )
-            );
-        });
-        return Result.success(results);
+            if (strategyGoal.isBlank()) {
+                return Result.error("请选择策略目标");
+            }
+            return Result.success(decisionTaskService.startTask(productIds, strategyGoal, constraints));
+        } catch (Exception e) {
+            log.error("启动定价任务失败", e);
+            return Result.error(e.getMessage());
+        }
     }
 
-    /**
-     * 查询任务中的 agent 发言日志，前端据此回放“协同过程”。
-     */
+    @GetMapping("/result/{taskId}")
+    public Result<List<DecisionComparisonVO>> getTaskResult(@PathVariable Long taskId) {
+        return Result.success(decisionTaskService.getTaskResult(taskId));
+    }
+
     @GetMapping("/logs/{taskId}")
-    public Result<List<com.example.pricing.entity.DecAgentLog>> getTaskLogs(@PathVariable Long taskId) {
-        LambdaQueryWrapper<com.example.pricing.entity.DecAgentLog> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(com.example.pricing.entity.DecAgentLog::getTaskId, taskId);
-        wrapper.orderByAsc(com.example.pricing.entity.DecAgentLog::getSpeakOrder, com.example.pricing.entity.DecAgentLog::getId);
-        return Result.success(logMapper.selectList(wrapper));
+    public Result<List<DecisionLogVO>> getTaskLogs(@PathVariable Long taskId) {
+        return Result.success(decisionTaskService.getTaskLogs(taskId));
     }
 
-    /**
-     * 分页查询任务列表，支持按状态、策略和时间区间筛选。
-     */
     @GetMapping("/tasks")
-    public Result<Page<DecTask>> getTasks(
+    public Result<Page<DecisionTaskItemVO>> getTasks(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String status,
-            @RequestParam(required = false) String strategyType,
             @RequestParam(required = false) String startTime,
             @RequestParam(required = false) String endTime,
-            @RequestParam(defaultValue = "desc") String sortOrder) {
-        
-        Page<DecTask> pageParam = new Page<>(page, size);
-        LambdaQueryWrapper<DecTask> wrapper = new LambdaQueryWrapper<>();
-        applyCommonFilters(wrapper, strategyType, startTime, endTime);
-        if (status != null && !status.isEmpty()) {
-            wrapper.eq(DecTask::getStatus, status);
-        }
-        
-        if ("asc".equalsIgnoreCase(sortOrder)) {
-            wrapper.orderByAsc(DecTask::getCreatedAt);
-        } else {
-            wrapper.orderByDesc(DecTask::getCreatedAt);
-        }
-        
-        return Result.success(taskMapper.selectPage(pageParam, wrapper));
+            @RequestParam(defaultValue = "desc") String sortOrder
+    ) {
+        return Result.success(decisionTaskService.getTasks(page, size, status, startTime, endTime, sortOrder));
     }
 
-    /**
-     * 统计任务总数、完成数和执行中数量，供档案页概览卡片使用。
-     */
     @GetMapping("/tasks/stats")
     public Result<Map<String, Long>> getTaskStats(
-            @RequestParam(required = false) String strategyType,
             @RequestParam(required = false) String startTime,
-            @RequestParam(required = false) String endTime) {
-        LambdaQueryWrapper<DecTask> totalWrapper = new LambdaQueryWrapper<>();
-        applyCommonFilters(totalWrapper, strategyType, startTime, endTime);
-        long totalCount = taskMapper.selectCount(totalWrapper);
-
-        LambdaQueryWrapper<DecTask> completedWrapper = new LambdaQueryWrapper<>();
-        applyCommonFilters(completedWrapper, strategyType, startTime, endTime);
-        completedWrapper.eq(DecTask::getStatus, "COMPLETED");
-        long completedCount = taskMapper.selectCount(completedWrapper);
-
-        LambdaQueryWrapper<DecTask> runningWrapper = new LambdaQueryWrapper<>();
-        applyCommonFilters(runningWrapper, strategyType, startTime, endTime);
-        runningWrapper.eq(DecTask::getStatus, "RUNNING");
-        long runningCount = taskMapper.selectCount(runningWrapper);
-
-        Map<String, Long> stats = new HashMap<>();
-        stats.put("total", totalCount);
-        stats.put("completed", completedCount);
-        stats.put("running", runningCount);
-        return Result.success(stats);
+            @RequestParam(required = false) String endTime
+    ) {
+        return Result.success(decisionTaskService.getTaskStats(startTime, endTime));
     }
 
-    /**
-     * 生成某个任务的价格对比视图，展示原价、建议价和利润变化。
-     */
     @GetMapping("/comparison/{taskId}")
-    public Result<List<com.example.pricing.vo.DecisionComparisonVO>> getComparison(@PathVariable Long taskId) {
-        LambdaQueryWrapper<DecResult> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(DecResult::getTaskId, taskId);
-        List<DecResult> results = resultMapper.selectList(wrapper);
-        
-        List<com.example.pricing.vo.DecisionComparisonVO> comparisonList = new java.util.ArrayList<>();
-        for (DecResult result : results) {
-            com.example.pricing.entity.BizProduct product = productMapper.selectById(result.getProductId());
-            if (product != null) {
-                com.example.pricing.vo.DecisionComparisonVO vo = new com.example.pricing.vo.DecisionComparisonVO();
-                vo.setResultId(result.getId());
-                vo.setProductId(product.getId());
-                vo.setProductTitle(product.getTitle());
-                BigDecimal suggestedPrice = result.getSuggestedPrice() != null ? result.getSuggestedPrice() : BigDecimal.ZERO;
-                BigDecimal originalPrice = normalizeOriginalPrice(
-                        product.getCurrentPrice(),
-                        suggestedPrice,
-                        result.getDiscountRate()
-                );
-                BigDecimal cost = product.getCostPrice() != null ? product.getCostPrice() : BigDecimal.ZERO;
-                int monthlySales = product.getMonthlySales() != null ? product.getMonthlySales() : 0;
-
-                vo.setOriginalPrice(originalPrice);
-                vo.setSuggestedPrice(suggestedPrice);
-
-                BigDecimal originalProfit = calculateProfit(originalPrice, cost, monthlySales);
-                vo.setOriginalProfit(originalProfit);
-
-                BigDecimal storedProfitChange = result.getProfitChange();
-                if (storedProfitChange != null) {
-                    BigDecimal normalizedProfitChange = storedProfitChange.setScale(2, RoundingMode.HALF_UP);
-                    vo.setProfitChange(normalizedProfitChange);
-                    vo.setNewProfit(originalProfit.add(normalizedProfitChange).setScale(2, RoundingMode.HALF_UP));
-                } else {
-                    BigDecimal newProfit = calculateProfit(suggestedPrice, cost, monthlySales);
-                    vo.setNewProfit(newProfit);
-                    vo.setProfitChange(calculateProfitChange(originalProfit, newProfit));
-                }
-                
-                vo.setDiscountRate(result.getDiscountRate());
-                vo.setIsAccepted(result.getIsAccepted());
-                vo.setAdoptStatus(result.getAdoptStatus());
-                vo.setRejectReason(result.getRejectReason());
-
-                comparisonList.add(vo);
-            }
-        }
-        return Result.success(comparisonList);
+    public Result<List<DecisionComparisonVO>> getComparison(@PathVariable Long taskId) {
+        return Result.success(decisionTaskService.getTaskComparison(taskId));
     }
 
-    /**
-     * 采纳某条定价建议，同时把商品现价更新为建议价。
-     */
     @PostMapping("/apply/{resultId}")
     public Result<Void> applyDecision(@PathVariable Long resultId) {
-        DecResult result = resultMapper.selectById(resultId);
-        if (result == null) {
-            return Result.error("Result not found");
-        }
-        
-        // 先把商品现价更新为建议价，保证后续页面和下一次分析看到的是最新价格。
-        com.example.pricing.entity.BizProduct product = productMapper.selectById(result.getProductId());
-        if (product != null) {
-            product.setCurrentPrice(result.getSuggestedPrice());
-            productMapper.updateById(product);
-        }
-        
-        // 再把结果状态标记为“已采纳”，方便档案页追踪。
-        result.setIsAccepted(true);
-        result.setAdoptStatus("ADOPTED");
-        resultMapper.updateById(result);
-        
-        return Result.success(null);
-    }
-
-    /**
-     * 驳回某条建议，并记录驳回原因，便于后续复盘。
-     */
-    @PostMapping("/reject/{resultId}")
-    public Result<Void> rejectDecision(@PathVariable Long resultId, @RequestBody Map<String, String> body) {
-        DecResult result = resultMapper.selectById(resultId);
-        if (result == null) {
-            return Result.error("Result not found");
-        }
-        
-        // 这里只改结果状态，不回滚商品价格，因为驳回意味着本次建议未执行。
-        result.setIsAccepted(false);
-        result.setAdoptStatus("REJECTED");
-        result.setRejectReason(body.get("reason"));
-        resultMapper.updateById(result);
-        
-        return Result.success(null);
-    }
-
-    /**
-     * 统一拼装任务列表和统计接口共用的筛选条件。
-     */
-    private void applyCommonFilters(
-            LambdaQueryWrapper<DecTask> wrapper,
-            String strategyType,
-            String startTime,
-            String endTime) {
-        if (strategyType != null && !strategyType.isEmpty()) {
-            wrapper.eq(DecTask::getStrategyType, strategyType);
-        }
-        if (startTime != null && !startTime.isEmpty()) {
-            wrapper.ge(DecTask::getCreatedAt, startTime);
-        }
-        if (endTime != null && !endTime.isEmpty()) {
-            wrapper.le(DecTask::getCreatedAt, endTime);
+        try {
+            decisionTaskService.applyDecision(resultId);
+            return Result.success();
+        } catch (Exception e) {
+            log.error("应用价格建议失败", e);
+            return Result.error(e.getMessage());
         }
     }
 
-    /**
-     * 归一化结果报告中的原价展示。
-     * 优先用“建议价 / 折扣系数”反推原价，反推失败时退回商品当前价。
-     */
-    private BigDecimal normalizeOriginalPrice(BigDecimal currentPrice, BigDecimal suggestedPrice, BigDecimal discountRate) {
-        if (suggestedPrice != null && discountRate != null && discountRate.compareTo(BigDecimal.ZERO) > 0) {
-            return suggestedPrice.divide(discountRate, 2, RoundingMode.HALF_UP);
-        }
-        if (currentPrice != null) {
-            return currentPrice.setScale(2, RoundingMode.HALF_UP);
-        }
-        if (suggestedPrice != null) {
-            return suggestedPrice.setScale(2, RoundingMode.HALF_UP);
-        }
-        return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
-    }
-
-    /**
-     * 按“(售价 - 成本) * 月销量”估算利润，供结果对比页展示。
-     */
-    private BigDecimal calculateProfit(BigDecimal price, BigDecimal cost, int monthlySales) {
-        BigDecimal safePrice = price != null ? price : BigDecimal.ZERO;
-        BigDecimal safeCost = cost != null ? cost : BigDecimal.ZERO;
-        return safePrice
-                .subtract(safeCost)
-                .multiply(BigDecimal.valueOf(Math.max(monthlySales, 0)))
-                .setScale(2, RoundingMode.HALF_UP);
-    }
-
-    /**
-     * 计算新旧方案之间的利润变化额。
-     */
-    private BigDecimal calculateProfitChange(BigDecimal originalProfit, BigDecimal newProfit) {
-        BigDecimal safeOriginalProfit = originalProfit != null ? originalProfit : BigDecimal.ZERO;
-        BigDecimal safeNewProfit = newProfit != null ? newProfit : BigDecimal.ZERO;
-        return safeNewProfit.subtract(safeOriginalProfit).setScale(2, RoundingMode.HALF_UP);
-    }
-
-    /**
-     * 导出任务的价格对比报告，便于线下汇报或归档。
-     */
     @GetMapping("/export/{taskId}")
     public void exportDecisionReport(@PathVariable Long taskId, HttpServletResponse response) throws IOException {
-        // 先复用对比接口的计算结果，避免导出和页面展示口径不一致。
-        List<com.example.pricing.vo.DecisionComparisonVO> comparisonList = getComparison(taskId).getData();
-        
-        response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-        response.setCharacterEncoding("utf-8");
-        String fileName = URLEncoder.encode("DecisionReport_" + taskId, "UTF-8").replaceAll("\\+", "%20");
-        response.setHeader("Content-disposition", "attachment;filename*=utf-8''" + fileName + ".xlsx");
-        
-        EasyExcel.write(response.getOutputStream(), com.example.pricing.vo.DecisionComparisonVO.class)
-                .sheet("决策报告")
-                .doWrite(comparisonList);
+        decisionTaskService.exportDecisionReport(taskId, response);
+    }
+
+    private List<Long> parseProductIds(Object payload) {
+        List<Long> productIds = new ArrayList<>();
+        if (payload instanceof List<?> values) {
+            for (Object value : values) {
+                if (value instanceof Number number) {
+                    productIds.add(number.longValue());
+                } else if (value != null) {
+                    try {
+                        productIds.add(Long.parseLong(String.valueOf(value)));
+                    } catch (Exception ignore) {
+                    }
+                }
+            }
+        }
+        return productIds;
     }
 }

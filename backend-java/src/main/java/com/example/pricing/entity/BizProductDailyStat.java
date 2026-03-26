@@ -10,26 +10,35 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("biz_sales_daily")
+@TableName("product_daily_metric")
 public class BizProductDailyStat {
     @TableId(type = IdType.AUTO)
     private Long id;
+
+    private Long shopId;
     
     private Long productId;
     
     private LocalDate statDate;
     
-    @TableField(exist = false)
     private Integer visitorCount;
+
+    private Integer addCartCount;
+
+    private Integer payBuyerCount;
     
-    @TableField("daily_sales")
+    @TableField("pay_item_qty")
     private Integer salesCount;
     
-    @TableField("daily_revenue")
+    @TableField("pay_amount")
     private BigDecimal turnover;
+
+    private BigDecimal refundAmount;
     
-    @TableField(exist = false)
+    @TableField("convert_rate")
     private BigDecimal conversionRate;
+
+    private Long uploadBatchId;
     
     private LocalDateTime createdAt;
 }

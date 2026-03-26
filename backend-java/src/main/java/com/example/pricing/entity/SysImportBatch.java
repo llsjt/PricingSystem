@@ -5,21 +5,30 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("sys_import_batch")
+@TableName("upload_batch")
 public class SysImportBatch {
     @TableId(type = IdType.AUTO)
     private Long id;
+
+    private Long shopId;
 
     private String batchNo;
 
     private String fileName;
 
+    private String dataType;
+
+    private java.time.LocalDate startDate;
+
+    private java.time.LocalDate endDate;
+
+    private Integer rowCount;
+
     private Integer successCount;
 
     private Integer failCount;
 
-    private String errorLog;
+    private String uploadStatus;
 
-    @TableField(fill = FieldFill.INSERT)
-    private LocalDateTime createdAt;
+    private LocalDateTime uploadedAt;
 }

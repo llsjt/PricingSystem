@@ -1,65 +1,76 @@
 package com.example.pricing.controller;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.pricing.common.Result;
-import com.example.pricing.entity.SysConfig;
-import com.example.pricing.mapper.SysConfigMapper;
-import lombok.RequiredArgsConstructor;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.stream.Collectors;
+import java.util.Properties;
 
 @RestController
 @RequestMapping("/api/config")
-@RequiredArgsConstructor
 @CrossOrigin(origins = "*")
 public class ConfigController {
 
-    private final SysConfigMapper configMapper;
-    private final JdbcTemplate jdbcTemplate;
-
-    @jakarta.annotation.PostConstruct
-    public void ensureSysConfigTable() {
-        jdbcTemplate.execute("""
-                CREATE TABLE IF NOT EXISTS sys_config (
-                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                    config_key VARCHAR(100) NOT NULL UNIQUE,
-                    config_value TEXT,
-                    description VARCHAR(255),
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-                )
-                """);
-    }
+    private final Path configPath = Paths.get("runtime", "app-config.properties");
 
     @GetMapping("/all")
     public Result<Map<String, String>> getAllConfigs() {
-        List<SysConfig> configs = configMapper.selectList(null);
-        Map<String, String> map = configs.stream()
-                .collect(Collectors.toMap(SysConfig::getConfigKey, SysConfig::getConfigValue));
-        return Result.success(map);
+        try {
+            return Result.success(readConfig());
+        } catch (IOException e) {
+            return Result.error("读取配置失败: " + e.getMessage());
+        }
     }
 
     @PostMapping("/update")
     public Result<Void> updateConfigs(@RequestBody Map<String, String> configs) {
-        configs.forEach((key, value) -> {
-            LambdaQueryWrapper<SysConfig> wrapper = new LambdaQueryWrapper<>();
-            wrapper.eq(SysConfig::getConfigKey, key);
-            SysConfig config = configMapper.selectOne(wrapper);
+        try {
+            Map<String, String> current = readConfig();
+            current.putAll(configs);
+            writeConfig(current);
+            return Result.success();
+        } catch (IOException e) {
+            return Result.error("保存配置失败: " + e.getMessage());
+        }
+    }
 
-            if (config != null) {
-                config.setConfigValue(value);
-                configMapper.updateById(config);
-            } else {
-                config = new SysConfig();
-                config.setConfigKey(key);
-                config.setConfigValue(value);
-                configMapper.insert(config);
-            }
-        });
-        return Result.success(null);
+    private Map<String, String> readConfig() throws IOException {
+        ensureConfigFile();
+        Properties properties = new Properties();
+        try (InputStream inputStream = Files.newInputStream(configPath)) {
+            properties.load(inputStream);
+        }
+        Map<String, String> result = new LinkedHashMap<>();
+        for (String key : properties.stringPropertyNames()) {
+            result.put(key, properties.getProperty(key, ""));
+        }
+        result.putIfAbsent("DASHSCOPE_API_KEY", "");
+        result.putIfAbsent("AGENT_MODEL", "qwen-plus");
+        return result;
+    }
+
+    private void writeConfig(Map<String, String> config) throws IOException {
+        ensureConfigFile();
+        Properties properties = new Properties();
+        properties.putAll(config);
+        try (OutputStream outputStream = Files.newOutputStream(configPath)) {
+            properties.store(outputStream, "local runtime config");
+        }
+    }
+
+    private void ensureConfigFile() throws IOException {
+        if (Files.notExists(configPath.getParent())) {
+            Files.createDirectories(configPath.getParent());
+        }
+        if (Files.notExists(configPath)) {
+            Files.createFile(configPath);
+        }
     }
 }

@@ -4,14 +4,14 @@
       <div class="section-head">
         <div class="section-title">
           <h3>任务流程</h3>
-          <p>从配置、执行到报告复盘，进度始终保持可见。</p>
+          <p>新的任务模型基于单商品单任务设计，决策过程和结果都会直接落到 Java 后端。</p>
         </div>
       </div>
 
       <el-steps :active="stepBarActive" finish-status="success" align-center class="steps">
-        <el-step title="配置任务" description="选择商品并确认目标" />
-        <el-step title="智能决策" description="查看 Agent 协同推理" />
-        <el-step title="结果报告" description="确认建议价格与依据" />
+        <el-step title="配置任务" />
+        <el-step title="查看日志" />
+        <el-step title="确认结果" />
       </el-steps>
     </section>
 
@@ -20,23 +20,20 @@
         <div class="section-head">
           <div class="section-title">
             <h3>任务配置</h3>
-            <p>明确策略目标和约束条件，系统会将这些要求传递给所有 Agent。</p>
+            <p>每次针对单个商品创建一个定价任务，更符合新的 `pricing_task / pricing_result` 结构。</p>
           </div>
         </div>
 
         <el-form :model="taskConfig" label-position="top" class="config-form">
           <el-form-item label="选择商品">
             <el-select
-              v-model="taskConfig.productIds"
-              multiple
+              v-model="taskConfig.productId"
               filterable
               remote
               reserve-keyword
               placeholder="输入商品名称搜索"
               :remote-method="searchProducts"
               :loading="searchLoading"
-              @change="handleProductChange"
-              value-key="id"
             >
               <el-option
                 v-for="item in productOptions"
@@ -49,9 +46,6 @@
                   <span class="option-id">ID {{ item.id }}</span>
                 </div>
               </el-option>
-              <div v-if="productOptions.length < productTotal" class="load-more">
-                <el-button link type="primary" @click.stop="loadMoreProducts">加载更多</el-button>
-              </div>
             </el-select>
           </el-form-item>
 
@@ -70,7 +64,6 @@
               :rows="5"
               placeholder="例如：利润率不低于 15%，降价幅度不超过 10%，最低售价不低于 69 元"
             />
-            <div class="mini-note">约束会被解析成硬约束并同步给数据分析、市场情报、风险控制和经理协调。</div>
           </el-form-item>
 
           <div class="toolbar-actions">
@@ -82,31 +75,31 @@
       <section class="panel-card helper-panel">
         <div class="section-head">
           <div class="section-title">
-            <h3>配置提示</h3>
-            <p>让系统更快收敛到可执行方案。</p>
+            <h3>配置摘要</h3>
+            <p>开始前确认目标、商品与约束是否一致。</p>
           </div>
+        </div>
+
+        <div class="summary-card">
+          <div class="summary-title">当前任务</div>
+          <div class="summary-line">商品：{{ selectedProductName || '尚未选择' }}</div>
+          <div class="summary-line">目标：{{ strategyGoalText }}</div>
+          <div class="summary-line">约束：{{ taskConfig.constraints || '未设置' }}</div>
         </div>
 
         <div class="tips-list">
           <article class="tip-item">
-            <strong>目标明确</strong>
-            <span>利润优先时更关注利润空间，市场份额优先时更关注竞争响应。</span>
+            <strong>利润优先</strong>
+            <span>系统会优先比较不同候选价格的预估利润，再决定最终售价。</span>
           </article>
           <article class="tip-item">
-            <strong>约束可量化</strong>
-            <span>建议直接写最低利润率、最大降价幅度、最低售价等硬指标。</span>
+            <strong>清仓促销</strong>
+            <span>系统会更偏向低价策略，但仍会受最低利润率和最低售价约束。</span>
           </article>
           <article class="tip-item">
-            <strong>结果可解释</strong>
-            <span>执行阶段会展示每个 Agent 的思考过程、分析理由与最终建议。</span>
+            <strong>市场份额优先</strong>
+            <span>系统会在风控允许范围内适当偏向更高销量的建议区间。</span>
           </article>
-        </div>
-
-        <div class="summary-card">
-          <div class="summary-title">当前选择摘要</div>
-          <div class="summary-line">目标：{{ strategyGoalText }}</div>
-          <div class="summary-line">商品：{{ selectedProductNames.length ? selectedProductNames.join('、') : '尚未选择' }}</div>
-          <div class="summary-line">约束：{{ taskConfig.constraints || '尚未填写' }}</div>
         </div>
       </section>
     </div>
@@ -115,34 +108,31 @@
       <section class="panel-card log-panel">
         <div class="section-head">
           <div class="section-title">
-            <h3>Agent 协同过程</h3>
-            <p>流式展示思考过程、分析理由和最终建议，历史日志会自动补全。</p>
-          </div>
-          <div class="chip-list">
-            <el-tag v-if="socketStatus === 'connecting'" type="warning">连接中</el-tag>
-            <el-tag v-else-if="socketStatus === 'connected'" type="success">实时连接</el-tag>
-            <el-tag v-else type="info">日志回放</el-tag>
+            <h3>决策日志</h3>
+            <p>这里展示 Java 后端生成的四个阶段日志：数据分析、市场情报、风险控制和决策经理。</p>
           </div>
         </div>
 
-        <div ref="chatBoxRef" class="chat-stream">
-          <el-empty v-if="chatMessages.length === 0" description="等待 Agent 输出内容" />
+        <div class="chat-stream">
+          <el-empty v-if="taskLogs.length === 0" description="暂无日志" />
           <article
-            v-for="message in orderedMessages"
-            :key="buildMessageDomKey(message)"
-            :class="['message-card', getAgentClass(message.agent_role), { streaming: message.streaming }]"
+            v-for="log in orderedLogs"
+            :key="log.id"
+            :class="['message-card', getAgentClass(log.agentName)]"
           >
-            <div class="message-avatar">{{ getAgentAvatar(message.agent_role) }}</div>
+            <div class="message-avatar">{{ getAgentAvatar(log.agentName) }}</div>
             <div class="message-main">
               <div class="message-head">
-                <strong>{{ message.agent_role }}</strong>
-                <span>{{ message.timestamp }}</span>
+                <strong>{{ log.agentName }}</strong>
+                <span>{{ formatTime(log.createdAt) }}</span>
               </div>
               <div class="message-body">
-                <p v-if="message.streaming && !message.thought_content" class="typing-placeholder">
-                  正在生成分析内容...
-                </p>
-                <p v-else v-html="formatContent(message.thought_content)"></p>
+                <p v-html="formatContent(log.outputSummary)"></p>
+              </div>
+              <div class="message-meta">
+                <span>建议价：{{ formatCurrency(log.suggestedPrice) }}</span>
+                <span>预估利润：{{ formatCurrency(log.predictedProfit) }}</span>
+                <span>风险：{{ log.riskLevel || '-' }}</span>
               </div>
             </div>
           </article>
@@ -153,8 +143,8 @@
         <section class="panel-card status-panel">
           <div class="section-head">
             <div class="section-title">
-              <h3>执行反馈</h3>
-              <p>实时反馈任务进度、状态和下一步动作。</p>
+              <h3>任务状态</h3>
+              <p>任务在 Java 后端同步执行，日志和结果会一并落库。</p>
             </div>
           </div>
 
@@ -162,34 +152,34 @@
 
           <div class="status-list">
             <div class="status-item">
-              <span>任务编号</span>
+              <span>任务 ID</span>
               <strong>{{ currentTaskId || '-' }}</strong>
             </div>
             <div class="status-item">
-              <span>已接收消息</span>
-              <strong>{{ chatMessages.length }}</strong>
+              <span>日志条数</span>
+              <strong>{{ taskLogs.length }}</strong>
             </div>
             <div class="status-item">
-              <span>连接状态</span>
-              <strong>{{ socketStatusText }}</strong>
+              <span>执行状态</span>
+              <strong>{{ progress === 100 ? '已完成' : '处理中' }}</strong>
             </div>
           </div>
 
           <div class="toolbar-actions full-width">
-            <el-button v-if="progress === 100" type="primary" @click="viewResult">查看最终报告</el-button>
+            <el-button v-if="comparisonData.length > 0" type="primary" @click="viewResult">查看最终报告</el-button>
           </div>
         </section>
 
         <section class="panel-card status-panel">
           <div class="section-head">
             <div class="section-title">
-              <h3>任务概览</h3>
-              <p>帮助你快速确认本次决策上下文。</p>
+              <h3>执行摘要</h3>
+              <p>便于快速确认当前任务上下文。</p>
             </div>
           </div>
 
+          <div class="summary-line">商品：{{ selectedProductName || '-' }}</div>
           <div class="summary-line">目标：{{ strategyGoalText }}</div>
-          <div class="summary-line">商品：{{ selectedProductNames.length ? selectedProductNames.join('、') : '-' }}</div>
           <div class="summary-line">约束：{{ taskConfig.constraints || '无' }}</div>
         </section>
       </div>
@@ -198,19 +188,19 @@
     <div v-else class="page-shell">
       <section class="metric-grid">
         <article class="metric-card">
-          <div class="metric-label">建议商品数</div>
-          <div class="metric-value">{{ resultList.length }}</div>
-          <div class="metric-hint">已完成智能定价输出</div>
+          <div class="metric-label">建议售价</div>
+          <div class="metric-value">{{ formatCurrency(firstResult?.suggestedPrice) }}</div>
+          <div class="metric-hint">最终建议价格</div>
         </article>
         <article class="metric-card">
-          <div class="metric-label">平均建议价格</div>
-          <div class="metric-value">￥{{ averageSuggestedPrice }}</div>
-          <div class="metric-hint">便于快速评估策略区间</div>
+          <div class="metric-label">预期销量</div>
+          <div class="metric-value">{{ firstResult?.expectedSales || 0 }}</div>
+          <div class="metric-hint">按当前策略估算的销量</div>
         </article>
         <article class="metric-card">
-          <div class="metric-label">预计利润变化</div>
-          <div class="metric-value">{{ averageProfitChange }}</div>
-          <div class="metric-hint">正值说明利润改善预期更高</div>
+          <div class="metric-label">利润变化</div>
+          <div class="metric-value">{{ formatSignedCurrency(firstResult?.profitChange) }}</div>
+          <div class="metric-hint">相对基线利润的变化额</div>
         </article>
       </section>
 
@@ -218,46 +208,46 @@
         <div class="section-head">
           <div class="section-title">
             <h3>结果报告</h3>
-            <p>查看建议价格、利润变化和核心原因，必要时可重新配置任务。</p>
+            <p>确认建议价格、预期收益、风控结果和执行策略。</p>
           </div>
           <div class="toolbar-actions">
             <el-button @click="resetToConfig">重新配置</el-button>
           </div>
         </div>
 
-        <el-table :data="resultList" border stripe>
-          <el-table-column prop="productId" label="商品 ID" width="100" />
-          <el-table-column label="原价" min-width="140">
-            <template #default="{ row }">
-              <span>￥{{ Number(row.originalPrice || 0).toFixed(2) }}</span>
-            </template>
+        <el-table :data="comparisonData" border stripe>
+          <el-table-column prop="productTitle" label="商品名称" min-width="180" show-overflow-tooltip />
+          <el-table-column label="原价" width="120">
+            <template #default="{ row }">{{ formatCurrency(row.originalPrice) }}</template>
           </el-table-column>
-          <el-table-column label="建议价格" min-width="140">
-            <template #default="{ row }">
-              <span class="price-text">￥{{ Number(row.suggestedPrice || 0).toFixed(2) }}</span>
-            </template>
+          <el-table-column label="建议价" width="120">
+            <template #default="{ row }"><span class="price-text">{{ formatCurrency(row.suggestedPrice) }}</span></template>
           </el-table-column>
-          <el-table-column label="预计利润变化" min-width="140">
+          <el-table-column label="预期销量" width="110">
+            <template #default="{ row }">{{ row.expectedSales || 0 }}</template>
+          </el-table-column>
+          <el-table-column label="预期利润" width="120">
+            <template #default="{ row }">{{ formatCurrency(row.expectedProfit) }}</template>
+          </el-table-column>
+          <el-table-column label="利润变化" width="120">
             <template #default="{ row }">
               <el-tag :type="Number(row.profitChange || 0) >= 0 ? 'success' : 'danger'">
-                {{ Number(row.profitChange || 0).toFixed(2) }}
+                {{ formatSignedCurrency(row.profitChange) }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="核心依据" min-width="360" show-overflow-tooltip>
-            <template #default="{ row }">
-              <span>{{ formatCoreReasons(row.coreReasons) }}</span>
-            </template>
-          </el-table-column>
+          <el-table-column prop="passStatus" label="风控结果" width="100" />
+          <el-table-column prop="executeStrategy" label="执行策略" width="120" />
+          <el-table-column prop="resultSummary" label="结果说明" min-width="320" show-overflow-tooltip />
           <el-table-column label="操作" width="120">
             <template #default="{ row }">
-              <el-tag v-if="row.adoptStatus === 'ADOPTED'" type="success">已应用</el-tag>
+              <el-tag v-if="row.appliedStatus === '已应用'" type="success">已应用</el-tag>
               <el-button
                 v-else
                 type="primary"
                 link
-                :loading="applyingResultIds.includes(Number(row.id))"
-                @click="acceptPrice(row)"
+                :loading="applyingResultIds.includes(Number(row.resultId))"
+                @click="applyPrice(row)"
               >
                 应用建议
               </el-button>
@@ -270,7 +260,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { applyDecision, getTaskLogs, getTaskResult, startDecisionTask } from '../api/decision'
 import { getProductList } from '../api/product'
@@ -280,48 +270,20 @@ interface ProductOption {
   title: string
 }
 
-interface ChatMessage {
-  agent_role: string
-  thought_content: string
-  timestamp: string
-  product_id?: number
-  step_order?: number
-  streaming?: boolean
-}
-
-interface TaskLogRecord {
-  id?: number
-  roleName?: string
-  role_name?: string
-  thoughtContent?: string
-  thought_content?: string
-  speakOrder?: number
-  speak_order?: number
-  createdAt?: string
-}
-
 const activeStep = ref(0)
 const starting = ref(false)
 const searchLoading = ref(false)
 const productOptions = ref<ProductOption[]>([])
-const selectedProducts = ref<ProductOption[]>([])
-const productPage = ref(1)
-const productTotal = ref(0)
-const currentQuery = ref('')
+const currentTaskId = ref<number | null>(null)
+const taskLogs = ref<any[]>([])
+const comparisonData = ref<any[]>([])
+const applyingResultIds = ref<number[]>([])
 
 const taskConfig = reactive({
-  productIds: [] as number[],
-  strategyGoal: '',
+  productId: undefined as number | undefined,
+  strategyGoal: 'MAX_PROFIT',
   constraints: ''
 })
-
-const socketStatus = ref<'connecting' | 'connected' | 'disconnected'>('disconnected')
-const chatMessages = ref<ChatMessage[]>([])
-const chatBoxRef = ref<HTMLDivElement>()
-const progress = ref(0)
-const currentTaskId = ref<number | null>(null)
-const resultList = ref<any[]>([])
-const applyingResultIds = ref<number[]>([])
 
 const stepBarActive = computed(() => {
   if (activeStep.value === 2) return 3
@@ -335,148 +297,81 @@ const strategyGoalText = computed(() => {
     CLEARANCE: '清仓促销',
     MARKET_SHARE: '市场份额优先'
   }
-  if (!taskConfig.strategyGoal) return '未选择'
   return mapping[taskConfig.strategyGoal] || taskConfig.strategyGoal
 })
 
-const socketStatusText = computed(() => {
-  const mapping = {
-    connecting: '连接中',
-    connected: '实时连接',
-    disconnected: '日志回放'
-  }
-  return mapping[socketStatus.value]
+const selectedProductName = computed(() => {
+  return productOptions.value.find((item) => item.id === taskConfig.productId)?.title || ''
 })
 
-const selectedProductNames = computed(() =>
-  selectedProducts.value
-    .filter((item) => taskConfig.productIds.includes(item.id))
-    .map((item) => item.title)
+const orderedLogs = computed(() =>
+  [...taskLogs.value].sort((a, b) => Number(a.runOrder || 0) - Number(b.runOrder || 0))
 )
 
-const orderedMessages = computed(() =>
-  [...chatMessages.value].sort((a, b) => {
-    if ((a.product_id || 0) !== (b.product_id || 0)) {
-      return (a.product_id || 0) - (b.product_id || 0)
-    }
-    if ((a.step_order || 0) !== (b.step_order || 0)) {
-      return (a.step_order || 0) - (b.step_order || 0)
-    }
-    return a.timestamp.localeCompare(b.timestamp)
-  })
-)
+const firstResult = computed(() => comparisonData.value[0] || null)
 
-const averageSuggestedPrice = computed(() => {
-  if (resultList.value.length === 0) return '0.00'
-  const totalPrice = resultList.value.reduce((sum, item) => sum + Number(item.suggestedPrice || 0), 0)
-  return (totalPrice / resultList.value.length).toFixed(2)
+const progress = computed(() => {
+  if (comparisonData.value.length > 0) return 100
+  if (taskLogs.value.length > 0) return 70
+  if (currentTaskId.value) return 35
+  return 0
 })
 
-const averageProfitChange = computed(() => {
-  if (resultList.value.length === 0) return '0.00'
-  const totalChange = resultList.value.reduce((sum, item) => sum + Number(item.profitChange || 0), 0)
-  return (totalChange / resultList.value.length).toFixed(2)
-})
-
-const coreReasonDictionary: Array<[RegExp, string]> = [
-  [/strategy target=/gi, '策略目标：'],
-  [/策略目标=/g, '策略目标：'],
-  [/data advice=/gi, '数据建议：'],
-  [/数据建议=/g, '数据建议：'],
-  [/market advice=/gi, '市场建议：'],
-  [/市场建议=/g, '市场建议：'],
-  [/risk advice=/gi, '风险建议：'],
-  [/风险建议=/g, '风险建议：'],
-  [/overall suggestion=/gi, '综合建议：'],
-  [/综合建议=/g, '综合建议：'],
-  [/core factors=/gi, '核心因素：'],
-  [/核心因子=/g, '核心因素：'],
-  [/confidence=/gi, '可信度：'],
-  [/\bMAX_PROFIT\b/g, '利润优先'],
-  [/\bCLEARANCE\b/g, '清仓促销'],
-  [/\bMARKET_SHARE\b/g, '市场份额优先'],
-  [/\bmaintain\b/g, '维持当前价格'],
-  [/\bdiscount\b/g, '建议降价'],
-  [/\bincrease\b/g, '建议提价'],
-  [/\braise\b/g, '建议提价'],
-  [/\bconservative\b/g, '保守调整'],
-  [/\baggressive\b/g, '积极调整'],
-  [/\blow\b/g, '低'],
-  [/\bmedium\b/g, '中'],
-  [/\bhigh\b/g, '高']
-]
-
-let socket: WebSocket | null = null
-let logSyncTimer: number | null = null
-
-const loadProducts = async (query: string, page: number, append = false) => {
+const loadProducts = async (query = '') => {
   searchLoading.value = true
   try {
-    const res: any = await getProductList({ page, size: 20, keyword: query })
-    if (res.code !== 200) return
-
-    if (append) {
-      const newItems = res.data.records.filter(
-        (newItem: ProductOption) => !productOptions.value.some((oldItem) => oldItem.id === newItem.id)
-      )
-      productOptions.value = [...productOptions.value, ...newItems]
-    } else {
-      productOptions.value = res.data.records
-      const missingSelected = selectedProducts.value.filter(
-        (selectedItem) => !productOptions.value.some((option) => option.id === selectedItem.id)
-      )
-      productOptions.value = [...missingSelected, ...productOptions.value]
+    const res: any = await getProductList({ page: 1, size: 20, keyword: query })
+    if (res.code === 200) {
+      productOptions.value = res.data.records || []
     }
-
-    productTotal.value = res.data.total
-    productPage.value = page
-    currentQuery.value = query
   } finally {
     searchLoading.value = false
   }
 }
 
 const searchProducts = (query: string) => {
-  loadProducts(query, 1, false)
+  loadProducts(query)
 }
 
-const loadMoreProducts = () => {
-  if (productOptions.value.length < productTotal.value) {
-    loadProducts(currentQuery.value, productPage.value + 1, true)
+const fetchTaskLogs = async (taskId: number) => {
+  const res: any = await getTaskLogs(taskId)
+  if (res.code === 200) {
+    taskLogs.value = res.data || []
   }
 }
 
-const handleProductChange = (value: number[]) => {
-  selectedProducts.value = productOptions.value.filter((item) => value.includes(item.id))
+const fetchTaskResult = async (taskId: number) => {
+  const res: any = await getTaskResult(taskId)
+  if (res.code === 200) {
+    comparisonData.value = res.data || []
+  }
 }
 
 const startTask = async () => {
-  if (taskConfig.productIds.length === 0) {
-    ElMessage.warning('请至少选择一个商品')
-    return
-  }
-  if (!taskConfig.strategyGoal) {
-    ElMessage.warning('请选择策略目标')
+  if (!taskConfig.productId) {
+    ElMessage.warning('请选择一个商品')
     return
   }
 
   starting.value = true
   try {
-    const res: any = await startDecisionTask(taskConfig)
+    const res: any = await startDecisionTask({
+      productIds: [taskConfig.productId],
+      strategyGoal: taskConfig.strategyGoal,
+      constraints: taskConfig.constraints
+    })
     if (res.code !== 200) {
       ElMessage.error(res.message || '启动任务失败')
       return
     }
 
     currentTaskId.value = res.data
+    taskLogs.value = []
+    comparisonData.value = []
     activeStep.value = 1
-    progress.value = 5
-    resultList.value = []
-    chatMessages.value = []
 
-    connectWebSocket(res.data)
-    fetchTaskLogs(res.data)
-    startLogSync(res.data)
+    await Promise.all([fetchTaskLogs(res.data), fetchTaskResult(res.data)])
+    ElMessage.success('定价任务已完成')
   } catch {
     ElMessage.error('启动智能决策失败')
   } finally {
@@ -484,310 +379,24 @@ const startTask = async () => {
   }
 }
 
-const connectWebSocket = (taskId: number) => {
-  closeSocket()
-  socketStatus.value = 'connecting'
-
-  const wsBase = import.meta.env.VITE_WS_URL || 'ws://localhost:8000'
-  socket = new WebSocket(`${wsBase}/ws/decision/${taskId}`)
-
-  socket.onopen = () => {
-    socketStatus.value = 'connected'
-  }
-
-  socket.onmessage = async (event) => {
-    try {
-      const data = JSON.parse(event.data)
-
-      if (data.type === 'result') {
-        progress.value = 100
-        await fetchTaskLogs(taskId)
-        return
-      }
-
-      if (data.type === 'complete') {
-        progress.value = 100
-        await fetchTaskLogs(taskId)
-        stopLogSync()
-        return
-      }
-
-      if (data.type === 'error') {
-        ElMessage.error(data.message || '任务执行异常')
-        await fetchTaskLogs(taskId)
-        return
-      }
-
-      if (data.type === 'market_unavailable') {
-        ElMessage.warning(data.message || '无法生成竞品市场样本')
-        return
-      }
-
-      if (!data.is_stream || data.agent_role === '系统') {
-        return
-      }
-
-      const role = data.agent_role || '角色'
-      const productId = Number(data.product_id || 0)
-      const stepOrder = Number(data.step_order || 0)
-
-      if (data.is_start) {
-        upsertStreamingMessage(role, productId, stepOrder, '', data.timestamp)
-        progress.value = Math.min(Math.max(progress.value, ((stepOrder || 0) / 4) * 100), 95)
-        scrollToBottom()
-        return
-      }
-
-      if (data.is_end) {
-        markStreamingEnded(role, productId, stepOrder)
-        scrollToBottom()
-        return
-      }
-
-      appendStreamingChunk(role, productId, stepOrder, data.thought_content || '', data.timestamp)
-      scrollToBottom()
-    } catch (error) {
-      console.error('WS parse error', error)
-    }
-  }
-
-  socket.onerror = async () => {
-    socketStatus.value = 'disconnected'
-    await fetchTaskLogs(taskId)
-  }
-
-  socket.onclose = async () => {
-    socketStatus.value = 'disconnected'
-    await fetchTaskLogs(taskId)
-  }
-}
-
-const closeSocket = () => {
-  if (socket) {
-    socket.close()
-    socket = null
-  }
-}
-
-const buildMessageDomKey = (message: ChatMessage) =>
-  `${message.agent_role}|${message.product_id || 0}|${message.step_order || 0}`
-
-const findMessageByIdentity = (role: string, productId?: number, stepOrder?: number) =>
-  chatMessages.value.find(
-    (message) =>
-      message.agent_role === role &&
-      (message.product_id || 0) === (productId || 0) &&
-      (message.step_order || 0) === (stepOrder || 0)
-  )
-
-const upsertStreamingMessage = (
-  role: string,
-  productId: number,
-  stepOrder: number,
-  content: string,
-  timestamp?: string
-) => {
-  const existing = findMessageByIdentity(role, productId, stepOrder)
-  if (existing) {
-    existing.thought_content = content || existing.thought_content
-    existing.timestamp = timestamp || existing.timestamp
-    existing.streaming = true
-    return existing
-  }
-
-  const message: ChatMessage = {
-    agent_role: role,
-    product_id: productId,
-    step_order: stepOrder,
-    thought_content: content,
-    timestamp: timestamp || new Date().toLocaleTimeString(),
-    streaming: true
-  }
-  chatMessages.value.push(message)
-  return message
-}
-
-const appendStreamingChunk = (
-  role: string,
-  productId: number,
-  stepOrder: number,
-  content: string,
-  timestamp?: string
-) => {
-  const message = findMessageByIdentity(role, productId, stepOrder)
-  if (message) {
-    message.thought_content += content
-    if (timestamp) message.timestamp = timestamp
-    message.streaming = true
+const viewResult = () => {
+  if (comparisonData.value.length === 0) {
+    ElMessage.warning('当前任务还没有结果')
     return
   }
-
-  upsertStreamingMessage(role, productId, stepOrder, content, timestamp)
+  activeStep.value = 2
 }
 
-const markStreamingEnded = (role: string, productId: number, stepOrder: number) => {
-  const message = findMessageByIdentity(role, productId, stepOrder)
-  if (message) {
-    message.streaming = false
-  }
-}
-
-const fetchTaskLogs = async (taskId: number) => {
-  try {
-    const res: any = await getTaskLogs(taskId)
-    if (res.code !== 200 || !Array.isArray(res.data)) return
-    mergeHistoricalLogs(res.data as TaskLogRecord[])
-  } catch (error) {
-    console.error('Fetch task logs failed', error)
-  }
-}
-
-const normalizeContent = (content: string) => content.replace(/\s+/g, ' ').trim()
-
-const parseProductIdFromContent = (content: string) => {
-  const match = content.match(/^商品\s+(\d+)\s*\n/)
-  return match ? Number(match[1]) : 0
-}
-
-const stripProductHeader = (content: string) => content.replace(/^商品\s+\d+\s*\n/, '')
-
-const mergeHistoricalLogs = (logs: TaskLogRecord[]) => {
-  for (const log of logs) {
-    const role = log.roleName || log.role_name || '角色'
-    if (role === '系统') continue
-
-    const rawContent = log.thoughtContent || log.thought_content || ''
-    const content = stripProductHeader(rawContent)
-    if (!normalizeContent(content)) continue
-
-    const productId = parseProductIdFromContent(rawContent)
-    const stepOrder = Number(log.speakOrder || log.speak_order || 0)
-    const timestamp = formatLogTimestamp(log.createdAt)
-    const existing = findMessageByIdentity(role, productId, stepOrder)
-
-    if (existing) {
-      existing.thought_content = content
-      existing.timestamp = timestamp
-      existing.streaming = false
-      continue
-    }
-
-    chatMessages.value.push({
-      agent_role: role,
-      product_id: productId,
-      step_order: stepOrder,
-      thought_content: content,
-      timestamp,
-      streaming: false
-    })
-  }
-
-  if (chatMessages.value.length > 0) {
-    progress.value = Math.max(progress.value, Math.min(chatMessages.value.length * 20, 95))
-  }
-
-  scrollToBottom()
-}
-
-const startLogSync = (taskId: number) => {
-  stopLogSync()
-  logSyncTimer = window.setInterval(() => {
-    fetchTaskLogs(taskId)
-  }, 800)
-}
-
-const stopLogSync = () => {
-  if (logSyncTimer !== null) {
-    window.clearInterval(logSyncTimer)
-    logSyncTimer = null
-  }
-}
-
-const formatLogTimestamp = (value?: string) => {
-  if (!value) return new Date().toLocaleTimeString()
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleTimeString()
-}
-
-const scrollToBottom = () => {
-  nextTick(() => {
-    if (chatBoxRef.value) {
-      chatBoxRef.value.scrollTop = chatBoxRef.value.scrollHeight
-    }
-  })
-}
-
-const getAgentClass = (role: string) => {
-  if (role.includes('数据')) return 'agent-data'
-  if (role.includes('市场')) return 'agent-market'
-  if (role.includes('风控') || role.includes('风险')) return 'agent-risk'
-  if (role.includes('经理')) return 'agent-manager'
-  return 'agent-default'
-}
-
-const getAgentAvatar = (role: string) => {
-  if (role.includes('数据')) return '数据'
-  if (role.includes('市场')) return '市场'
-  if (role.includes('风控') || role.includes('风险')) return '风控'
-  if (role.includes('经理')) return '经理'
-  return '角色'
-}
-
-const formatContent = (content: string) => {
-  if (!content) return ''
-  return content.replace(/=/g, '：').replace(/\n/g, '<br>')
-}
-
-const formatCoreReasons = (content?: string) => {
-  if (!content) return '-'
-  let text = content
-  for (const [pattern, replacement] of coreReasonDictionary) {
-    text = text.replace(pattern, replacement)
-  }
-  text = text.replace(/=/g, '：')
-  return text
-}
-
-const viewResult = async () => {
-  if (!currentTaskId.value) return
-
-  try {
-    const resultRes: any = await getTaskResult(currentTaskId.value)
-    if (resultRes.code !== 200) {
-      ElMessage.error(resultRes.message || '获取结果报告失败')
-      return
-    }
-
-    resultList.value = (resultRes.data || []).map((item: any) => {
-      return {
-        ...item,
-        originalPrice: Number(item?.originalPrice || 0),
-        profitChange: Number(item?.profitChange || 0),
-        adoptStatus: item.adoptStatus || (item.isAccepted ? 'ADOPTED' : 'PENDING')
-      }
-    })
-    activeStep.value = 2
-    stopLogSync()
-  } catch {
-    ElMessage.error('获取结果报告失败')
-  }
-}
-
-const acceptPrice = async (row: any) => {
-  const resultId = Number(row.id || 0)
-  const productName = row.productTitle || row.title || `ID ${row.productId}`
+const applyPrice = async (row: any) => {
+  const resultId = Number(row.resultId || 0)
   if (!resultId) {
     ElMessage.error('未找到可应用的结果记录')
-    return
-  }
-  if (applyingResultIds.value.includes(resultId)) {
     return
   }
 
   try {
     await ElMessageBox.confirm(
-      `确认将商品“${productName}”的售价更新为 ${Number(row.suggestedPrice || 0).toFixed(2)} 吗？`,
+      `确认将商品“${row.productTitle}”的售价更新为 ${formatCurrency(row.suggestedPrice)} 吗？`,
       '应用价格建议',
       {
         type: 'warning',
@@ -798,9 +407,10 @@ const acceptPrice = async (row: any) => {
     applyingResultIds.value.push(resultId)
     const res: any = await applyDecision(resultId)
     if (res.code === 200) {
-      row.isAccepted = true
-      row.adoptStatus = 'ADOPTED'
-      ElMessage.success(`已应用建议价格：${row.suggestedPrice}`)
+      ElMessage.success('建议价格已应用')
+      if (currentTaskId.value) {
+        await fetchTaskResult(currentTaskId.value)
+      }
       return
     }
     ElMessage.error(res.message || '应用失败')
@@ -815,16 +425,37 @@ const acceptPrice = async (row: any) => {
 
 const resetToConfig = () => {
   activeStep.value = 0
-  progress.value = 0
+  currentTaskId.value = null
+  taskLogs.value = []
+  comparisonData.value = []
+}
+
+const getAgentClass = (name: string) => {
+  if (name?.includes('数据')) return 'agent-data'
+  if (name?.includes('市场')) return 'agent-market'
+  if (name?.includes('风险')) return 'agent-risk'
+  if (name?.includes('经理')) return 'agent-manager'
+  return 'agent-default'
+}
+
+const getAgentAvatar = (name: string) => {
+  if (name?.includes('数据')) return '数据'
+  if (name?.includes('市场')) return '市场'
+  if (name?.includes('风险')) return '风控'
+  if (name?.includes('经理')) return '经理'
+  return 'Agent'
+}
+
+const formatContent = (content?: string) => (content ? String(content).replace(/\n/g, '<br>') : '')
+const formatTime = (value?: string) => (value ? new Date(value).toLocaleString() : '-')
+const formatCurrency = (value?: number | string | null) => `¥${Number(value || 0).toFixed(2)}`
+const formatSignedCurrency = (value?: number | string | null) => {
+  const numeric = Number(value || 0)
+  return `${numeric >= 0 ? '+' : '-'}¥${Math.abs(numeric).toFixed(2)}`
 }
 
 onMounted(() => {
-  loadProducts('', 1, false)
-})
-
-onUnmounted(() => {
-  stopLogSync()
-  closeSocket()
+  loadProducts()
 })
 </script>
 
@@ -841,26 +472,12 @@ onUnmounted(() => {
   padding: 22px;
 }
 
-.compact-metrics {
-  margin-top: 10px;
-  gap: 10px;
-}
-
-.metric-value.small {
-  font-size: 22px;
-}
-
 .steps {
   padding-top: 0;
 }
 
 .step-panel {
   padding: 14px 16px;
-}
-
-.step-panel .section-title p {
-  font-size: 12px;
-  line-height: 1.5;
 }
 
 .step-panel .section-head {
@@ -901,10 +518,6 @@ onUnmounted(() => {
   font-size: 12px;
 }
 
-.load-more {
-  padding: 8px 12px 4px;
-}
-
 .tips-list {
   display: grid;
   gap: 14px;
@@ -919,18 +532,8 @@ onUnmounted(() => {
   border: 1px solid var(--line-soft);
 }
 
-.tip-item strong,
-.tip-item span {
-  margin: 0;
-}
-
-.tip-item span {
-  color: var(--text-2);
-  line-height: 1.7;
-}
-
 .summary-card {
-  margin-top: 18px;
+  margin-bottom: 18px;
   display: grid;
   gap: 10px;
   padding: 18px;
@@ -974,11 +577,6 @@ onUnmounted(() => {
   border: 1px solid var(--line-soft);
 }
 
-.message-card.streaming {
-  border-color: rgba(31, 111, 235, 0.35);
-  box-shadow: 0 0 0 1px rgba(31, 111, 235, 0.12) inset;
-}
-
 .message-avatar {
   width: 54px;
   height: 54px;
@@ -1003,15 +601,6 @@ onUnmounted(() => {
   margin-bottom: 8px;
 }
 
-.message-head strong {
-  font-size: 15px;
-}
-
-.message-head span {
-  color: var(--text-3);
-  font-size: 12px;
-}
-
 .message-body {
   color: var(--text-1);
   line-height: 1.8;
@@ -1021,27 +610,13 @@ onUnmounted(() => {
   margin: 0;
 }
 
-.typing-placeholder {
-  color: var(--text-2);
-  font-style: italic;
-}
-
-.message-card.streaming .message-body p::after {
-  content: '▍';
-  margin-left: 2px;
-  color: var(--brand);
-  animation: cursor-blink 1s infinite;
-}
-
-@keyframes cursor-blink {
-  0%,
-  50% {
-    opacity: 1;
-  }
-  50.01%,
-  100% {
-    opacity: 0;
-  }
+.message-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  color: var(--text-3);
+  font-size: 12px;
 }
 
 .agent-data .message-avatar {
@@ -1090,12 +665,6 @@ onUnmounted(() => {
 .price-text {
   font-weight: 700;
   color: var(--accent);
-}
-
-@media (max-width: 1200px) {
-  .chat-stream {
-    max-height: 60vh;
-  }
 }
 
 @media (max-width: 768px) {

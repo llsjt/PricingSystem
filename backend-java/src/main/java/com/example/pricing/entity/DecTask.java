@@ -5,20 +5,33 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("dec_task")
+@TableName("pricing_task")
 public class DecTask {
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    private String taskNo;
+    @TableField("task_code")
+    private String taskCode;
 
-    private String strategyType;
+    private Long shopId;
 
-    private String constraints; // JSON string
+    private Long productId;
 
-    private String productNames; // Snapshot of product names
+    private Long skuId;
 
-    private String status; // PENDING, RUNNING, COMPLETED, FAILED
+    private java.math.BigDecimal currentPrice;
+
+    private java.math.BigDecimal baselineProfit;
+
+    private java.math.BigDecimal suggestedMinPrice;
+
+    private java.math.BigDecimal suggestedMaxPrice;
+
+    @TableField("task_status")
+    private String taskStatus;
+
+    @TableField(exist = false)
+    private String productTitle;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

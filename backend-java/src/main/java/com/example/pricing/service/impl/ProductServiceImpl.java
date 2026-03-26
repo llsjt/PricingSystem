@@ -7,28 +7,36 @@ import com.example.pricing.common.Result;
 import com.example.pricing.dto.ProductImportDTO;
 import com.example.pricing.dto.ProductManualDTO;
 import com.example.pricing.entity.BizProduct;
+import com.example.pricing.entity.BizProductDailyStat;
+import com.example.pricing.entity.Shop;
 import com.example.pricing.entity.SysImportBatch;
 import com.example.pricing.listener.ProductImportListener;
+import com.example.pricing.mapper.BizProductDailyStatMapper;
 import com.example.pricing.mapper.BizProductMapper;
+import com.example.pricing.mapper.ShopMapper;
 import com.example.pricing.mapper.SysImportBatchMapper;
 import com.example.pricing.service.ProductService;
 import com.example.pricing.vo.ProductListVO;
+import com.example.pricing.vo.ProductTrendVO;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Random;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import java.util.Arrays;
 
 @Slf4j
 @Service
@@ -37,286 +45,171 @@ public class ProductServiceImpl implements ProductService {
 
     private final BizProductMapper productMapper;
     private final SysImportBatchMapper batchMapper;
-    private final com.example.pricing.mapper.BizProductDailyStatMapper statMapper;
+    private final BizProductDailyStatMapper statMapper;
+    private final ShopMapper shopMapper;
 
-    /**
-     * 导入 Excel 商品数据。
-     * 这里负责文件校验、批次记录落库，以及驱动 EasyExcel 逐行解析。
-     */
     @Override
     public Result<String> importData(MultipartFile file) {
-        if (file.isEmpty()) {
+        if (file == null || file.isEmpty()) {
             return Result.error("文件不能为空");
         }
 
-        // 校验文件类型
         String fileName = file.getOriginalFilename();
         if (fileName == null || !fileName.matches(".*\\.(xlsx|xls)$")) {
             return Result.error("只支持 Excel 文件格式 (.xls/.xlsx)");
         }
-
-        // 校验文件大小 (不超过 10MB)
         if (file.getSize() > 10 * 1024 * 1024) {
             return Result.error("文件大小不能超过 10MB");
         }
 
-        // 1. 创建导入批次记录
+        Long shopId = resolveDefaultShopId();
         SysImportBatch batch = new SysImportBatch();
-        batch.setBatchNo(UUID.randomUUID().toString());
+        batch.setShopId(shopId);
+        batch.setBatchNo("BATCH-" + UUID.randomUUID());
         batch.setFileName(fileName);
+        batch.setDataType("PRODUCT");
+        batch.setRowCount(0);
         batch.setSuccessCount(0);
         batch.setFailCount(0);
+        batch.setUploadStatus("PROCESSING");
         batchMapper.insert(batch);
 
-        // 2. 使用 EasyExcel 读取并处理数据
         ProductImportListener listener = new ProductImportListener(this, batch.getId());
         try {
             EasyExcel.read(file.getInputStream(), ProductImportDTO.class, listener).sheet().doRead();
         } catch (IOException e) {
             log.error("Excel读取异常", e);
+            batch.setUploadStatus("FAILED");
+            batchMapper.updateById(batch);
             return Result.error("Excel读取失败: " + e.getMessage());
         }
 
-        // 3. 更新批次结果
+        batch.setRowCount(listener.getSuccessCount() + listener.getFailCount());
         batch.setSuccessCount(listener.getSuccessCount());
         batch.setFailCount(listener.getFailCount());
-        String errorLog = String.join("\n", listener.getErrorMessages());
-        if (errorLog != null && errorLog.length() > 65535) {
-            errorLog = errorLog.substring(0, 65535);
+        if (listener.getSuccessCount() > 0 && listener.getFailCount() > 0) {
+            batch.setUploadStatus("PARTIAL_SUCCESS");
+        } else if (listener.getSuccessCount() > 0) {
+            batch.setUploadStatus("SUCCESS");
+        } else {
+            batch.setUploadStatus("FAILED");
         }
-        batch.setErrorLog(errorLog);
         batchMapper.updateById(batch);
 
         return Result.success("导入完成: 成功 " + listener.getSuccessCount() + " 行, 失败 " + listener.getFailCount() + " 行");
     }
 
-    /**
-     * 保存单条导入商品。
-     * 如果商品标题已存在则更新，否则新增，并在有日销数据时同步维护趋势明细。
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void saveImportedProduct(ProductImportDTO data, Long batchId) {
-        // 根据商品标题查询是否已存在
-        LambdaQueryWrapper<BizProduct> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(BizProduct::getTitle, data.getTitle());
-        BizProduct existing = productMapper.selectOne(wrapper);
-
-        BizProduct product;
-        if (existing == null) {
-            // 新增商品
+    public void saveImportedProduct(ProductImportDTO dto, Long batchId) {
+        Long shopId = resolveDefaultShopId();
+        BizProduct product = findProductByTitle(shopId, dto.getTitle());
+        if (product == null) {
             product = new BizProduct();
-            product.setTitle(data.getTitle());
-            product.setCategory(data.getCategory());
-            product.setCostPrice(data.getCostPrice() != null ? data.getCostPrice() : BigDecimal.ZERO);
-            product.setMarketPrice(data.getMarketPrice());
-            product.setCurrentPrice(data.getCurrentPrice() != null ? data.getCurrentPrice() : BigDecimal.ZERO);
-            product.setStock(data.getStock() != null ? data.getStock() : 0);
-            product.setMonthlySales(data.getMonthlySales() != null ? data.getMonthlySales() : 0);
-            product.setSource("IMPORT");
-            
-            // 处理百分比字段
-            product.setClickRate(parsePercentage(data.getClickRateStr()));
-            product.setConversionRate(parsePercentage(data.getConversionRateStr()));
-            
+            product.setShopId(shopId);
+            product.setItemId(resolveItemId(dto.getItemId()));
+            product.setStatus("ON_SALE");
+            product.setTitle(dto.getTitle());
+            product.setCategory(trimToNull(dto.getCategory()));
+            product.setCostPrice(defaultDecimal(dto.getCostPrice()));
+            product.setCurrentPrice(defaultDecimal(dto.getCurrentPrice()));
+            product.setStock(defaultInteger(dto.getStock()));
             productMapper.insert(product);
         } else {
-            // 更新现有商品
-            product = existing;
-            product.setTitle(data.getTitle());
-            product.setCategory(data.getCategory());
-            product.setCostPrice(data.getCostPrice() != null ? data.getCostPrice() : product.getCostPrice());
-            product.setMarketPrice(data.getMarketPrice());
-            product.setCurrentPrice(data.getCurrentPrice() != null ? data.getCurrentPrice() : product.getCurrentPrice());
-            product.setStock(data.getStock() != null ? data.getStock() : product.getStock());
-            product.setMonthlySales(data.getMonthlySales() != null ? data.getMonthlySales() : product.getMonthlySales());
-            
-            if (data.getClickRateStr() != null) {
-                product.setClickRate(parsePercentage(data.getClickRateStr()));
+            product.setCategory(trimToNull(dto.getCategory()));
+            if (dto.getCostPrice() != null) {
+                product.setCostPrice(dto.getCostPrice());
             }
-            if (data.getConversionRateStr() != null) {
-                product.setConversionRate(parsePercentage(data.getConversionRateStr()));
+            if (dto.getCurrentPrice() != null) {
+                product.setCurrentPrice(dto.getCurrentPrice());
             }
-            
+            if (dto.getStock() != null) {
+                product.setStock(dto.getStock());
+            }
             productMapper.updateById(product);
         }
-        
-        // 保存日统计数据 (如果有)
-        if (data.getDailySales() != null || data.getDailyVisitors() != null) {
-            saveDailyStat(product.getId(), data);
-        }
-    }
-    
-    /**
-     * 保存商品当天的销量统计，供趋势图和趋势卡片计算使用。
-     */
-    private void saveDailyStat(Long productId, ProductImportDTO data) {
-        java.time.LocalDate today = java.time.LocalDate.now();
-        
-        // 检查今日是否已存在
-        LambdaQueryWrapper<com.example.pricing.entity.BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(com.example.pricing.entity.BizProductDailyStat::getProductId, productId);
-        wrapper.eq(com.example.pricing.entity.BizProductDailyStat::getStatDate, today);
-        com.example.pricing.entity.BizProductDailyStat existingStat = statMapper.selectOne(wrapper);
-        
-        if (existingStat == null) {
-            com.example.pricing.entity.BizProductDailyStat stat = new com.example.pricing.entity.BizProductDailyStat();
-            stat.setProductId(productId);
-            stat.setStatDate(today);
-            stat.setSalesCount(data.getDailySales() != null ? data.getDailySales() : 0);
-            // Visitor and conversion metrics are not stored in the current table schema.
-            
-            // 计算转化率和销售额
-            if (stat.getVisitorCount() > 0) {
-                BigDecimal cr = new BigDecimal(stat.getSalesCount()).divide(new BigDecimal(stat.getVisitorCount()), 4, java.math.RoundingMode.HALF_UP);
-                // No-op: conversion rate is derived in-memory when needed.
-            } else {
-                // No-op: conversion rate is derived in-memory when needed.
-            }
-            
-            // 获取最新价格计算销售额
-            BizProduct product = productMapper.selectById(productId);
-            if (product != null && product.getCurrentPrice() != null) {
-                stat.setTurnover(product.getCurrentPrice().multiply(new BigDecimal(stat.getSalesCount())));
-            } else {
-                stat.setTurnover(BigDecimal.ZERO);
-            }
-            
-            statMapper.insert(stat);
-        } else {
-            // 更新今日数据
-            if (data.getDailySales() != null) existingStat.setSalesCount(data.getDailySales());
-            // Visitor and conversion metrics are not stored in the current table schema.
-            
-            if (existingStat.getVisitorCount() > 0) {
-                BigDecimal cr = new BigDecimal(existingStat.getSalesCount()).divide(new BigDecimal(existingStat.getVisitorCount()), 4, java.math.RoundingMode.HALF_UP);
-                // No-op: conversion rate is derived in-memory when needed.
-            }
-            
-            BizProduct product = productMapper.selectById(productId);
-            if (product != null && product.getCurrentPrice() != null) {
-                existingStat.setTurnover(product.getCurrentPrice().multiply(new BigDecimal(existingStat.getSalesCount())));
-            }
-            
-            statMapper.updateById(existingStat);
+
+        int monthlySales = safeMonthlySales(dto.getMonthlySales(), dto.getDailySales());
+        BigDecimal conversionRate = resolveConversionRate(dto.getConversionRateStr(), dto.getDailySales(), dto.getDailyVisitors());
+        seedRecentMetricsIfAbsent(product, monthlySales, conversionRate);
+        if (dto.getDailySales() != null || dto.getDailyVisitors() != null) {
+            upsertDailyMetric(product, dto.getDailySales(), dto.getDailyVisitors(), conversionRate, batchId, LocalDate.now());
         }
     }
 
-    /**
-     * 解析百分比字符串，兼容“12%”和“0.12”两种输入格式。
-     */
-    private BigDecimal parsePercentage(String str) {
-        if (str == null || str.trim().isEmpty()) {
-            return BigDecimal.ZERO;
-        }
-        try {
-            String cleanStr = str.replace("%", "").trim();
-            BigDecimal val = new BigDecimal(cleanStr);
-            // 如果原字符串包含%，说明是百分比格式，需要除以 100
-            // 否则假设已经是小数形式 (如 0.12)
-            if (str.contains("%")) {
-                return val.divide(new BigDecimal("100"));
-            }
-            // 对于没有%的数字，如果大于 1，假设是百分比数值 (如 50 代表 50%)
-            if (val.compareTo(BigDecimal.ONE) > 0) {
-                return val.divide(new BigDecimal("100"));
-            }
-            return val;
-        } catch (Exception e) {
-            log.warn("百分比解析失败：{}", str, e);
-            return BigDecimal.ZERO;
-        }
-    }
-
-    /**
-     * 手工新增商品。
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Result<Void> addProductManual(ProductManualDTO dto) {
-        // 校验商品标题是否重复
-        LambdaQueryWrapper<BizProduct> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(BizProduct::getTitle, dto.getTitle());
-        Long count = productMapper.selectCount(wrapper);
-        if (count > 0) {
+        Long shopId = resolveDefaultShopId();
+        if (dto.getTitle() == null || dto.getTitle().isBlank()) {
+            return Result.error("商品标题不能为空");
+        }
+
+        if (findProductByTitle(shopId, dto.getTitle()) != null) {
             return Result.error("商品名称已存在");
         }
 
         BizProduct product = new BizProduct();
-        product.setTitle(dto.getTitle());
-        product.setCategory(dto.getCategory());
-        product.setCostPrice(dto.getCostPrice());
-        product.setMarketPrice(dto.getMarketPrice());
-        product.setCurrentPrice(dto.getCurrentPrice());
-        product.setStock(dto.getStock());
-        product.setMonthlySales(dto.getMonthlySales() != null ? dto.getMonthlySales() : 0);
-        product.setClickRate(dto.getClickRate() != null ? dto.getClickRate() : BigDecimal.ZERO);
-        product.setConversionRate(dto.getConversionRate() != null ? dto.getConversionRate() : BigDecimal.ZERO);
-        product.setSource(dto.getSource());
-        
+        product.setShopId(shopId);
+        product.setItemId(resolveItemId(dto.getItemId()));
+        product.setTitle(dto.getTitle().trim());
+        product.setCategory(trimToNull(dto.getCategory()));
+        product.setCostPrice(defaultDecimal(dto.getCostPrice()));
+        product.setCurrentPrice(defaultDecimal(dto.getCurrentPrice()));
+        product.setStock(defaultInteger(dto.getStock()));
+        product.setStatus(dto.getStatus() == null || dto.getStatus().isBlank() ? "ON_SALE" : dto.getStatus().trim());
         productMapper.insert(product);
+
+        seedRecentMetricsIfAbsent(product, safeMonthlySales(dto.getMonthlySales(), null), defaultDecimal(dto.getConversionRate()));
         return Result.success();
     }
 
-    /**
-     * 分页查询商品列表，并把实体对象转换成前端展示用 VO。
-     */
     @Override
     public Result<Page<ProductListVO>> getProductList(int page, int size, String keyword, String dataSource) {
-        // 校验分页参数
-        if (page <= 0) {
-            page = 1;
-        }
-        if (size <= 0 || size > 100) {
-            size = 10; // 默认每页 10 条，最大 100 条
-        }
+        int safePage = Math.max(page, 1);
+        int safeSize = size <= 0 || size > 100 ? 10 : size;
 
-        Page<BizProduct> pageParam = new Page<>(page, size);
+        Page<BizProduct> pageParam = new Page<>(safePage, safeSize);
         LambdaQueryWrapper<BizProduct> wrapper = new LambdaQueryWrapper<>();
-        
-        // 关键词搜索 (标题或ID)
-        if (keyword != null && !keyword.isEmpty()) {
-            wrapper.and(w -> w.like(BizProduct::getTitle, keyword).or().eq(BizProduct::getId, keyword));
+        if (keyword != null && !keyword.isBlank()) {
+            String trimmedKeyword = keyword.trim();
+            Long numericKeyword = parseLongOrNull(trimmedKeyword);
+            wrapper.and(query -> query.like(BizProduct::getTitle, trimmedKeyword)
+                    .or()
+                    .like(BizProduct::getCategory, trimmedKeyword)
+                    .or(numericKeyword != null)
+                    .eq(numericKeyword != null, BizProduct::getId, numericKeyword)
+                    .or(numericKeyword != null)
+                    .eq(numericKeyword != null, BizProduct::getItemId, numericKeyword));
         }
-        // 数据来源筛选
-        if (dataSource != null && !dataSource.isEmpty()) {
-            wrapper.eq(BizProduct::getSource, dataSource);
-        }
-        
-        wrapper.orderByDesc(BizProduct::getUpdatedAt);
+        wrapper.orderByDesc(BizProduct::getUpdatedAt, BizProduct::getId);
 
         Page<BizProduct> productPage = productMapper.selectPage(pageParam, wrapper);
+        List<ProductListVO> records = productPage.getRecords().stream().map(product -> {
+            ProductMetricSummary summary = loadMetricSummary(product.getId());
+            ProductListVO vo = new ProductListVO();
+            vo.setId(product.getId());
+            vo.setItemId(product.getItemId());
+            vo.setTitle(product.getTitle());
+            vo.setCategory(product.getCategory());
+            vo.setCostPrice(product.getCostPrice());
+            vo.setCurrentPrice(product.getCurrentPrice());
+            vo.setStock(product.getStock());
+            vo.setStatus(product.getStatus());
+            vo.setMonthlySales(summary.monthlySales());
+            vo.setConversionRate(summary.conversionRate());
+            vo.setUpdatedAt(product.getUpdatedAt());
+            return vo;
+        }).collect(Collectors.toList());
 
         Page<ProductListVO> resultPage = new Page<>();
         resultPage.setCurrent(productPage.getCurrent());
         resultPage.setSize(productPage.getSize());
         resultPage.setTotal(productPage.getTotal());
-
-        // 转换 Entity -> VO
-        List<ProductListVO> voList = productPage.getRecords().stream().map(p -> {
-            ProductListVO vo = new ProductListVO();
-            vo.setId(p.getId());
-            vo.setTitle(p.getTitle());
-            vo.setCategory(p.getCategory());
-            vo.setCostPrice(p.getCostPrice());
-            vo.setMarketPrice(p.getMarketPrice());
-            vo.setCurrentPrice(p.getCurrentPrice());
-            vo.setStock(p.getStock());
-            vo.setSource(p.getSource());
-            vo.setMonthlySales(p.getMonthlySales());
-            vo.setClickRate(p.getClickRate());
-            vo.setConversionRate(p.getConversionRate());
-            vo.setUpdatedAt(p.getUpdatedAt());
-            return vo;
-        }).collect(Collectors.toList());
-
-        resultPage.setRecords(voList);
+        resultPage.setRecords(records);
         return Result.success(resultPage);
     }
 
-    /**
-     * 下载商品导入模板，方便运营同学按统一格式准备数据。
-     */
     @Override
     public void downloadTemplate(HttpServletResponse response) {
         try {
@@ -325,41 +218,39 @@ public class ProductServiceImpl implements ProductService {
             String fileName = URLEncoder.encode("商品导入模板.xlsx", StandardCharsets.UTF_8).replaceAll("\\+", "%20");
             response.setHeader("Content-disposition", "attachment;filename*=utf-8''" + fileName);
 
-            // 创建示例数据
             ProductImportDTO demo = new ProductImportDTO();
-            demo.setTitle("示例商品 - 夏季 T 恤");
-            demo.setCategory("男装");
-            demo.setCostPrice(new BigDecimal("30.00"));
-            demo.setMarketPrice(new BigDecimal("99.00"));
-            demo.setCurrentPrice(new BigDecimal("59.00"));
-            demo.setStock(1000);
-            demo.setMonthlySales(500);
-            demo.setClickRateStr("5.5%");
-            demo.setConversionRateStr("1.2%");
-            demo.setDailySales(20);
-            demo.setDailyVisitors(200);
+            demo.setItemId(202603250001L);
+            demo.setTitle("示例商品 - 夏季防晒外套");
+            demo.setCategory("户外服饰");
+            demo.setCostPrice(new BigDecimal("68.00"));
+            demo.setCurrentPrice(new BigDecimal("139.00"));
+            demo.setStock(320);
+            demo.setMonthlySales(260);
+            demo.setConversionRateStr("4.2%");
+            demo.setDailySales(11);
+            demo.setDailyVisitors(260);
 
-            EasyExcel.write(response.getOutputStream(), ProductImportDTO.class).sheet("模板").doWrite(Arrays.asList(demo));
+            EasyExcel.write(response.getOutputStream(), ProductImportDTO.class)
+                    .sheet("模板")
+                    .doWrite(Arrays.asList(demo));
         } catch (IOException e) {
             log.error("下载模板失败", e);
             throw new RuntimeException("下载模板失败");
         }
     }
 
-    /**
-     * 批量删除商品。
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Result<Void> batchDelete(List<Long> ids) {
         if (ids == null || ids.isEmpty()) {
             return Result.error("请选择要删除的商品");
         }
-        
+
         try {
-            // 使用 MyBatis-Plus 的 deleteBatchIds 方法批量删除
-            int deletedCount = productMapper.deleteBatchIds(ids);
-            log.info("批量删除商品成功，删除数量：{}", deletedCount);
+            LambdaQueryWrapper<BizProductDailyStat> statWrapper = new LambdaQueryWrapper<>();
+            statWrapper.in(BizProductDailyStat::getProductId, ids);
+            statMapper.delete(statWrapper);
+            productMapper.deleteBatchIds(ids);
             return Result.success();
         } catch (Exception e) {
             log.error("批量删除商品失败", e);
@@ -367,216 +258,352 @@ public class ProductServiceImpl implements ProductService {
         }
     }
 
-    /**
-     * 查询商品经营趋势。
-     * 这个方法既返回图表序列，也会返回日/月销售量和日/月利润等卡片指标。
-     */
     @Override
-    public Result<com.example.pricing.vo.ProductTrendVO> getProductTrend(Long id, int days) {
-        // 1. Check if product exists
+    public Result<ProductTrendVO> getProductTrend(Long id, int days) {
         BizProduct product = productMapper.selectById(id);
         if (product == null) {
             return Result.error("商品不存在");
         }
-        
-        // 2. Query stats
-        java.time.LocalDate endDate = java.time.LocalDate.now();
-        java.time.LocalDate startDate = endDate.minusDays(days - 1);
-        
-        LambdaQueryWrapper<com.example.pricing.entity.BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(com.example.pricing.entity.BizProductDailyStat::getProductId, id);
-        wrapper.ge(com.example.pricing.entity.BizProductDailyStat::getStatDate, startDate);
-        wrapper.le(com.example.pricing.entity.BizProductDailyStat::getStatDate, endDate);
-        wrapper.orderByAsc(com.example.pricing.entity.BizProductDailyStat::getStatDate);
-        
-        List<com.example.pricing.entity.BizProductDailyStat> stats = statMapper.selectList(wrapper);
-        
-        // 先组装趋势图所需的基础序列：日期、销量、客单价等。
-        com.example.pricing.vo.ProductTrendVO vo = new com.example.pricing.vo.ProductTrendVO();
+
+        if (countMetrics(id) == 0) {
+            generateMockTrendData(id);
+        }
+
+        LocalDate endDate = LocalDate.now();
+        LocalDate startDate = endDate.minusDays(Math.max(days, 1) - 1L);
+        List<BizProductDailyStat> stats = listMetrics(id, startDate, endDate);
+
+        ProductTrendVO vo = new ProductTrendVO();
         List<String> dates = new ArrayList<>();
         List<Integer> visitors = new ArrayList<>();
         List<Integer> sales = new ArrayList<>();
         List<Double> conversionRates = new ArrayList<>();
-        List<Double> avgOrderValues = new ArrayList<>(); // Turnover / Sales
-        
-        for (com.example.pricing.entity.BizProductDailyStat stat : stats) {
+        List<Double> avgOrderValues = new ArrayList<>();
+
+        for (BizProductDailyStat stat : stats) {
             dates.add(stat.getStatDate().toString());
-            visitors.add(0);
-            sales.add(stat.getSalesCount() != null ? stat.getSalesCount() : 0);
-            conversionRates.add(0.0);
-            
-            if (stat.getSalesCount() > 0 && stat.getTurnover() != null) {
-                avgOrderValues.add(stat.getTurnover().divide(new BigDecimal(stat.getSalesCount()), 2, java.math.RoundingMode.HALF_UP).doubleValue());
+            int salesCount = defaultInteger(stat.getSalesCount());
+            int visitorCount = defaultInteger(stat.getVisitorCount());
+            BigDecimal turnover = defaultDecimal(stat.getTurnover());
+            BigDecimal conversionRate = stat.getConversionRate() == null
+                    ? calculateConversionRate(salesCount, visitorCount)
+                    : stat.getConversionRate();
+
+            visitors.add(visitorCount);
+            sales.add(salesCount);
+            conversionRates.add(conversionRate.doubleValue());
+            if (salesCount > 0) {
+                avgOrderValues.add(turnover.divide(BigDecimal.valueOf(salesCount), 2, RoundingMode.HALF_UP).doubleValue());
             } else {
                 avgOrderValues.add(0.0);
             }
         }
-        
+
         vo.setDates(dates);
         vo.setVisitors(visitors);
         vo.setSales(sales);
         vo.setConversionRates(conversionRates);
         vo.setAvgOrderValues(avgOrderValues);
-        
-        // 再计算卡片区展示的绝对值和增长值。
+
         if (!stats.isEmpty()) {
-            // 以最后一个有数据的自然日作为“当前日”口径。
-            com.example.pricing.entity.BizProductDailyStat lastStat = stats.get(stats.size() - 1);
-            java.time.LocalDate lastDate = lastStat.getStatDate();
-            
-            // 对比前一日，计算日环比。
-            com.example.pricing.entity.BizProductDailyStat prevDayStat = findStatByDate(id, lastDate.minusDays(1));
+            BizProductDailyStat lastStat = stats.get(stats.size() - 1);
+            BizProductDailyStat prevDayStat = findMetricByDate(id, lastStat.getStatDate().minusDays(1));
+            List<BizProductDailyStat> currentMonthStats = listMetrics(id, lastStat.getStatDate().minusDays(29), lastStat.getStatDate());
+            List<BizProductDailyStat> previousMonthStats = listMetrics(id, lastStat.getStatDate().minusDays(59), lastStat.getStatDate().minusDays(30));
 
-            // 使用最近 30 天和再往前 30 天两个窗口，计算月累计值和月环比。
-            List<com.example.pricing.entity.BizProductDailyStat> currentMonthStats =
-                    findStatsByRange(id, lastDate.minusDays(29), lastDate);
-            List<com.example.pricing.entity.BizProductDailyStat> previousMonthStats =
-                    findStatsByRange(id, lastDate.minusDays(59), lastDate.minusDays(30));
-
-            // 利润统一按“营业额 - 销量 * 成本价”口径计算。
-            BigDecimal costPrice = product.getCostPrice() != null ? product.getCostPrice() : BigDecimal.ZERO;
-
-            int currentDailySales = lastStat.getSalesCount() != null ? lastStat.getSalesCount() : 0;
-            int prevDaySales = prevDayStat != null && prevDayStat.getSalesCount() != null ? prevDayStat.getSalesCount() : 0;
+            int currentDailySales = defaultInteger(lastStat.getSalesCount());
+            int previousDailySales = prevDayStat == null ? 0 : defaultInteger(prevDayStat.getSalesCount());
             int currentMonthlySales = sumSales(currentMonthStats);
             int previousMonthlySales = sumSales(previousMonthStats);
 
-            BigDecimal currentDailyProfit = calculateProfit(lastStat, costPrice);
-            BigDecimal prevDayProfit = calculateProfit(prevDayStat, costPrice);
-            BigDecimal currentMonthlyProfit = sumProfit(currentMonthStats, costPrice);
-            BigDecimal previousMonthlyProfit = sumProfit(previousMonthStats, costPrice);
+            BigDecimal currentDailyProfit = calculateProfit(lastStat, product.getCostPrice());
+            BigDecimal previousDailyProfit = calculateProfit(prevDayStat, product.getCostPrice());
+            BigDecimal currentMonthlyProfit = sumProfit(currentMonthStats, product.getCostPrice());
+            BigDecimal previousMonthlyProfit = sumProfit(previousMonthStats, product.getCostPrice());
 
-            // 这四个字段是趋势弹窗顶部卡片直接展示的当前值。
             vo.setCurrentDailySales(currentDailySales);
             vo.setCurrentMonthlySales(currentMonthlySales);
             vo.setCurrentDailyProfit(currentDailyProfit.doubleValue());
             vo.setCurrentMonthlyProfit(currentMonthlyProfit.doubleValue());
 
-            // 日销量增长：当前日对比前一日。
-            vo.setDailySalesGrowth(currentDailySales - prevDaySales);
-            vo.setDailySalesGrowthRate(calculateGrowthRate(new BigDecimal(currentDailySales), new BigDecimal(prevDaySales)));
+            vo.setDailySalesGrowth(currentDailySales - previousDailySales);
+            vo.setDailySalesGrowthRate(calculateGrowthRate(BigDecimal.valueOf(currentDailySales), BigDecimal.valueOf(previousDailySales)));
 
-            // 月销量增长：最近 30 天对比前 30 天。
             vo.setMonthlySalesGrowth(currentMonthlySales - previousMonthlySales);
-            vo.setMonthlySalesGrowthRate(calculateGrowthRate(new BigDecimal(currentMonthlySales), new BigDecimal(previousMonthlySales)));
+            vo.setMonthlySalesGrowthRate(calculateGrowthRate(BigDecimal.valueOf(currentMonthlySales), BigDecimal.valueOf(previousMonthlySales)));
 
-            // 日利润增长：当前日利润对比前一日利润。
-            vo.setDailyProfitGrowth(currentDailyProfit.subtract(prevDayProfit).doubleValue());
-            vo.setDailyProfitGrowthRate(calculateGrowthRate(currentDailyProfit, prevDayProfit));
+            vo.setDailyProfitGrowth(currentDailyProfit.subtract(previousDailyProfit).doubleValue());
+            vo.setDailyProfitGrowthRate(calculateGrowthRate(currentDailyProfit, previousDailyProfit));
 
-            // 月利润增长：最近 30 天利润对比前 30 天利润。
             vo.setMonthlyProfitGrowth(currentMonthlyProfit.subtract(previousMonthlyProfit).doubleValue());
             vo.setMonthlyProfitGrowthRate(calculateGrowthRate(currentMonthlyProfit, previousMonthlyProfit));
         }
-        
+
         return Result.success(vo);
     }
 
-    /**
-     * 查询某个商品某一天的统计明细。
-     */
-    private com.example.pricing.entity.BizProductDailyStat findStatByDate(Long productId, java.time.LocalDate date) {
-        LambdaQueryWrapper<com.example.pricing.entity.BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(com.example.pricing.entity.BizProductDailyStat::getProductId, productId);
-        wrapper.eq(com.example.pricing.entity.BizProductDailyStat::getStatDate, date);
-        return statMapper.selectOne(wrapper);
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void generateMockTrendData(Long productId) {
+        BizProduct product = productMapper.selectById(productId);
+        if (product == null || countMetrics(productId) > 0) {
+            return;
+        }
+        seedRecentMetrics(product, 300, new BigDecimal("0.0450"), 30);
     }
 
-    /**
-     * 查询某个商品在指定日期区间内的统计明细。
-     */
-    private List<com.example.pricing.entity.BizProductDailyStat> findStatsByRange(
-            Long productId,
-            java.time.LocalDate startDate,
-            java.time.LocalDate endDate
+    private BizProduct findProductByTitle(Long shopId, String title) {
+        LambdaQueryWrapper<BizProduct> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizProduct::getShopId, shopId).eq(BizProduct::getTitle, title).last("LIMIT 1");
+        return productMapper.selectOne(wrapper);
+    }
+
+    private void upsertDailyMetric(
+            BizProduct product,
+            Integer dailySales,
+            Integer dailyVisitors,
+            BigDecimal conversionRate,
+            Long batchId,
+            LocalDate statDate
     ) {
-        LambdaQueryWrapper<com.example.pricing.entity.BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(com.example.pricing.entity.BizProductDailyStat::getProductId, productId);
-        wrapper.ge(com.example.pricing.entity.BizProductDailyStat::getStatDate, startDate);
-        wrapper.le(com.example.pricing.entity.BizProductDailyStat::getStatDate, endDate);
+        LambdaQueryWrapper<BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizProductDailyStat::getProductId, product.getId()).eq(BizProductDailyStat::getStatDate, statDate).last("LIMIT 1");
+        BizProductDailyStat stat = statMapper.selectOne(wrapper);
+        if (stat == null) {
+            stat = new BizProductDailyStat();
+            stat.setShopId(product.getShopId());
+            stat.setProductId(product.getId());
+            stat.setStatDate(statDate);
+        }
+
+        int salesCount = defaultInteger(dailySales);
+        int visitorCount = defaultInteger(dailyVisitors);
+        if (visitorCount == 0 && conversionRate.compareTo(BigDecimal.ZERO) > 0 && salesCount > 0) {
+            visitorCount = BigDecimal.valueOf(salesCount)
+                    .divide(conversionRate, 0, RoundingMode.UP)
+                    .intValue();
+        }
+
+        stat.setVisitorCount(visitorCount);
+        stat.setAddCartCount(Math.max(salesCount, (int) Math.round(visitorCount * 0.18)));
+        stat.setPayBuyerCount(Math.max(1, salesCount));
+        stat.setSalesCount(salesCount);
+        stat.setTurnover(product.getCurrentPrice().multiply(BigDecimal.valueOf(salesCount)).setScale(2, RoundingMode.HALF_UP));
+        stat.setRefundAmount(BigDecimal.ZERO);
+        stat.setConversionRate(conversionRate.compareTo(BigDecimal.ZERO) > 0
+                ? conversionRate.setScale(4, RoundingMode.HALF_UP)
+                : calculateConversionRate(salesCount, visitorCount));
+        stat.setUploadBatchId(batchId);
+
+        if (stat.getId() == null) {
+            statMapper.insert(stat);
+        } else {
+            statMapper.updateById(stat);
+        }
+    }
+
+    private void seedRecentMetricsIfAbsent(BizProduct product, int monthlySales, BigDecimal conversionRate) {
+        if (countMetrics(product.getId()) > 0) {
+            return;
+        }
+        seedRecentMetrics(product, monthlySales, conversionRate, 30);
+    }
+
+    private void seedRecentMetrics(BizProduct product, int monthlySales, BigDecimal conversionRate, int days) {
+        int safeMonthlySales = Math.max(monthlySales, 30);
+        BigDecimal safeConversionRate = conversionRate.compareTo(BigDecimal.ZERO) > 0
+                ? conversionRate
+                : new BigDecimal("0.0400");
+        LocalDate today = LocalDate.now();
+        Random random = new Random(product.getId());
+        double baseline = safeMonthlySales / (double) days;
+
+        for (int offset = days - 1; offset >= 0; offset--) {
+            LocalDate date = today.minusDays(offset);
+            LambdaQueryWrapper<BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
+            wrapper.eq(BizProductDailyStat::getProductId, product.getId()).eq(BizProductDailyStat::getStatDate, date).last("LIMIT 1");
+            if (statMapper.selectOne(wrapper) != null) {
+                continue;
+            }
+
+            int salesCount = Math.max(1, (int) Math.round(baseline + (offset % 7 - 3) * 0.35 + random.nextDouble() * 1.5));
+            int visitorCount = BigDecimal.valueOf(salesCount)
+                    .divide(safeConversionRate, 0, RoundingMode.UP)
+                    .intValue();
+
+            BizProductDailyStat stat = new BizProductDailyStat();
+            stat.setShopId(product.getShopId());
+            stat.setProductId(product.getId());
+            stat.setStatDate(date);
+            stat.setVisitorCount(visitorCount);
+            stat.setAddCartCount(Math.max(salesCount, (int) Math.round(visitorCount * 0.16)));
+            stat.setPayBuyerCount(Math.max(1, salesCount));
+            stat.setSalesCount(salesCount);
+            stat.setTurnover(product.getCurrentPrice().multiply(BigDecimal.valueOf(salesCount)).setScale(2, RoundingMode.HALF_UP));
+            stat.setRefundAmount(BigDecimal.ZERO);
+            stat.setConversionRate(safeConversionRate.setScale(4, RoundingMode.HALF_UP));
+            statMapper.insert(stat);
+        }
+    }
+
+    private ProductMetricSummary loadMetricSummary(Long productId) {
+        List<BizProductDailyStat> stats = listMetrics(productId, LocalDate.now().minusDays(29), LocalDate.now());
+        int monthlySales = sumSales(stats);
+        BigDecimal conversionRate = BigDecimal.ZERO;
+        int count = 0;
+        for (BizProductDailyStat stat : stats) {
+            BigDecimal value = stat.getConversionRate() == null
+                    ? calculateConversionRate(defaultInteger(stat.getSalesCount()), defaultInteger(stat.getVisitorCount()))
+                    : stat.getConversionRate();
+            if (value.compareTo(BigDecimal.ZERO) > 0) {
+                conversionRate = conversionRate.add(value);
+                count++;
+            }
+        }
+        if (count > 0) {
+            conversionRate = conversionRate.divide(BigDecimal.valueOf(count), 4, RoundingMode.HALF_UP);
+        }
+        return new ProductMetricSummary(monthlySales, conversionRate);
+    }
+
+    private List<BizProductDailyStat> listMetrics(Long productId, LocalDate startDate, LocalDate endDate) {
+        LambdaQueryWrapper<BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizProductDailyStat::getProductId, productId)
+                .ge(BizProductDailyStat::getStatDate, startDate)
+                .le(BizProductDailyStat::getStatDate, endDate)
+                .orderByAsc(BizProductDailyStat::getStatDate);
         return statMapper.selectList(wrapper);
     }
 
-    /**
-     * 汇总区间内总销量。
-     */
-    private int sumSales(List<com.example.pricing.entity.BizProductDailyStat> stats) {
+    private BizProductDailyStat findMetricByDate(Long productId, LocalDate statDate) {
+        LambdaQueryWrapper<BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizProductDailyStat::getProductId, productId).eq(BizProductDailyStat::getStatDate, statDate).last("LIMIT 1");
+        return statMapper.selectOne(wrapper);
+    }
+
+    private long countMetrics(Long productId) {
+        LambdaQueryWrapper<BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(BizProductDailyStat::getProductId, productId);
+        return statMapper.selectCount(wrapper);
+    }
+
+    private int sumSales(List<BizProductDailyStat> stats) {
         int total = 0;
-        for (com.example.pricing.entity.BizProductDailyStat stat : stats) {
-            total += stat.getSalesCount() != null ? stat.getSalesCount() : 0;
+        for (BizProductDailyStat stat : stats) {
+            total += defaultInteger(stat.getSalesCount());
         }
         return total;
     }
 
-    /**
-     * 汇总区间内总利润。
-     */
-    private BigDecimal sumProfit(List<com.example.pricing.entity.BizProductDailyStat> stats, BigDecimal costPrice) {
+    private BigDecimal sumProfit(List<BizProductDailyStat> stats, BigDecimal costPrice) {
         BigDecimal total = BigDecimal.ZERO;
-        for (com.example.pricing.entity.BizProductDailyStat stat : stats) {
+        for (BizProductDailyStat stat : stats) {
             total = total.add(calculateProfit(stat, costPrice));
         }
         return total;
     }
 
-    /**
-     * 计算增长率；前值为 0 时直接返回 0，避免除零。
-     */
+    private BigDecimal calculateProfit(BizProductDailyStat stat, BigDecimal costPrice) {
+        if (stat == null) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal turnover = defaultDecimal(stat.getTurnover());
+        BigDecimal cost = defaultDecimal(costPrice).multiply(BigDecimal.valueOf(defaultInteger(stat.getSalesCount())));
+        return turnover.subtract(cost).setScale(2, RoundingMode.HALF_UP);
+    }
+
     private Double calculateGrowthRate(BigDecimal current, BigDecimal previous) {
         if (previous == null || previous.compareTo(BigDecimal.ZERO) == 0) {
             return 0.0;
         }
         return current.subtract(previous)
-                .divide(previous, 4, java.math.RoundingMode.HALF_UP)
+                .divide(previous, 4, RoundingMode.HALF_UP)
                 .doubleValue();
     }
-    
-    /**
-     * 计算单条统计记录对应的利润。
-     */
-    private BigDecimal calculateProfit(com.example.pricing.entity.BizProductDailyStat stat, BigDecimal costPrice) {
-        if (stat == null) return BigDecimal.ZERO;
-        BigDecimal turnover = stat.getTurnover() != null ? stat.getTurnover() : BigDecimal.ZERO;
-        BigDecimal safeCostPrice = costPrice != null ? costPrice : BigDecimal.ZERO;
-        int salesCount = stat.getSalesCount() != null ? stat.getSalesCount() : 0;
-        BigDecimal cost = safeCostPrice.multiply(new BigDecimal(salesCount));
-        return turnover.subtract(cost);
+
+    private Long resolveDefaultShopId() {
+        LambdaQueryWrapper<Shop> wrapper = new LambdaQueryWrapper<>();
+        wrapper.orderByAsc(Shop::getId).last("LIMIT 1");
+        Shop shop = shopMapper.selectOne(wrapper);
+        if (shop == null) {
+            throw new IllegalStateException("未初始化默认店铺");
+        }
+        return shop.getId();
     }
 
-    /**
-     * 为没有真实趋势数据的商品生成演示用历史数据。
-     */
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void generateMockTrendData(Long productId) {
-        // 生成最近 90 天的模拟销量和营业额，用于演示趋势图。
-        java.time.LocalDate today = java.time.LocalDate.now();
-        java.util.Random random = new java.util.Random();
-
-        // 如果已经存在趋势数据，就不重复造数。
-        LambdaQueryWrapper<com.example.pricing.entity.BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(com.example.pricing.entity.BizProductDailyStat::getProductId, productId);
-        if (statMapper.selectCount(wrapper) > 0) return;
-        
-        for (int i = 90; i >= 0; i--) {
-            java.time.LocalDate date = today.minusDays(i);
-            
-            com.example.pricing.entity.BizProductDailyStat stat = new com.example.pricing.entity.BizProductDailyStat();
-            stat.setProductId(productId);
-            stat.setStatDate(date);
-            
-            int visitors = 500 + random.nextInt(1000); // 500-1500
-            double cr = 0.02 + random.nextDouble() * 0.05; // 2% - 7%
-            int sales = (int) (visitors * cr);
-            BigDecimal price = new BigDecimal(50 + random.nextInt(50)); // 50-100 price
-            BigDecimal turnover = price.multiply(new BigDecimal(sales));
-            
-            // Visitor data is not stored in the current table schema.
-            stat.setSalesCount(sales);
-            stat.setTurnover(turnover);
-            // Conversion rate is not stored in the current table schema.
-            
-            statMapper.insert(stat);
+    private Long resolveItemId(Long itemId) {
+        if (itemId != null && itemId > 0) {
+            return itemId;
         }
+        return System.currentTimeMillis();
+    }
+
+    private Integer safeMonthlySales(Integer monthlySales, Integer dailySales) {
+        if (monthlySales != null && monthlySales > 0) {
+            return monthlySales;
+        }
+        if (dailySales != null && dailySales > 0) {
+            return dailySales * 30;
+        }
+        return 120;
+    }
+
+    private BigDecimal resolveConversionRate(String conversionRateText, Integer dailySales, Integer dailyVisitors) {
+        BigDecimal parsed = parsePercentage(conversionRateText);
+        if (parsed.compareTo(BigDecimal.ZERO) > 0) {
+            return parsed;
+        }
+        return calculateConversionRate(defaultInteger(dailySales), defaultInteger(dailyVisitors));
+    }
+
+    private BigDecimal calculateConversionRate(int salesCount, int visitorCount) {
+        if (visitorCount <= 0 || salesCount <= 0) {
+            return BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP);
+        }
+        return BigDecimal.valueOf(salesCount)
+                .divide(BigDecimal.valueOf(visitorCount), 4, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal parsePercentage(String value) {
+        if (value == null || value.isBlank()) {
+            return BigDecimal.ZERO;
+        }
+        try {
+            String cleanValue = value.replace("%", "").trim();
+            BigDecimal numeric = new BigDecimal(cleanValue);
+            if (value.contains("%") || numeric.compareTo(BigDecimal.ONE) > 0) {
+                return numeric.divide(BigDecimal.valueOf(100), 4, RoundingMode.HALF_UP);
+            }
+            return numeric.setScale(4, RoundingMode.HALF_UP);
+        } catch (Exception e) {
+            log.warn("转化率解析失败：{}", value, e);
+            return BigDecimal.ZERO;
+        }
+    }
+
+    private BigDecimal defaultDecimal(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP) : value.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private Integer defaultInteger(Integer value) {
+        return value == null ? 0 : value;
+    }
+
+    private String trimToNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
+    }
+
+    private Long parseLongOrNull(String value) {
+        try {
+            return Long.parseLong(value);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private record ProductMetricSummary(Integer monthlySales, BigDecimal conversionRate) {
     }
 }

@@ -12,9 +12,13 @@ public class SysUser {
 
     private String username;
 
+    private String account;
+
     private String password;
 
     private String email;
+
+    private Integer status;
 
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

@@ -3,23 +3,28 @@
     <section class="panel-card archive-hero">
       <div class="section-title">
         <h2>决策档案</h2>
-        <p>集中查看智能定价任务、执行结论和协同日志，支持筛选、复盘、应用与驳回。</p>
+        <p>统一查看新的定价任务、执行结果和协同日志，页面完全基于 `pricing_task / pricing_result / agent_run_log` 数据结构。</p>
       </div>
       <div class="metric-grid compact-metrics">
         <article class="metric-card">
           <div class="metric-label">任务总数</div>
-          <div class="metric-value">{{ total }}</div>
-          <div class="metric-hint">当前筛选范围内的任务数量</div>
+          <div class="metric-value">{{ stats.total }}</div>
+          <div class="metric-hint">按当前时间范围统计</div>
         </article>
         <article class="metric-card">
           <div class="metric-label">已完成</div>
-          <div class="metric-value">{{ completedCount }}</div>
-          <div class="metric-hint">可查看报告并导出明细</div>
+          <div class="metric-value">{{ stats.completed }}</div>
+          <div class="metric-hint">可查看决策结果并导出报告</div>
         </article>
         <article class="metric-card">
           <div class="metric-label">执行中</div>
-          <div class="metric-value">{{ runningCount }}</div>
-          <div class="metric-hint">任务仍在等待 Agent 输出</div>
+          <div class="metric-value">{{ stats.running }}</div>
+          <div class="metric-hint">任务仍在处理</div>
+        </article>
+        <article class="metric-card">
+          <div class="metric-label">失败</div>
+          <div class="metric-value">{{ stats.failed }}</div>
+          <div class="metric-hint">需要排查数据或约束条件</div>
         </article>
       </div>
     </section>
@@ -28,7 +33,7 @@
       <div class="section-head">
         <div class="section-title">
           <h3>任务筛选</h3>
-          <p>按状态、目标策略和时间范围快速定位任务。</p>
+          <p>按状态和时间范围查询任务记录。</p>
         </div>
       </div>
 
@@ -36,15 +41,6 @@
         <el-select v-model="queryParams.status" clearable placeholder="任务状态">
           <el-option
             v-for="item in statusOptions"
-            :key="item.value"
-            :label="item.label"
-            :value="item.value"
-          />
-        </el-select>
-
-        <el-select v-model="queryParams.strategyType" clearable placeholder="策略目标">
-          <el-option
-            v-for="item in strategyOptions"
             :key="item.value"
             :label="item.label"
             :value="item.value"
@@ -72,7 +68,7 @@
       <div class="section-head">
         <div class="section-title">
           <h3>任务列表</h3>
-          <p>支持排序和分页，点击任务即可查看详细报告与 Agent 协同记录。</p>
+          <p>点击任务进入详情，查看结果报告、执行策略和 Agent 协同日志。</p>
         </div>
       </div>
 
@@ -83,23 +79,24 @@
         stripe
         @sort-change="handleSortChange"
       >
-        <el-table-column prop="id" label="任务 ID" width="92" />
-        <el-table-column prop="taskNo" label="任务编号" min-width="220" show-overflow-tooltip />
-        <el-table-column prop="productNames" label="涉及商品" min-width="240" show-overflow-tooltip />
-        <el-table-column prop="strategyType" label="策略目标" width="140">
-          <template #default="{ row }">
-            <el-tag effect="plain">{{ strategyMap[row.strategyType] || row.strategyType }}</el-tag>
-          </template>
+        <el-table-column prop="taskCode" label="任务编号" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="productTitle" label="商品名称" min-width="220" show-overflow-tooltip />
+        <el-table-column label="当前售价" width="120">
+          <template #default="{ row }">{{ formatCurrency(row.currentPrice) }}</template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="110">
+        <el-table-column label="最终建议价" width="120">
+          <template #default="{ row }">{{ formatCurrency(row.finalPrice) }}</template>
+        </el-table-column>
+        <el-table-column prop="executeStrategy" label="执行策略" width="140" show-overflow-tooltip />
+        <el-table-column prop="taskStatus" label="状态" width="110">
           <template #default="{ row }">
-            <el-tag :type="statusTypeMap[row.status]">{{ statusMap[row.status] || row.status }}</el-tag>
+            <el-tag :type="statusTypeMap[row.taskStatus] || 'info'">
+              {{ statusMap[row.taskStatus] || row.taskStatus || '-' }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="180" sortable="custom">
-          <template #default="{ row }">
-            {{ formatDateTime(row.createdAt) }}
-          </template>
+          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
         <el-table-column label="操作" fixed="right" width="110">
           <template #default="{ row }">
@@ -131,19 +128,19 @@
       <div v-if="currentTask" class="drawer-meta">
         <div class="drawer-meta-item">
           <span>任务编号</span>
-          <strong>{{ currentTask.taskNo }}</strong>
+          <strong>{{ currentTask.taskCode }}</strong>
         </div>
         <div class="drawer-meta-item">
-          <span>创建时间</span>
-          <strong>{{ formatDateTime(currentTask.createdAt) }}</strong>
+          <span>商品名称</span>
+          <strong>{{ currentTask.productTitle || '-' }}</strong>
         </div>
         <div class="drawer-meta-item">
-          <span>策略目标</span>
-          <strong>{{ strategyMap[currentTask.strategyType] || currentTask.strategyType }}</strong>
+          <span>建议区间</span>
+          <strong>{{ formatRange(currentTask.suggestedMinPrice, currentTask.suggestedMaxPrice) }}</strong>
         </div>
         <div class="drawer-meta-item">
           <span>任务状态</span>
-          <strong>{{ statusMap[currentTask.status] || currentTask.status }}</strong>
+          <strong>{{ statusMap[currentTask.taskStatus] || currentTask.taskStatus }}</strong>
         </div>
       </div>
 
@@ -153,7 +150,7 @@
             <el-button
               type="primary"
               plain
-              :disabled="!currentTask || currentTask.status !== 'COMPLETED'"
+              :disabled="!currentTask || currentTask.taskStatus !== 'COMPLETED'"
               @click="exportReport"
             >
               导出报告
@@ -163,19 +160,24 @@
           <div v-loading="detailLoading" class="report-layout">
             <section class="metric-grid compact-metrics">
               <article class="metric-card">
-                <div class="metric-label">建议商品数</div>
-                <div class="metric-value">{{ comparisonData.length }}</div>
-                <div class="metric-hint">参与本次价格建议的商品数量</div>
+                <div class="metric-label">建议售价</div>
+                <div class="metric-value">{{ formatCurrency(summaryRow?.suggestedPrice) }}</div>
+                <div class="metric-hint">结果表中的最终价格</div>
               </article>
               <article class="metric-card">
-                <div class="metric-label">平均折扣率</div>
-                <div class="metric-value">{{ averageDiscountRate }}</div>
-                <div class="metric-hint">综合结果的平均价格调整幅度</div>
+                <div class="metric-label">预期销量</div>
+                <div class="metric-value">{{ summaryRow?.expectedSales || 0 }}</div>
+                <div class="metric-hint">按当前策略估算</div>
               </article>
               <article class="metric-card">
-                <div class="metric-label">平均利润变化</div>
-                <div class="metric-value">{{ averageProfitDelta }}</div>
-                <div class="metric-hint">用于快速评估策略收益预期</div>
+                <div class="metric-label">预期利润</div>
+                <div class="metric-value">{{ formatCurrency(summaryRow?.expectedProfit) }}</div>
+                <div class="metric-hint">基于建议售价测算</div>
+              </article>
+              <article class="metric-card">
+                <div class="metric-label">利润变化</div>
+                <div class="metric-value">{{ formatSignedCurrency(summaryRow?.profitChange) }}</div>
+                <div class="metric-hint">相对基线利润的变化</div>
               </article>
             </section>
 
@@ -183,42 +185,48 @@
               <el-table :data="comparisonData" border stripe>
                 <el-table-column prop="productTitle" label="商品名称" min-width="180" show-overflow-tooltip />
                 <el-table-column label="原价" width="120">
-                  <template #default="{ row }">
-                    {{ formatCurrency(row.originalPrice) }}
-                  </template>
+                  <template #default="{ row }">{{ formatCurrency(row.originalPrice) }}</template>
                 </el-table-column>
                 <el-table-column label="建议价" width="120">
                   <template #default="{ row }">
-                    {{ formatCurrency(row.suggestedPrice) }}
+                    <span class="price-text">{{ formatCurrency(row.suggestedPrice) }}</span>
                   </template>
                 </el-table-column>
-                <el-table-column label="利润变化" min-width="140">
+                <el-table-column label="预期销量" width="110">
+                  <template #default="{ row }">{{ row.expectedSales || 0 }}</template>
+                </el-table-column>
+                <el-table-column label="预期利润" width="120">
+                  <template #default="{ row }">{{ formatCurrency(row.expectedProfit) }}</template>
+                </el-table-column>
+                <el-table-column label="利润变化" width="120">
                   <template #default="{ row }">
-                    <span :class="Number(row.profitChange || 0) >= 0 ? 'up' : 'down'">
-                      {{ formatCurrency(Number(row.profitChange || 0)) }}
-                    </span>
+                    <el-tag :type="Number(row.profitChange || 0) >= 0 ? 'success' : 'danger'">
+                      {{ formatSignedCurrency(row.profitChange) }}
+                    </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="折扣率" width="110">
+                <el-table-column prop="passStatus" label="风控结果" width="110" />
+                <el-table-column prop="executeStrategy" label="执行策略" width="120" />
+                <el-table-column label="应用状态" width="110">
                   <template #default="{ row }">
-                    {{ formatPercent(row.discountRate) }}
+                    <el-tag :type="row.appliedStatus === '已应用' ? 'success' : 'info'">
+                      {{ row.appliedStatus || '未应用' }}
+                    </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="采纳状态" width="120">
+                <el-table-column prop="resultSummary" label="结果说明" min-width="320" show-overflow-tooltip />
+                <el-table-column label="操作" width="120" fixed="right">
                   <template #default="{ row }">
-                    <el-tag v-if="row.adoptStatus === 'ADOPTED'" type="success">已应用</el-tag>
-                    <el-tag v-else-if="row.adoptStatus === 'REJECTED'" type="danger">已驳回</el-tag>
-                    <el-tag v-else type="info">待处理</el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column label="操作" fixed="right" width="150">
-                  <template #default="{ row }">
-                    <div v-if="!row.adoptStatus || row.adoptStatus === 'PENDING'" class="inline-actions">
-                      <el-button link type="primary" @click="applyPrice(row)">应用</el-button>
-                      <el-button link type="danger" @click="openRejectDialog(row)">驳回</el-button>
-                    </div>
-                    <span v-else-if="row.adoptStatus === 'REJECTED'">{{ row.rejectReason || '已驳回' }}</span>
-                    <span v-else>已应用</span>
+                    <el-tag v-if="row.appliedStatus === '已应用'" type="success">已应用</el-tag>
+                    <el-button
+                      v-else
+                      type="primary"
+                      link
+                      :loading="applyingResultIds.includes(Number(row.resultId))"
+                      @click="applyPrice(row)"
+                    >
+                      应用建议
+                    </el-button>
                   </template>
                 </el-table-column>
               </el-table>
@@ -228,70 +236,77 @@
               <div class="section-head">
                 <div class="section-title">
                   <h3>价格对比</h3>
-                  <p>直观对比原始价格和建议价格，辅助判断调整区间。</p>
+                  <p>对比任务原价与最终建议价。</p>
                 </div>
               </div>
-              <div ref="chartRef" class="comparison-chart"></div>
+              <div v-if="comparisonData.length > 0" ref="chartRef" class="comparison-chart"></div>
+              <el-empty v-else description="暂无结果数据" />
             </section>
           </div>
         </el-tab-pane>
 
         <el-tab-pane label="协同日志" name="logs">
           <div class="logs-panel">
-            <article v-for="log in agentLogs" :key="log.id" class="log-card">
+            <article v-for="log in orderedLogs" :key="log.id" class="log-card">
               <div class="log-head">
-                <strong>{{ log.roleName || log.agentRole || 'Agent' }}</strong>
+                <div class="log-title">
+                  <strong>{{ log.agentName || log.agentCode || 'Agent' }}</strong>
+                  <el-tag size="small" :type="log.runStatus === 'SUCCESS' ? 'success' : 'warning'">
+                    {{ log.runStatus || '-' }}
+                  </el-tag>
+                </div>
                 <span>{{ formatDateTime(log.createdAt) }}</span>
               </div>
-              <div class="log-body" v-html="formatContent(log.thoughtContent)"></div>
+              <div class="log-body" v-html="formatContent(log.outputSummary)"></div>
+              <div class="log-meta">
+                <span>建议价：{{ formatCurrency(log.suggestedPrice) }}</span>
+                <span>预估利润：{{ formatCurrency(log.predictedProfit) }}</span>
+                <span>置信度：{{ formatPercent(log.confidenceScore) }}</span>
+                <span>风险等级：{{ log.riskLevel || '-' }}</span>
+                <span>人工复核：{{ log.needManualReview ? '需要' : '否' }}</span>
+              </div>
             </article>
-            <el-empty v-if="agentLogs.length === 0" description="暂无协同日志" />
+            <el-empty v-if="orderedLogs.length === 0" description="暂无协同日志" />
           </div>
         </el-tab-pane>
       </el-tabs>
     </el-drawer>
-
-    <el-dialog v-model="rejectDialogVisible" title="驳回建议" width="420px">
-      <el-form label-position="top">
-        <el-form-item label="驳回原因">
-          <el-input
-            v-model="rejectReason"
-            type="textarea"
-            :rows="4"
-            placeholder="请输入驳回该价格建议的原因"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="rejectDialogVisible = false">取消</el-button>
-        <el-button type="danger" @click="submitReject">确认驳回</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
-import request from '../api/request'
+import {
+  applyDecision,
+  getTaskComparison,
+  getTaskList,
+  getTaskLogs,
+  getTaskStats,
+  type DecisionComparisonItem,
+  type DecisionLogItem,
+  type DecisionTaskItem,
+  type DecisionTaskStats
+} from '../api/decision'
 
-const dateRange = ref<string[]>([])
 const loading = ref(false)
-const tasks = ref<any[]>([])
-const total = ref(0)
-
+const detailLoading = ref(false)
 const drawerVisible = ref(false)
 const activeTab = ref('comparison')
-const currentTask = ref<any>(null)
-const detailLoading = ref(false)
-const comparisonData = ref<any[]>([])
-const originalResults = ref<any[]>([])
-const agentLogs = ref<any[]>([])
-
-const rejectDialogVisible = ref(false)
-const rejectReason = ref('')
-const currentRejectRow = ref<any>(null)
+const total = ref(0)
+const tasks = ref<DecisionTaskItem[]>([])
+const comparisonData = ref<DecisionComparisonItem[]>([])
+const agentLogs = ref<DecisionLogItem[]>([])
+const currentTask = ref<DecisionTaskItem | null>(null)
+const dateRange = ref<string[]>([])
+const applyingResultIds = ref<number[]>([])
+const stats = ref<DecisionTaskStats>({
+  total: 0,
+  completed: 0,
+  running: 0,
+  failed: 0
+})
 
 const chartRef = ref<HTMLElement | null>(null)
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1440)
@@ -301,24 +316,13 @@ const queryParams = reactive({
   page: 1,
   size: 10,
   status: '',
-  strategyType: '',
   startTime: '',
   endTime: '',
-  sortOrder: 'desc'
+  sortOrder: 'desc' as 'asc' | 'desc'
 })
 
-const strategyMap: Record<string, string> = {
-  CLEARANCE: '清仓促销',
-  MAX_PROFIT: '利润优先',
-  MARKET_SHARE: '市场份额优先',
-  销量最大化: '清仓促销',
-  清仓大甩卖: '清仓促销',
-  利润最大化: '利润优先',
-  市场份额优先: '市场份额优先'
-}
-
 const statusMap: Record<string, string> = {
-  PENDING: '等待中',
+  PENDING: '待执行',
   RUNNING: '执行中',
   COMPLETED: '已完成',
   FAILED: '失败'
@@ -337,27 +341,11 @@ const statusOptions = [
   { label: '失败', value: 'FAILED' }
 ]
 
-const strategyOptions = [
-  { label: '利润优先', value: 'MAX_PROFIT' },
-  { label: '清仓促销', value: 'CLEARANCE' },
-  { label: '市场份额优先', value: 'MARKET_SHARE' }
-]
-
-const completedCount = ref(0)
-const runningCount = ref(0)
 const drawerSize = computed(() => (viewportWidth.value < 900 ? '100%' : '78%'))
-
-const averageDiscountRate = computed(() => {
-  if (!comparisonData.value.length) return '--'
-  const totalRate = comparisonData.value.reduce((sum, item) => sum + Number(item.discountRate || 0), 0)
-  return `${((totalRate / comparisonData.value.length) * 100).toFixed(1)}%`
-})
-
-const averageProfitDelta = computed(() => {
-  if (!comparisonData.value.length) return '--'
-  const delta = comparisonData.value.reduce((sum, item) => sum + Number(item.profitChange || 0), 0)
-  return formatCurrency(delta / comparisonData.value.length)
-})
+const summaryRow = computed(() => comparisonData.value[0] || null)
+const orderedLogs = computed(() =>
+  [...agentLogs.value].sort((a, b) => Number(a.runOrder || 0) - Number(b.runOrder || 0))
+)
 
 const formatDateTime = (dateStr?: string) => {
   if (!dateStr) return '-'
@@ -371,11 +359,14 @@ const formatDateTime = (dateStr?: string) => {
   return `${year}-${month}-${day} ${hour}:${minute}`
 }
 
-const formatCurrency = (value: number | string) => `¥${Number(value || 0).toFixed(2)}`
-
-const formatPercent = (value: number | string) => `${(Number(value || 0) * 100).toFixed(0)}%`
-
-const formatContent = (text?: string) => (text ? text.replace(/=/g, '：').replace(/\n/g, '<br>') : '')
+const formatCurrency = (value?: number | string | null) => `￥${Number(value || 0).toFixed(2)}`
+const formatPercent = (value?: number | string | null) => `${(Number(value || 0) * 100).toFixed(0)}%`
+const formatSignedCurrency = (value?: number | string | null) => {
+  const numeric = Number(value || 0)
+  return `${numeric >= 0 ? '+' : '-'}￥${Math.abs(numeric).toFixed(2)}`
+}
+const formatRange = (min?: number | null, max?: number | null) => `${formatCurrency(min)} - ${formatCurrency(max)}`
+const formatContent = (text?: string) => (text ? String(text).replace(/\n/g, '<br>') : '-')
 
 const handleSearch = () => {
   queryParams.page = 1
@@ -385,7 +376,6 @@ const handleSearch = () => {
 const resetFilters = () => {
   queryParams.page = 1
   queryParams.status = ''
-  queryParams.strategyType = ''
   queryParams.startTime = ''
   queryParams.endTime = ''
   queryParams.sortOrder = 'desc'
@@ -397,10 +387,10 @@ const handleDateChange = (value?: string[]) => {
   if (value && value.length === 2) {
     queryParams.startTime = value[0]
     queryParams.endTime = value[1]
-  } else {
-    queryParams.startTime = ''
-    queryParams.endTime = ''
+    return
   }
+  queryParams.startTime = ''
+  queryParams.endTime = ''
 }
 
 const handleSortChange = ({ prop, order }: { prop: string; order: string | null }) => {
@@ -412,14 +402,21 @@ const handleSortChange = ({ prop, order }: { prop: string; order: string | null 
 const fetchTasks = async () => {
   loading.value = true
   try {
-    const res: any = await request.get('/decision/tasks', { params: queryParams })
-    if (res.code === 200) {
-      tasks.value = res.data.records || []
-      total.value = res.data.total || 0
-      await fetchTaskStats()
+    const res: any = await getTaskList({
+      page: queryParams.page,
+      size: queryParams.size,
+      status: queryParams.status || undefined,
+      startTime: queryParams.startTime || undefined,
+      endTime: queryParams.endTime || undefined,
+      sortOrder: queryParams.sortOrder
+    })
+    if (res.code !== 200) {
+      ElMessage.error(res.message || '获取任务列表失败')
       return
     }
-    ElMessage.error(res.message || '获取任务列表失败')
+    tasks.value = res.data?.records || []
+    total.value = Number(res.data?.total || 0)
+    await fetchStats()
   } catch {
     ElMessage.error('获取任务列表失败')
   } finally {
@@ -427,25 +424,33 @@ const fetchTasks = async () => {
   }
 }
 
-const fetchTaskStats = async () => {
+const fetchStats = async () => {
   try {
-    const params = {
-      strategyType: queryParams.strategyType,
-      startTime: queryParams.startTime,
-      endTime: queryParams.endTime
-    }
-    const res: any = await request.get('/decision/tasks/stats', { params })
+    const res: any = await getTaskStats({
+      startTime: queryParams.startTime || undefined,
+      endTime: queryParams.endTime || undefined
+    })
     if (res.code === 200) {
-      completedCount.value = Number(res.data?.completed || 0)
-      runningCount.value = Number(res.data?.running || 0)
+      stats.value = {
+        total: Number(res.data?.total || 0),
+        completed: Number(res.data?.completed || 0),
+        running: Number(res.data?.running || 0),
+        failed: Number(res.data?.failed || 0)
+      }
+      return
     }
   } catch {
-    completedCount.value = tasks.value.filter((item) => item.status === 'COMPLETED').length
-    runningCount.value = tasks.value.filter((item) => item.status === 'RUNNING').length
+  }
+
+  stats.value = {
+    total: total.value,
+    completed: tasks.value.filter((item) => item.taskStatus === 'COMPLETED').length,
+    running: tasks.value.filter((item) => item.taskStatus === 'RUNNING').length,
+    failed: tasks.value.filter((item) => item.taskStatus === 'FAILED').length
   }
 }
 
-const viewDetails = async (row: any) => {
+const viewDetails = async (row: DecisionTaskItem) => {
   currentTask.value = row
   drawerVisible.value = true
   activeTab.value = 'comparison'
@@ -456,22 +461,14 @@ const fetchComparison = async () => {
   if (!currentTask.value) return
   detailLoading.value = true
   try {
-    const [comparisonRes, resultRes] = await Promise.all([
-      request.get(`/decision/comparison/${currentTask.value.id}`),
-      request.get(`/decision/result/${currentTask.value.id}`)
-    ])
-
-    if (comparisonRes.code === 200) {
-      comparisonData.value = comparisonRes.data || []
-      await nextTick()
-      renderChart()
-    } else {
-      ElMessage.error(comparisonRes.message || '获取结果报告失败')
+    const res: any = await getTaskComparison(currentTask.value.id)
+    if (res.code !== 200) {
+      ElMessage.error(res.message || '获取结果报告失败')
+      return
     }
-
-    if (resultRes.code === 200) {
-      originalResults.value = resultRes.data || []
-    }
+    comparisonData.value = res.data || []
+    await nextTick()
+    renderChart()
   } catch {
     ElMessage.error('获取结果报告失败')
   } finally {
@@ -482,24 +479,20 @@ const fetchComparison = async () => {
 const fetchLogs = async () => {
   if (!currentTask.value) return
   try {
-    const res: any = await request.get(`/decision/logs/${currentTask.value.id}`)
+    const res: any = await getTaskLogs(currentTask.value.id)
     if (res.code === 200) {
       agentLogs.value = res.data || []
+      return
     }
   } catch {
-    agentLogs.value = []
   }
+  agentLogs.value = []
 }
 
-const getResultId = (productId: number) => {
-  const result = originalResults.value.find((item) => Number(item.productId) === Number(productId))
-  return result ? result.id : null
-}
-
-const applyPrice = async (row: any) => {
-  const resultId = Number(row.resultId || getResultId(row.productId))
+const applyPrice = async (row: DecisionComparisonItem) => {
+  const resultId = Number(row.resultId || 0)
   if (!resultId) {
-    ElMessage.error('未找到对应结果记录')
+    ElMessage.error('未找到可应用的结果记录')
     return
   }
 
@@ -514,46 +507,22 @@ const applyPrice = async (row: any) => {
       }
     )
 
-    const res: any = await request.post(`/decision/apply/${resultId}`)
-    if (res.code === 200) {
-      ElMessage.success('价格建议已应用')
-      await fetchComparison()
+    applyingResultIds.value.push(resultId)
+    const res: any = await applyDecision(resultId)
+    if (res.code !== 200) {
+      ElMessage.error(res.message || '应用失败')
       return
     }
-    ElMessage.error(res.message || '应用失败')
+
+    ElMessage.success('价格建议已应用')
+    await fetchComparison()
+    await fetchTasks()
   } catch (error: any) {
     if (error !== 'cancel') {
       ElMessage.error('应用失败')
     }
-  }
-}
-
-const openRejectDialog = (row: any) => {
-  currentRejectRow.value = row
-  rejectReason.value = ''
-  rejectDialogVisible.value = true
-}
-
-const submitReject = async () => {
-  if (!currentRejectRow.value) return
-
-  const resultId = Number(currentRejectRow.value.resultId || getResultId(currentRejectRow.value.productId))
-  if (!resultId) {
-    ElMessage.error('未找到对应结果记录')
-    return
-  }
-
-  try {
-    const res: any = await request.post(`/decision/reject/${resultId}`, { reason: rejectReason.value })
-    if (res.code === 200) {
-      ElMessage.success('价格建议已驳回')
-      rejectDialogVisible.value = false
-      await fetchComparison()
-      return
-    }
-    ElMessage.error(res.message || '驳回失败')
-  } catch {
-    ElMessage.error('驳回失败')
+  } finally {
+    applyingResultIds.value = applyingResultIds.value.filter((id) => id !== resultId)
   }
 }
 
@@ -563,11 +532,14 @@ const exportReport = () => {
 }
 
 const renderChart = () => {
-  if (!chartRef.value || !comparisonData.value.length) return
+  if (!chartRef.value) return
 
   if (chartInstance) {
     chartInstance.dispose()
+    chartInstance = null
   }
+
+  if (comparisonData.value.length === 0) return
 
   chartInstance = echarts.init(chartRef.value)
   chartInstance.setOption({
@@ -596,7 +568,7 @@ const renderChart = () => {
       type: 'category',
       data: comparisonData.value.map((item) => item.productTitle),
       axisLabel: {
-        width: 120,
+        width: 140,
         overflow: 'truncate'
       }
     },
@@ -624,6 +596,17 @@ const handleResize = () => {
   }
 }
 
+watch(drawerVisible, (visible) => {
+  if (visible) return
+  currentTask.value = null
+  comparisonData.value = []
+  agentLogs.value = []
+  if (chartInstance) {
+    chartInstance.dispose()
+    chartInstance = null
+  }
+})
+
 onMounted(() => {
   fetchTasks()
   window.addEventListener('resize', handleResize)
@@ -643,7 +626,7 @@ onBeforeUnmount(() => {
 }
 
 .compact-metrics {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .archive-hero {
@@ -673,10 +656,6 @@ onBeforeUnmount(() => {
   font-size: 34px;
 }
 
-.archive-hero .metric-hint {
-  display: none;
-}
-
 .filter-panel {
   padding: 12px 14px;
 }
@@ -685,13 +664,9 @@ onBeforeUnmount(() => {
   margin-bottom: 8px;
 }
 
-.filter-panel .section-title p {
-  display: none;
-}
-
 .filter-grid {
   display: grid;
-  grid-template-columns: 180px 200px minmax(280px, 1fr) auto;
+  grid-template-columns: 180px minmax(320px, 1fr) auto;
   align-items: center;
   gap: 10px;
 }
@@ -776,30 +751,38 @@ onBeforeUnmount(() => {
   color: var(--text-secondary);
 }
 
+.log-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .log-body {
   color: var(--text-primary);
   line-height: 1.8;
 }
 
-.inline-actions {
+.log-meta {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+  color: var(--text-3);
+  font-size: 12px;
 }
 
-.up {
-  color: #15803d;
-  font-weight: 600;
-}
-
-.down {
-  color: #b91c1c;
-  font-weight: 600;
+.price-text {
+  font-weight: 700;
+  color: var(--accent);
 }
 
 @media (max-width: 1200px) {
-  .filter-grid,
-  .drawer-meta,
-  .compact-metrics {
+  .compact-metrics,
+  .drawer-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filter-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -809,9 +792,9 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
-  .filter-grid,
+  .compact-metrics,
   .drawer-meta,
-  .compact-metrics {
+  .filter-grid {
     grid-template-columns: 1fr;
   }
 
@@ -821,6 +804,10 @@ onBeforeUnmount(() => {
 
   .drawer-actions :deep(.el-button) {
     width: 100%;
+  }
+
+  .log-head {
+    flex-direction: column;
   }
 }
 </style>
