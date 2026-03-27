@@ -1,21 +1,17 @@
 package com.example.pricing.service.impl;
 
-import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.pricing.common.Result;
-import com.example.pricing.dto.ProductImportDTO;
 import com.example.pricing.dto.ProductManualDTO;
 import com.example.pricing.entity.BizProduct;
 import com.example.pricing.entity.BizProductDailyStat;
 import com.example.pricing.entity.Shop;
-import com.example.pricing.entity.SysImportBatch;
-import com.example.pricing.listener.ProductImportListener;
 import com.example.pricing.mapper.BizProductDailyStatMapper;
 import com.example.pricing.mapper.BizProductMapper;
 import com.example.pricing.mapper.ShopMapper;
-import com.example.pricing.mapper.SysImportBatchMapper;
 import com.example.pricing.service.ProductService;
+import com.example.pricing.vo.ImportResultVO;
 import com.example.pricing.vo.ProductListVO;
 import com.example.pricing.vo.ProductTrendVO;
 import jakarta.servlet.http.HttpServletResponse;
@@ -25,17 +21,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -44,96 +35,17 @@ import java.util.stream.Collectors;
 public class ProductServiceImpl implements ProductService {
 
     private final BizProductMapper productMapper;
-    private final SysImportBatchMapper batchMapper;
     private final BizProductDailyStatMapper statMapper;
     private final ShopMapper shopMapper;
+    private final TaobaoExcelImportService taobaoExcelImportService;
 
     @Override
-    public Result<String> importData(MultipartFile file) {
-        if (file == null || file.isEmpty()) {
-            return Result.error("文件不能为空");
-        }
-
-        String fileName = file.getOriginalFilename();
-        if (fileName == null || !fileName.matches(".*\\.(xlsx|xls)$")) {
-            return Result.error("只支持 Excel 文件格式 (.xls/.xlsx)");
-        }
-        if (file.getSize() > 10 * 1024 * 1024) {
-            return Result.error("文件大小不能超过 10MB");
-        }
-
-        Long shopId = resolveDefaultShopId();
-        SysImportBatch batch = new SysImportBatch();
-        batch.setShopId(shopId);
-        batch.setBatchNo("BATCH-" + UUID.randomUUID());
-        batch.setFileName(fileName);
-        batch.setDataType("PRODUCT");
-        batch.setRowCount(0);
-        batch.setSuccessCount(0);
-        batch.setFailCount(0);
-        batch.setUploadStatus("PROCESSING");
-        batchMapper.insert(batch);
-
-        ProductImportListener listener = new ProductImportListener(this, batch.getId());
+    public Result<ImportResultVO> importData(MultipartFile file, String dataType) {
         try {
-            EasyExcel.read(file.getInputStream(), ProductImportDTO.class, listener).sheet().doRead();
-        } catch (IOException e) {
-            log.error("Excel读取异常", e);
-            batch.setUploadStatus("FAILED");
-            batchMapper.updateById(batch);
-            return Result.error("Excel读取失败: " + e.getMessage());
-        }
-
-        batch.setRowCount(listener.getSuccessCount() + listener.getFailCount());
-        batch.setSuccessCount(listener.getSuccessCount());
-        batch.setFailCount(listener.getFailCount());
-        if (listener.getSuccessCount() > 0 && listener.getFailCount() > 0) {
-            batch.setUploadStatus("PARTIAL_SUCCESS");
-        } else if (listener.getSuccessCount() > 0) {
-            batch.setUploadStatus("SUCCESS");
-        } else {
-            batch.setUploadStatus("FAILED");
-        }
-        batchMapper.updateById(batch);
-
-        return Result.success("导入完成: 成功 " + listener.getSuccessCount() + " 行, 失败 " + listener.getFailCount() + " 行");
-    }
-
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void saveImportedProduct(ProductImportDTO dto, Long batchId) {
-        Long shopId = resolveDefaultShopId();
-        BizProduct product = findProductByTitle(shopId, dto.getTitle());
-        if (product == null) {
-            product = new BizProduct();
-            product.setShopId(shopId);
-            product.setItemId(resolveItemId(dto.getItemId()));
-            product.setStatus("ON_SALE");
-            product.setTitle(dto.getTitle());
-            product.setCategory(trimToNull(dto.getCategory()));
-            product.setCostPrice(defaultDecimal(dto.getCostPrice()));
-            product.setCurrentPrice(defaultDecimal(dto.getCurrentPrice()));
-            product.setStock(defaultInteger(dto.getStock()));
-            productMapper.insert(product);
-        } else {
-            product.setCategory(trimToNull(dto.getCategory()));
-            if (dto.getCostPrice() != null) {
-                product.setCostPrice(dto.getCostPrice());
-            }
-            if (dto.getCurrentPrice() != null) {
-                product.setCurrentPrice(dto.getCurrentPrice());
-            }
-            if (dto.getStock() != null) {
-                product.setStock(dto.getStock());
-            }
-            productMapper.updateById(product);
-        }
-
-        int monthlySales = safeMonthlySales(dto.getMonthlySales(), dto.getDailySales());
-        BigDecimal conversionRate = resolveConversionRate(dto.getConversionRateStr(), dto.getDailySales(), dto.getDailyVisitors());
-        seedRecentMetricsIfAbsent(product, monthlySales, conversionRate);
-        if (dto.getDailySales() != null || dto.getDailyVisitors() != null) {
-            upsertDailyMetric(product, dto.getDailySales(), dto.getDailyVisitors(), conversionRate, batchId, LocalDate.now());
+            return Result.success(taobaoExcelImportService.importExcel(file, dataType));
+        } catch (Exception e) {
+            log.error("Import excel failed", e);
+            return Result.error(e.getMessage());
         }
     }
 
@@ -160,7 +72,7 @@ public class ProductServiceImpl implements ProductService {
         product.setStatus(dto.getStatus() == null || dto.getStatus().isBlank() ? "ON_SALE" : dto.getStatus().trim());
         productMapper.insert(product);
 
-        seedRecentMetricsIfAbsent(product, safeMonthlySales(dto.getMonthlySales(), null), defaultDecimal(dto.getConversionRate()));
+        seedRecentMetricsIfAbsent(product, safeMonthlySales(dto.getMonthlySales()), defaultDecimal(dto.getConversionRate()));
         return Result.success();
     }
 
@@ -211,32 +123,8 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
-    public void downloadTemplate(HttpServletResponse response) {
-        try {
-            response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-            response.setCharacterEncoding("utf-8");
-            String fileName = URLEncoder.encode("商品导入模板.xlsx", StandardCharsets.UTF_8).replaceAll("\\+", "%20");
-            response.setHeader("Content-disposition", "attachment;filename*=utf-8''" + fileName);
-
-            ProductImportDTO demo = new ProductImportDTO();
-            demo.setItemId(202603250001L);
-            demo.setTitle("示例商品 - 夏季防晒外套");
-            demo.setCategory("户外服饰");
-            demo.setCostPrice(new BigDecimal("68.00"));
-            demo.setCurrentPrice(new BigDecimal("139.00"));
-            demo.setStock(320);
-            demo.setMonthlySales(260);
-            demo.setConversionRateStr("4.2%");
-            demo.setDailySales(11);
-            demo.setDailyVisitors(260);
-
-            EasyExcel.write(response.getOutputStream(), ProductImportDTO.class)
-                    .sheet("模板")
-                    .doWrite(Arrays.asList(demo));
-        } catch (IOException e) {
-            log.error("下载模板失败", e);
-            throw new RuntimeException("下载模板失败");
-        }
+    public void downloadTemplate(String dataType, HttpServletResponse response) {
+        taobaoExcelImportService.downloadTemplate(dataType, response);
     }
 
     @Override
@@ -253,8 +141,8 @@ public class ProductServiceImpl implements ProductService {
             productMapper.deleteBatchIds(ids);
             return Result.success();
         } catch (Exception e) {
-            log.error("批量删除商品失败", e);
-            return Result.error("批量删除失败：" + e.getMessage());
+            log.error("Batch delete products failed", e);
+            return Result.error("批量删除失败: " + e.getMessage());
         }
     }
 
@@ -354,52 +242,10 @@ public class ProductServiceImpl implements ProductService {
 
     private BizProduct findProductByTitle(Long shopId, String title) {
         LambdaQueryWrapper<BizProduct> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(BizProduct::getShopId, shopId).eq(BizProduct::getTitle, title).last("LIMIT 1");
+        wrapper.eq(BizProduct::getShopId, shopId)
+                .eq(BizProduct::getTitle, title)
+                .last("LIMIT 1");
         return productMapper.selectOne(wrapper);
-    }
-
-    private void upsertDailyMetric(
-            BizProduct product,
-            Integer dailySales,
-            Integer dailyVisitors,
-            BigDecimal conversionRate,
-            Long batchId,
-            LocalDate statDate
-    ) {
-        LambdaQueryWrapper<BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(BizProductDailyStat::getProductId, product.getId()).eq(BizProductDailyStat::getStatDate, statDate).last("LIMIT 1");
-        BizProductDailyStat stat = statMapper.selectOne(wrapper);
-        if (stat == null) {
-            stat = new BizProductDailyStat();
-            stat.setShopId(product.getShopId());
-            stat.setProductId(product.getId());
-            stat.setStatDate(statDate);
-        }
-
-        int salesCount = defaultInteger(dailySales);
-        int visitorCount = defaultInteger(dailyVisitors);
-        if (visitorCount == 0 && conversionRate.compareTo(BigDecimal.ZERO) > 0 && salesCount > 0) {
-            visitorCount = BigDecimal.valueOf(salesCount)
-                    .divide(conversionRate, 0, RoundingMode.UP)
-                    .intValue();
-        }
-
-        stat.setVisitorCount(visitorCount);
-        stat.setAddCartCount(Math.max(salesCount, (int) Math.round(visitorCount * 0.18)));
-        stat.setPayBuyerCount(Math.max(1, salesCount));
-        stat.setSalesCount(salesCount);
-        stat.setTurnover(product.getCurrentPrice().multiply(BigDecimal.valueOf(salesCount)).setScale(2, RoundingMode.HALF_UP));
-        stat.setRefundAmount(BigDecimal.ZERO);
-        stat.setConversionRate(conversionRate.compareTo(BigDecimal.ZERO) > 0
-                ? conversionRate.setScale(4, RoundingMode.HALF_UP)
-                : calculateConversionRate(salesCount, visitorCount));
-        stat.setUploadBatchId(batchId);
-
-        if (stat.getId() == null) {
-            statMapper.insert(stat);
-        } else {
-            statMapper.updateById(stat);
-        }
     }
 
     private void seedRecentMetricsIfAbsent(BizProduct product, int monthlySales, BigDecimal conversionRate) {
@@ -421,7 +267,9 @@ public class ProductServiceImpl implements ProductService {
         for (int offset = days - 1; offset >= 0; offset--) {
             LocalDate date = today.minusDays(offset);
             LambdaQueryWrapper<BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
-            wrapper.eq(BizProductDailyStat::getProductId, product.getId()).eq(BizProductDailyStat::getStatDate, date).last("LIMIT 1");
+            wrapper.eq(BizProductDailyStat::getProductId, product.getId())
+                    .eq(BizProductDailyStat::getStatDate, date)
+                    .last("LIMIT 1");
             if (statMapper.selectOne(wrapper) != null) {
                 continue;
             }
@@ -477,7 +325,9 @@ public class ProductServiceImpl implements ProductService {
 
     private BizProductDailyStat findMetricByDate(Long productId, LocalDate statDate) {
         LambdaQueryWrapper<BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(BizProductDailyStat::getProductId, productId).eq(BizProductDailyStat::getStatDate, statDate).last("LIMIT 1");
+        wrapper.eq(BizProductDailyStat::getProductId, productId)
+                .eq(BizProductDailyStat::getStatDate, statDate)
+                .last("LIMIT 1");
         return statMapper.selectOne(wrapper);
     }
 
@@ -538,22 +388,11 @@ public class ProductServiceImpl implements ProductService {
         return System.currentTimeMillis();
     }
 
-    private Integer safeMonthlySales(Integer monthlySales, Integer dailySales) {
+    private int safeMonthlySales(Integer monthlySales) {
         if (monthlySales != null && monthlySales > 0) {
             return monthlySales;
         }
-        if (dailySales != null && dailySales > 0) {
-            return dailySales * 30;
-        }
         return 120;
-    }
-
-    private BigDecimal resolveConversionRate(String conversionRateText, Integer dailySales, Integer dailyVisitors) {
-        BigDecimal parsed = parsePercentage(conversionRateText);
-        if (parsed.compareTo(BigDecimal.ZERO) > 0) {
-            return parsed;
-        }
-        return calculateConversionRate(defaultInteger(dailySales), defaultInteger(dailyVisitors));
     }
 
     private BigDecimal calculateConversionRate(int salesCount, int visitorCount) {
@@ -564,25 +403,10 @@ public class ProductServiceImpl implements ProductService {
                 .divide(BigDecimal.valueOf(visitorCount), 4, RoundingMode.HALF_UP);
     }
 
-    private BigDecimal parsePercentage(String value) {
-        if (value == null || value.isBlank()) {
-            return BigDecimal.ZERO;
-        }
-        try {
-            String cleanValue = value.replace("%", "").trim();
-            BigDecimal numeric = new BigDecimal(cleanValue);
-            if (value.contains("%") || numeric.compareTo(BigDecimal.ONE) > 0) {
-                return numeric.divide(BigDecimal.valueOf(100), 4, RoundingMode.HALF_UP);
-            }
-            return numeric.setScale(4, RoundingMode.HALF_UP);
-        } catch (Exception e) {
-            log.warn("转化率解析失败：{}", value, e);
-            return BigDecimal.ZERO;
-        }
-    }
-
     private BigDecimal defaultDecimal(BigDecimal value) {
-        return value == null ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP) : value.setScale(2, RoundingMode.HALF_UP);
+        return value == null
+                ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
+                : value.setScale(2, RoundingMode.HALF_UP);
     }
 
     private Integer defaultInteger(Integer value) {

@@ -1,5 +1,7 @@
 import request from './request'
 
+export type ImportDataType = 'AUTO' | 'PRODUCT_BASE' | 'PRODUCT_DAILY_METRIC' | 'TRAFFIC_PROMO_DAILY'
+
 export interface ProductListVO {
   id: number
   itemId: number
@@ -26,6 +28,22 @@ export interface ProductManualDTO {
   status?: string
 }
 
+export interface ImportResultVO {
+  dataType: string
+  dataTypeLabel: string
+  targetTable: string
+  fileName: string
+  rowCount: number
+  successCount: number
+  failCount: number
+  uploadStatus: string
+  startDate?: string
+  endDate?: string
+  autoDetected?: boolean
+  summary: string
+  errors?: string[]
+}
+
 export const getProductList = (params: { page: number; size: number; keyword?: string }) => {
   return request.get('/products/list', { params })
 }
@@ -38,8 +56,11 @@ export const batchDeleteProducts = (ids: number[]) => {
   return request.delete('/products/batch-delete', { params: { ids: ids.join(',') } })
 }
 
-export const downloadTemplate = () => {
-  return request.get('/products/template', { responseType: 'blob' })
+export const downloadTemplate = (dataType: Exclude<ImportDataType, 'AUTO'>) => {
+  return request.get('/products/template', {
+    params: { dataType },
+    responseType: 'blob'
+  })
 }
 
 export const importDataUrl = '/products/import' // For el-upload action

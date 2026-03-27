@@ -2,19 +2,27 @@ package com.example.pricing.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.pricing.common.Result;
-import com.example.pricing.dto.ProductImportDTO;
 import com.example.pricing.dto.ProductManualDTO;
 import com.example.pricing.service.ProductService;
+import com.example.pricing.vo.ImportResultVO;
 import com.example.pricing.vo.ProductListVO;
-import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
+import com.example.pricing.vo.ProductTrendVO;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
+import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+
 import java.util.List;
 
-/**
- * 商品管理控制器
- */
 @RestController
 @RequestMapping("/api/products")
 @RequiredArgsConstructor
@@ -23,33 +31,27 @@ public class ProductController {
 
     private final ProductService productService;
 
-    /**
-     * 导入商品数据 (Excel)
-     */
     @PostMapping("/import")
-    public Result<String> importData(@RequestParam("file") MultipartFile file) {
-        return productService.importData(file);
+    public Result<ImportResultVO> importData(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "dataType", required = false) String dataType
+    ) {
+        return productService.importData(file, dataType);
     }
 
-    /**
-     * 下载导入模板
-     */
     @GetMapping("/template")
-    public void downloadTemplate(HttpServletResponse response) {
-        productService.downloadTemplate(response);
+    public void downloadTemplate(
+            @RequestParam(value = "dataType", required = false) String dataType,
+            HttpServletResponse response
+    ) {
+        productService.downloadTemplate(dataType, response);
     }
 
-    /**
-     * 手动新增商品
-     */
     @PostMapping("/add")
     public Result<Void> addProductManual(@RequestBody ProductManualDTO dto) {
         return productService.addProductManual(dto);
     }
 
-    /**
-     * 分页查询商品列表
-     */
     @GetMapping("/list")
     public Result<Page<ProductListVO>> getProductList(
             @RequestParam(defaultValue = "1") int page,
@@ -60,21 +62,16 @@ public class ProductController {
         return productService.getProductList(page, size, keyword, dataSource);
     }
 
-    /**
-     * 批量删除商品
-     */
     @DeleteMapping("/batch-delete")
     public Result<Void> batchDelete(@RequestParam("ids") List<Long> ids) {
         return productService.batchDelete(ids);
     }
 
-    /**
-     * 获取商品经营趋势数据
-     */
     @GetMapping("/{id}/trend")
-    public Result<com.example.pricing.vo.ProductTrendVO> getProductTrend(
+    public Result<ProductTrendVO> getProductTrend(
             @PathVariable Long id,
-            @RequestParam(defaultValue = "30") int days) {
+            @RequestParam(defaultValue = "30") int days
+    ) {
         return productService.getProductTrend(id, days);
     }
 }
