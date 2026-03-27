@@ -7,25 +7,35 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 @Data
-@TableName("shop")
-public class Shop {
+@TableName("product_sku")
+public class ProductSku {
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    @TableField("user_id")
-    private Long userId;
+    @TableField("product_id")
+    private Long productId;
 
-    @TableField("shop_name")
-    private String shopName;
+    @TableField("external_sku_id")
+    private String externalSkuId;
 
-    @TableField("platform")
-    private String platform;
+    @TableField("sku_name")
+    private String skuName;
 
-    @TableField("seller_nick")
-    private String sellerNick;
+    @TableField("sku_attr")
+    private String skuAttr;
+
+    @TableField("sale_price")
+    private BigDecimal salePrice;
+
+    @TableField("cost_price")
+    private BigDecimal costPrice;
+
+    @TableField("stock")
+    private Integer stock;
 
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

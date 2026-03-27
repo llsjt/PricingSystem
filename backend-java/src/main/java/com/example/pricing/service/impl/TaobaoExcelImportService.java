@@ -2,15 +2,15 @@ package com.example.pricing.service.impl;
 
 import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.example.pricing.entity.BizProduct;
-import com.example.pricing.entity.BizProductDailyStat;
+import com.example.pricing.entity.Product;
+import com.example.pricing.entity.ProductDailyMetric;
 import com.example.pricing.entity.Shop;
-import com.example.pricing.entity.SysImportBatch;
+import com.example.pricing.entity.UploadBatch;
 import com.example.pricing.entity.TrafficPromoDaily;
-import com.example.pricing.mapper.BizProductDailyStatMapper;
-import com.example.pricing.mapper.BizProductMapper;
+import com.example.pricing.mapper.ProductDailyMetricMapper;
+import com.example.pricing.mapper.ProductMapper;
 import com.example.pricing.mapper.ShopMapper;
-import com.example.pricing.mapper.SysImportBatchMapper;
+import com.example.pricing.mapper.UploadBatchMapper;
 import com.example.pricing.mapper.TrafficPromoDailyMapper;
 import com.example.pricing.vo.ImportResultVO;
 import jakarta.servlet.http.HttpServletResponse;
@@ -54,10 +54,10 @@ public class TaobaoExcelImportService {
 
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024L;
 
-    private final BizProductMapper productMapper;
-    private final BizProductDailyStatMapper statMapper;
+    private final ProductMapper productMapper;
+    private final ProductDailyMetricMapper statMapper;
     private final TrafficPromoDailyMapper trafficPromoDailyMapper;
-    private final SysImportBatchMapper batchMapper;
+    private final UploadBatchMapper batchMapper;
     private final ShopMapper shopMapper;
 
     @Transactional(rollbackFor = Exception.class)
@@ -74,7 +74,7 @@ public class TaobaoExcelImportService {
                 || "AUTO".equalsIgnoreCase(requestedTypeCode);
 
         Long shopId = resolveDefaultShopId();
-        SysImportBatch batch = createBatch(
+        UploadBatch batch = createBatch(
                 shopId,
                 Objects.requireNonNullElse(file.getOriginalFilename(), "taobao-import.xlsx"),
                 resolvedType
@@ -286,8 +286,8 @@ public class TaobaoExcelImportService {
         return ImportType.fromCode(requestedTypeCode);
     }
 
-    private SysImportBatch createBatch(Long shopId, String fileName, ImportType importType) {
-        SysImportBatch batch = new SysImportBatch();
+    private UploadBatch createBatch(Long shopId, String fileName, ImportType importType) {
+        UploadBatch batch = new UploadBatch();
         batch.setShopId(shopId);
         batch.setBatchNo("BATCH-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16).toUpperCase(Locale.ROOT));
         batch.setFileName(fileName);
@@ -304,7 +304,7 @@ public class TaobaoExcelImportService {
         String externalProductId = parseExternalProductId(row.getFirst("\u5546\u54c1ID", "\u5546\u54c1\u7f16\u53f7", "\u5b9d\u8d1dID", "Item ID", "item_id"));
         String title = row.getRequired("\u5546\u54c1\u6807\u9898", "\u5b9d\u8d1d\u6807\u9898", "\u5546\u54c1\u540d\u79f0", "\u6807\u9898");
 
-        BizProduct product = getOrCreateProduct(shopId, externalProductId, title);
+        Product product = getOrCreateProduct(shopId, externalProductId, title);
         product.setExternalProductId(resolveExternalProductId(externalProductId, title));
 
         product.setTitle(title);
@@ -328,15 +328,15 @@ public class TaobaoExcelImportService {
         LocalDate statDate = parseDate(row.getRequired("\u7edf\u8ba1\u65e5\u671f", "\u65e5\u671f", "\u6570\u636e\u65e5\u671f"));
         String externalProductId = parseExternalProductId(row.getFirst("\u5546\u54c1ID", "\u5546\u54c1\u7f16\u53f7", "\u5b9d\u8d1dID", "Item ID", "item_id"));
         String title = row.getFirst("\u5546\u54c1\u6807\u9898", "\u5b9d\u8d1d\u6807\u9898", "\u5546\u54c1\u540d\u79f0", "\u6807\u9898");
-        BizProduct product = getOrCreateProduct(shopId, externalProductId, title);
+        Product product = getOrCreateProduct(shopId, externalProductId, title);
 
-        LambdaQueryWrapper<BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(BizProductDailyStat::getProductId, product.getId())
-                .eq(BizProductDailyStat::getStatDate, statDate)
+        LambdaQueryWrapper<ProductDailyMetric> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(ProductDailyMetric::getProductId, product.getId())
+                .eq(ProductDailyMetric::getStatDate, statDate)
                 .last("LIMIT 1");
-        BizProductDailyStat stat = statMapper.selectOne(wrapper);
+        ProductDailyMetric stat = statMapper.selectOne(wrapper);
         if (stat == null) {
-            stat = new BizProductDailyStat();
+            stat = new ProductDailyMetric();
             stat.setShopId(shopId);
             stat.setProductId(product.getId());
             stat.setStatDate(statDate);
@@ -372,7 +372,7 @@ public class TaobaoExcelImportService {
         LocalDate statDate = parseDate(row.getRequired("\u7edf\u8ba1\u65e5\u671f", "\u65e5\u671f", "\u6570\u636e\u65e5\u671f"));
         String externalProductId = parseExternalProductId(row.getFirst("\u5546\u54c1ID", "\u5546\u54c1\u7f16\u53f7", "\u5b9d\u8d1dID", "Item ID", "item_id"));
         String title = row.getFirst("\u5546\u54c1\u6807\u9898", "\u5b9d\u8d1d\u6807\u9898", "\u5546\u54c1\u540d\u79f0", "\u6807\u9898");
-        BizProduct product = getOrCreateProduct(shopId, externalProductId, title);
+        Product product = getOrCreateProduct(shopId, externalProductId, title);
 
         String trafficSource = row.getRequired("\u6d41\u91cf\u6765\u6e90", "\u6765\u6e90\u6e20\u9053", "\u63a8\u5e7f\u6e20\u9053", "\u6e20\u9053");
         LambdaQueryWrapper<TrafficPromoDaily> wrapper = new LambdaQueryWrapper<>();
@@ -409,11 +409,11 @@ public class TaobaoExcelImportService {
         return statDate;
     }
 
-    private BizProduct getOrCreateProduct(Long shopId, String externalProductId, String title) {
-        BizProduct product = findProduct(shopId, externalProductId, title);
+    private Product getOrCreateProduct(Long shopId, String externalProductId, String title) {
+        Product product = findProduct(shopId, externalProductId, title);
         boolean changed = false;
         if (product == null) {
-            product = new BizProduct();
+            product = new Product();
             product.setShopId(shopId);
             product.setExternalProductId(resolveExternalProductId(externalProductId, title));
             product.setTitle(trimToNull(title));
@@ -450,22 +450,22 @@ public class TaobaoExcelImportService {
         return product;
     }
 
-    private BizProduct findProduct(Long shopId, String externalProductId, String title) {
+    private Product findProduct(Long shopId, String externalProductId, String title) {
         if (externalProductId != null && !externalProductId.isBlank()) {
-            LambdaQueryWrapper<BizProduct> wrapper = new LambdaQueryWrapper<>();
-            wrapper.eq(BizProduct::getShopId, shopId)
-                    .eq(BizProduct::getExternalProductId, externalProductId)
+            LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
+            wrapper.eq(Product::getShopId, shopId)
+                    .eq(Product::getExternalProductId, externalProductId)
                     .last("LIMIT 1");
-            BizProduct product = productMapper.selectOne(wrapper);
+            Product product = productMapper.selectOne(wrapper);
             if (product != null) {
                 return product;
             }
         }
 
         if (title != null && !title.isBlank()) {
-            LambdaQueryWrapper<BizProduct> wrapper = new LambdaQueryWrapper<>();
-            wrapper.eq(BizProduct::getShopId, shopId)
-                    .eq(BizProduct::getTitle, title.trim())
+            LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
+            wrapper.eq(Product::getShopId, shopId)
+                    .eq(Product::getTitle, title.trim())
                     .last("LIMIT 1");
             return productMapper.selectOne(wrapper);
         }

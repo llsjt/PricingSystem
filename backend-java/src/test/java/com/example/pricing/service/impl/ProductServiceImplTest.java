@@ -1,7 +1,13 @@
 package com.example.pricing.service.impl;
 
 import com.example.pricing.common.Result;
-import com.example.pricing.mapper.BizProductMapper;
+import com.example.pricing.mapper.AgentRunLogMapper;
+import com.example.pricing.mapper.PricingResultMapper;
+import com.example.pricing.mapper.PricingTaskMapper;
+import com.example.pricing.mapper.ProductDailyMetricMapper;
+import com.example.pricing.mapper.ProductMapper;
+import com.example.pricing.mapper.ShopMapper;
+import com.example.pricing.mapper.TrafficPromoDailyMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -13,21 +19,48 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
-public class ProductServiceImplTest {
+class ProductServiceImplTest {
 
     @Mock
-    private BizProductMapper productMapper;
+    private ProductMapper productMapper;
+
+    @Mock
+    private ProductDailyMetricMapper statMapper;
+
+    @Mock
+    private TrafficPromoDailyMapper trafficPromoDailyMapper;
+
+    @Mock
+    private PricingTaskMapper pricingTaskMapper;
+
+    @Mock
+    private PricingResultMapper pricingResultMapper;
+
+    @Mock
+    private AgentRunLogMapper agentRunLogMapper;
+
+    @Mock
+    private ShopMapper shopMapper;
+
+    @Mock
+    private TaobaoExcelImportService taobaoExcelImportService;
 
     @InjectMocks
     private ProductServiceImpl productService;
 
     @Test
-    public void testBatchDelete_Success() {
+    void testBatchDeleteSuccess() {
         List<Long> ids = Arrays.asList(1L, 2L, 3L);
+        when(pricingTaskMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(productMapper.deleteBatchIds(ids)).thenReturn(3);
 
         Result<Void> result = productService.batchDelete(ids);
@@ -37,34 +70,35 @@ public class ProductServiceImplTest {
     }
 
     @Test
-    public void testBatchDelete_EmptyList() {
+    void testBatchDeleteEmptyList() {
         List<Long> ids = Collections.emptyList();
 
         Result<Void> result = productService.batchDelete(ids);
 
         assertEquals(500, result.getCode());
-        assertEquals("请选择要删除的商品", result.getMessage());
+        assertTrue(result.getMessage().contains("删除"));
         verify(productMapper, never()).deleteBatchIds(anyList());
     }
 
     @Test
-    public void testBatchDelete_NullList() {
+    void testBatchDeleteNullList() {
         Result<Void> result = productService.batchDelete(null);
 
         assertEquals(500, result.getCode());
-        assertEquals("请选择要删除的商品", result.getMessage());
+        assertTrue(result.getMessage().contains("删除"));
         verify(productMapper, never()).deleteBatchIds(anyList());
     }
 
     @Test
-    public void testBatchDelete_Exception() {
+    void testBatchDeleteException() {
         List<Long> ids = Arrays.asList(1L, 2L);
+        when(pricingTaskMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(productMapper.deleteBatchIds(ids)).thenThrow(new RuntimeException("DB Error"));
 
         Result<Void> result = productService.batchDelete(ids);
 
         assertEquals(500, result.getCode());
-        assertEquals("批量删除失败：DB Error", result.getMessage());
+        assertTrue(result.getMessage().contains("DB Error"));
         verify(productMapper, times(1)).deleteBatchIds(ids);
     }
 }

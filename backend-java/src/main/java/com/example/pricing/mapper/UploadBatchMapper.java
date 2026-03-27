@@ -1,9 +1,9 @@
 package com.example.pricing.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.example.pricing.entity.DecAgentLog;
+import com.example.pricing.entity.UploadBatch;
 import org.apache.ibatis.annotations.Mapper;
 
 @Mapper
-public interface DecAgentLogMapper extends BaseMapper<DecAgentLog> {
+public interface UploadBatchMapper extends BaseMapper<UploadBatch> {
 }

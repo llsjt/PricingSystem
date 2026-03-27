@@ -3,16 +3,16 @@ package com.example.pricing.service.impl;
 import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.example.pricing.entity.BizProduct;
-import com.example.pricing.entity.BizProductDailyStat;
-import com.example.pricing.entity.DecAgentLog;
-import com.example.pricing.entity.DecResult;
-import com.example.pricing.entity.DecTask;
-import com.example.pricing.mapper.BizProductDailyStatMapper;
-import com.example.pricing.mapper.BizProductMapper;
-import com.example.pricing.mapper.DecAgentLogMapper;
-import com.example.pricing.mapper.DecResultMapper;
-import com.example.pricing.mapper.DecTaskMapper;
+import com.example.pricing.entity.AgentRunLog;
+import com.example.pricing.entity.PricingResult;
+import com.example.pricing.entity.PricingTask;
+import com.example.pricing.entity.Product;
+import com.example.pricing.entity.ProductDailyMetric;
+import com.example.pricing.mapper.AgentRunLogMapper;
+import com.example.pricing.mapper.PricingResultMapper;
+import com.example.pricing.mapper.PricingTaskMapper;
+import com.example.pricing.mapper.ProductDailyMetricMapper;
+import com.example.pricing.mapper.ProductMapper;
 import com.example.pricing.service.DecisionTaskService;
 import com.example.pricing.vo.DecisionComparisonVO;
 import com.example.pricing.vo.DecisionLogVO;
@@ -43,11 +43,11 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
 
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
 
-    private final DecTaskMapper taskMapper;
-    private final DecResultMapper resultMapper;
-    private final DecAgentLogMapper logMapper;
-    private final BizProductMapper productMapper;
-    private final BizProductDailyStatMapper statMapper;
+    private final PricingTaskMapper taskMapper;
+    private final PricingResultMapper resultMapper;
+    private final AgentRunLogMapper logMapper;
+    private final ProductMapper productMapper;
+    private final ProductDailyMetricMapper statMapper;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -57,7 +57,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         }
 
         Long productId = productIds.get(0);
-        BizProduct product = productMapper.selectById(productId);
+        Product product = productMapper.selectById(productId);
         if (product == null) {
             throw new IllegalArgumentException("商品不存在");
         }
@@ -66,7 +66,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         ConstraintBundle constraintBundle = parseConstraints(constraints);
         BigDecimal baselineProfit = estimateProfit(product.getCurrentPrice(), product.getCostPrice(), metrics.monthlySales);
 
-        DecTask task = new DecTask();
+        PricingTask task = new PricingTask();
         task.setTaskCode("TASK-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase());
         task.setShopId(product.getShopId());
         task.setProductId(product.getId());
@@ -99,7 +99,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         task.setTaskStatus("COMPLETED");
         taskMapper.updateById(task);
 
-        DecResult result = new DecResult();
+        PricingResult result = new PricingResult();
         result.setTaskId(task.getId());
         result.setFinalPrice(finalDecision.finalPrice);
         result.setExpectedSales(finalDecision.expectedSales);
@@ -120,8 +120,8 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
 
     @Override
     public List<DecisionLogVO> getTaskLogs(Long taskId) {
-        LambdaQueryWrapper<DecAgentLog> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(DecAgentLog::getTaskId, taskId).orderByAsc(DecAgentLog::getRunOrder, DecAgentLog::getId);
+        LambdaQueryWrapper<AgentRunLog> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(AgentRunLog::getTaskId, taskId).orderByAsc(AgentRunLog::getRunOrder, AgentRunLog::getId);
         return logMapper.selectList(wrapper).stream().map(logItem -> {
             DecisionLogVO vo = new DecisionLogVO();
             vo.setId(logItem.getId());
@@ -142,28 +142,28 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
 
     @Override
     public Page<DecisionTaskItemVO> getTasks(int page, int size, String status, String startTime, String endTime, String sortOrder) {
-        Page<DecTask> pageParam = new Page<>(Math.max(page, 1), size <= 0 ? 10 : size);
-        LambdaQueryWrapper<DecTask> wrapper = new LambdaQueryWrapper<>();
+        Page<PricingTask> pageParam = new Page<>(Math.max(page, 1), size <= 0 ? 10 : size);
+        LambdaQueryWrapper<PricingTask> wrapper = new LambdaQueryWrapper<>();
         if (status != null && !status.isBlank()) {
-            wrapper.eq(DecTask::getTaskStatus, status);
+            wrapper.eq(PricingTask::getTaskStatus, status);
         }
 
         LocalDateTime start = parseDateTime(startTime, false);
         LocalDateTime end = parseDateTime(endTime, true);
         if (start != null) {
-            wrapper.ge(DecTask::getCreatedAt, start);
+            wrapper.ge(PricingTask::getCreatedAt, start);
         }
         if (end != null) {
-            wrapper.le(DecTask::getCreatedAt, end);
+            wrapper.le(PricingTask::getCreatedAt, end);
         }
 
         if ("asc".equalsIgnoreCase(sortOrder)) {
-            wrapper.orderByAsc(DecTask::getCreatedAt, DecTask::getId);
+            wrapper.orderByAsc(PricingTask::getCreatedAt, PricingTask::getId);
         } else {
-            wrapper.orderByDesc(DecTask::getCreatedAt, DecTask::getId);
+            wrapper.orderByDesc(PricingTask::getCreatedAt, PricingTask::getId);
         }
 
-        Page<DecTask> taskPage = taskMapper.selectPage(pageParam, wrapper);
+        Page<PricingTask> taskPage = taskMapper.selectPage(pageParam, wrapper);
         Page<DecisionTaskItemVO> resultPage = new Page<>();
         resultPage.setCurrent(taskPage.getCurrent());
         resultPage.setSize(taskPage.getSize());
@@ -174,17 +174,17 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
 
     @Override
     public Map<String, Long> getTaskStats(String startTime, String endTime) {
-        LambdaQueryWrapper<DecTask> wrapper = new LambdaQueryWrapper<>();
+        LambdaQueryWrapper<PricingTask> wrapper = new LambdaQueryWrapper<>();
         LocalDateTime start = parseDateTime(startTime, false);
         LocalDateTime end = parseDateTime(endTime, true);
         if (start != null) {
-            wrapper.ge(DecTask::getCreatedAt, start);
+            wrapper.ge(PricingTask::getCreatedAt, start);
         }
         if (end != null) {
-            wrapper.le(DecTask::getCreatedAt, end);
+            wrapper.le(PricingTask::getCreatedAt, end);
         }
 
-        List<DecTask> tasks = taskMapper.selectList(wrapper);
+        List<PricingTask> tasks = taskMapper.selectList(wrapper);
         long total = tasks.size();
         long completed = tasks.stream().filter(task -> "COMPLETED".equalsIgnoreCase(task.getTaskStatus())).count();
         long running = tasks.stream().filter(task -> "RUNNING".equalsIgnoreCase(task.getTaskStatus())).count();
@@ -200,15 +200,15 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void applyDecision(Long resultId) {
-        DecResult result = resultMapper.selectById(resultId);
+        PricingResult result = resultMapper.selectById(resultId);
         if (result == null) {
             throw new IllegalArgumentException("结果不存在");
         }
-        DecTask task = taskMapper.selectById(result.getTaskId());
+        PricingTask task = taskMapper.selectById(result.getTaskId());
         if (task == null) {
             throw new IllegalArgumentException("任务不存在");
         }
-        BizProduct product = productMapper.selectById(task.getProductId());
+        Product product = productMapper.selectById(task.getProductId());
         if (product == null) {
             throw new IllegalArgumentException("商品不存在");
         }
@@ -226,9 +226,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         EasyExcel.write(response.getOutputStream(), DecisionComparisonVO.class).sheet("决策报告").doWrite(rows);
     }
 
-    private DecisionTaskItemVO toTaskItem(DecTask task) {
-        BizProduct product = productMapper.selectById(task.getProductId());
-        DecResult result = getResultByTaskId(task.getId());
+    private DecisionTaskItemVO toTaskItem(PricingTask task) {
+        Product product = productMapper.selectById(task.getProductId());
+        PricingResult result = getResultByTaskId(task.getId());
         DecisionTaskItemVO vo = new DecisionTaskItemVO();
         vo.setId(task.getId());
         vo.setTaskCode(task.getTaskCode());
@@ -245,12 +245,12 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     }
 
     private List<DecisionComparisonVO> buildComparisonRows(Long taskId) {
-        DecTask task = taskMapper.selectById(taskId);
+        PricingTask task = taskMapper.selectById(taskId);
         if (task == null) {
             return new ArrayList<>();
         }
-        BizProduct product = productMapper.selectById(task.getProductId());
-        DecResult result = getResultByTaskId(taskId);
+        Product product = productMapper.selectById(task.getProductId());
+        PricingResult result = getResultByTaskId(taskId);
         if (product == null || result == null) {
             return new ArrayList<>();
         }
@@ -271,7 +271,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         return List.of(vo);
     }
 
-    private boolean isApplied(BizProduct product, DecResult result) {
+    private boolean isApplied(Product product, PricingResult result) {
         if (product == null || result == null || product.getCurrentPrice() == null || result.getFinalPrice() == null) {
             return false;
         }
@@ -279,37 +279,44 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
                 .compareTo(result.getFinalPrice().setScale(2, RoundingMode.HALF_UP)) == 0;
     }
 
-    private DecResult getResultByTaskId(Long taskId) {
-        LambdaQueryWrapper<DecResult> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(DecResult::getTaskId, taskId).last("LIMIT 1");
+    private PricingResult getResultByTaskId(Long taskId) {
+        LambdaQueryWrapper<PricingResult> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(PricingResult::getTaskId, taskId).last("LIMIT 1");
         return resultMapper.selectOne(wrapper);
     }
 
-    private MetricsSnapshot loadMetrics(BizProduct product) {
+    private MetricsSnapshot loadMetrics(Product product) {
         LocalDate end = LocalDate.now();
         LocalDate start = end.minusDays(29);
-        LambdaQueryWrapper<BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(BizProductDailyStat::getProductId, product.getId())
-                .ge(BizProductDailyStat::getStatDate, start)
-                .le(BizProductDailyStat::getStatDate, end)
-                .orderByAsc(BizProductDailyStat::getStatDate);
-        List<BizProductDailyStat> stats = statMapper.selectList(wrapper);
+        LambdaQueryWrapper<ProductDailyMetric> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(ProductDailyMetric::getProductId, product.getId())
+                .ge(ProductDailyMetric::getStatDate, start)
+                .le(ProductDailyMetric::getStatDate, end)
+                .orderByAsc(ProductDailyMetric::getStatDate);
+        List<ProductDailyMetric> stats = statMapper.selectList(wrapper);
         if (stats.isEmpty()) {
             int estimatedMonthlySales = Math.max(60, safeInt(product.getStock()) / 3);
-            return new MetricsSnapshot(estimatedMonthlySales, estimatedMonthlySales / 30.0, estimatedMonthlySales / 30.0, new BigDecimal("0.0400"), safeInt(product.getCurrentPrice().intValue()));
+            BigDecimal currentPrice = scaleMoney(product.getCurrentPrice());
+            return new MetricsSnapshot(
+                    estimatedMonthlySales,
+                    estimatedMonthlySales / 30.0,
+                    estimatedMonthlySales / 30.0,
+                    new BigDecimal("0.0400"),
+                    currentPrice.setScale(0, RoundingMode.HALF_UP).intValue()
+            );
         }
 
-        int monthlySales = stats.stream().map(BizProductDailyStat::getSalesCount).mapToInt(this::safeInt).sum();
+        int monthlySales = stats.stream().map(ProductDailyMetric::getSalesCount).mapToInt(this::safeInt).sum();
         double avg7 = average(stats.stream()
                 .skip(Math.max(0, stats.size() - 7))
-                .map(BizProductDailyStat::getSalesCount)
+                .map(ProductDailyMetric::getSalesCount)
                 .mapToInt(this::safeInt)
                 .boxed()
                 .toList());
         int prevStart = Math.max(0, stats.size() - 14);
         int prevEnd = Math.max(prevStart, stats.size() - 7);
         double prev7 = average(stats.subList(prevStart, prevEnd).stream()
-                .map(BizProductDailyStat::getSalesCount)
+                .map(ProductDailyMetric::getSalesCount)
                 .mapToInt(this::safeInt)
                 .boxed()
                 .toList());
@@ -319,7 +326,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
 
         BigDecimal conversionTotal = BigDecimal.ZERO;
         int validCount = 0;
-        for (BizProductDailyStat stat : stats) {
+        for (ProductDailyMetric stat : stats) {
             BigDecimal rate = stat.getConversionRate();
             if (rate == null || rate.compareTo(BigDecimal.ZERO) <= 0) {
                 int visitors = safeInt(stat.getVisitorCount());
@@ -341,22 +348,25 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         return new MetricsSnapshot(monthlySales, avg7, prev7, conversionRate, categoryAveragePrice);
     }
 
-    private BigDecimal categoryAveragePrice(BizProduct product) {
-        LambdaQueryWrapper<BizProduct> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(product.getCategory() != null, BizProduct::getCategory, product.getCategory());
-        List<BizProduct> peers = productMapper.selectList(wrapper);
+    private BigDecimal categoryAveragePrice(Product product) {
+        if (product.getCategory() == null || product.getCategory().isBlank()) {
+            return scaleMoney(product.getCurrentPrice());
+        }
+        LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Product::getCategory, product.getCategory());
+        List<Product> peers = productMapper.selectList(wrapper);
         if (peers.isEmpty()) {
             return scaleMoney(product.getCurrentPrice());
         }
 
         BigDecimal total = peers.stream()
-                .map(BizProduct::getCurrentPrice)
+                .map(Product::getCurrentPrice)
                 .filter(price -> price != null)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
         return total.divide(BigDecimal.valueOf(Math.max(1, peers.size())), 2, RoundingMode.HALF_UP);
     }
 
-    private AgentProposal buildDataProposal(BizProduct product, MetricsSnapshot metrics, String strategyGoal) {
+    private AgentProposal buildDataProposal(Product product, MetricsSnapshot metrics, String strategyGoal) {
         double trendScore = (metrics.avg7Sales - metrics.previous7Sales) / Math.max(metrics.previous7Sales, 1.0);
         double turnoverDays = safeInt(product.getStock()) / Math.max(metrics.monthlySales / 30.0, 1.0);
         BigDecimal currentPrice = scaleMoney(product.getCurrentPrice());
@@ -394,7 +404,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
                 .build();
     }
 
-    private AgentProposal buildMarketProposal(BizProduct product, MetricsSnapshot metrics, String strategyGoal) {
+    private AgentProposal buildMarketProposal(Product product, MetricsSnapshot metrics, String strategyGoal) {
         BigDecimal currentPrice = scaleMoney(product.getCurrentPrice());
         BigDecimal categoryAveragePrice = BigDecimal.valueOf(metrics.categoryAveragePrice);
         BigDecimal price = currentPrice;
@@ -429,7 +439,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
                 .build();
     }
 
-    private AgentProposal buildRiskProposal(BizProduct product, ConstraintBundle bundle) {
+    private AgentProposal buildRiskProposal(Product product, ConstraintBundle bundle) {
         BigDecimal currentPrice = scaleMoney(product.getCurrentPrice());
         BigDecimal costPrice = scaleMoney(product.getCostPrice());
         BigDecimal minMargin = bundle.minProfitMargin == null ? new BigDecimal("0.15") : bundle.minProfitMargin;
@@ -469,7 +479,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     }
 
     private FinalDecision buildFinalDecision(
-            BizProduct product,
+            Product product,
             MetricsSnapshot metrics,
             String strategyGoal,
             ConstraintBundle bundle,
@@ -545,7 +555,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     }
 
     private void saveLog(Long taskId, AgentProposal proposal) {
-        DecAgentLog logItem = new DecAgentLog();
+        AgentRunLog logItem = new AgentRunLog();
         logItem.setTaskId(taskId);
         logItem.setAgentCode(proposal.agentCode);
         logItem.setAgentName(proposal.agentName);

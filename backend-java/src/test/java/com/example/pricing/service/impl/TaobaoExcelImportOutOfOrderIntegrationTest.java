@@ -2,13 +2,13 @@ package com.example.pricing.service.impl;
 
 import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.example.pricing.entity.BizProduct;
-import com.example.pricing.entity.BizProductDailyStat;
-import com.example.pricing.entity.SysImportBatch;
+import com.example.pricing.entity.Product;
+import com.example.pricing.entity.ProductDailyMetric;
+import com.example.pricing.entity.UploadBatch;
 import com.example.pricing.entity.TrafficPromoDaily;
-import com.example.pricing.mapper.BizProductDailyStatMapper;
-import com.example.pricing.mapper.BizProductMapper;
-import com.example.pricing.mapper.SysImportBatchMapper;
+import com.example.pricing.mapper.ProductDailyMetricMapper;
+import com.example.pricing.mapper.ProductMapper;
+import com.example.pricing.mapper.UploadBatchMapper;
 import com.example.pricing.mapper.TrafficPromoDailyMapper;
 import com.example.pricing.vo.ImportResultVO;
 import org.junit.jupiter.api.Test;
@@ -39,16 +39,16 @@ class TaobaoExcelImportOutOfOrderIntegrationTest {
     private TaobaoExcelImportService importService;
 
     @Autowired
-    private BizProductMapper productMapper;
+    private ProductMapper productMapper;
 
     @Autowired
-    private BizProductDailyStatMapper statMapper;
+    private ProductDailyMetricMapper statMapper;
 
     @Autowired
     private TrafficPromoDailyMapper trafficPromoDailyMapper;
 
     @Autowired
-    private SysImportBatchMapper batchMapper;
+    private UploadBatchMapper batchMapper;
 
     @Test
     void shouldImportExcelIntoDatabaseWithoutRequiringBaseInfoFirst() throws Exception {
@@ -75,19 +75,19 @@ class TaobaoExcelImportOutOfOrderIntegrationTest {
         ImportResultVO dailyMetricResult = importService.importExcel(dailyMetricFile, "PRODUCT_DAILY_METRIC");
         assertImportResult(dailyMetricResult, "PRODUCT_DAILY_METRIC", 4, false);
 
-        List<BizProduct> placeholderProducts = loadProducts(externalId1, externalId2);
+        List<Product> placeholderProducts = loadProducts(externalId1, externalId2);
         assertEquals(2, placeholderProducts.size());
         assertTrue(placeholderProducts.stream().allMatch(product -> "PLACEHOLDER".equals(product.getProfileStatus())));
         assertTrue(placeholderProducts.stream().allMatch(product -> "UNKNOWN".equals(product.getStatus())));
         assertTrue(placeholderProducts.stream().allMatch(product -> product.getCurrentPrice() == null));
         assertTrue(placeholderProducts.stream().allMatch(product -> product.getCostPrice() == null));
 
-        Map<String, BizProduct> placeholderByExternalId = placeholderProducts.stream()
-                .collect(Collectors.toMap(BizProduct::getExternalProductId, product -> product));
+        Map<String, Product> placeholderByExternalId = placeholderProducts.stream()
+                .collect(Collectors.toMap(Product::getExternalProductId, product -> product));
 
-        List<BizProductDailyStat> stats = statMapper.selectList(new LambdaQueryWrapper<BizProductDailyStat>()
-                .in(BizProductDailyStat::getProductId, placeholderProducts.stream().map(BizProduct::getId).toList())
-                .in(BizProductDailyStat::getStatDate, List.of(statDate1, statDate2)));
+        List<ProductDailyMetric> stats = statMapper.selectList(new LambdaQueryWrapper<ProductDailyMetric>()
+                .in(ProductDailyMetric::getProductId, placeholderProducts.stream().map(Product::getId).toList())
+                .in(ProductDailyMetric::getStatDate, List.of(statDate1, statDate2)));
         assertEquals(4, stats.size());
 
         MockMultipartFile trafficPromoFile = createExcel(
@@ -106,7 +106,7 @@ class TaobaoExcelImportOutOfOrderIntegrationTest {
         assertImportResult(trafficPromoResult, "TRAFFIC_PROMO_DAILY", 4, false);
 
         List<TrafficPromoDaily> trafficRows = trafficPromoDailyMapper.selectList(new LambdaQueryWrapper<TrafficPromoDaily>()
-                .in(TrafficPromoDaily::getProductId, placeholderProducts.stream().map(BizProduct::getId).toList())
+                .in(TrafficPromoDaily::getProductId, placeholderProducts.stream().map(Product::getId).toList())
                 .in(TrafficPromoDaily::getStatDate, List.of(statDate1, statDate2)));
         assertEquals(4, trafficRows.size());
         assertTrue(trafficRows.stream().allMatch(row -> row.getProductId() != null));
@@ -124,18 +124,18 @@ class TaobaoExcelImportOutOfOrderIntegrationTest {
         ImportResultVO productBaseResult = importService.importExcel(productBaseFile, "PRODUCT_BASE");
         assertImportResult(productBaseResult, "PRODUCT_BASE", 2, false);
 
-        List<BizProduct> finalProducts = loadProducts(externalId1, externalId2);
+        List<Product> finalProducts = loadProducts(externalId1, externalId2);
         assertEquals(2, finalProducts.size());
         assertEquals(
-                placeholderProducts.stream().map(BizProduct::getId).sorted().toList(),
-                finalProducts.stream().map(BizProduct::getId).sorted().toList()
+                placeholderProducts.stream().map(Product::getId).sorted().toList(),
+                finalProducts.stream().map(Product::getId).sorted().toList()
         );
 
-        Map<String, BizProduct> productByExternalId = finalProducts.stream()
-                .collect(Collectors.toMap(BizProduct::getExternalProductId, product -> product));
+        Map<String, Product> productByExternalId = finalProducts.stream()
+                .collect(Collectors.toMap(Product::getExternalProductId, product -> product));
 
-        BizProduct product1 = productByExternalId.get(externalId1);
-        BizProduct product2 = productByExternalId.get(externalId2);
+        Product product1 = productByExternalId.get(externalId1);
+        Product product2 = productByExternalId.get(externalId2);
         assertNotNull(product1);
         assertNotNull(product2);
         assertEquals(title1, product1.getTitle());
@@ -151,7 +151,7 @@ class TaobaoExcelImportOutOfOrderIntegrationTest {
         assertEquals(0, new BigDecimal("66.00").compareTo(product2.getCostPrice()));
         assertEquals(124, product2.getStock());
 
-        BizProductDailyStat stat = stats.stream()
+        ProductDailyMetric stat = stats.stream()
                 .filter(candidate -> candidate.getProductId().equals(placeholderByExternalId.get(externalId1).getId()) && candidate.getStatDate().equals(statDate1))
                 .findFirst()
                 .orElse(null);
@@ -167,8 +167,8 @@ class TaobaoExcelImportOutOfOrderIntegrationTest {
         assertEquals(18200, traffic.getImpressionCount());
         assertEquals(0, new BigDecimal("0.0560").compareTo(traffic.getRoi()));
 
-        List<SysImportBatch> batches = batchMapper.selectList(new LambdaQueryWrapper<SysImportBatch>()
-                .in(SysImportBatch::getFileName, List.of(
+        List<UploadBatch> batches = batchMapper.selectList(new LambdaQueryWrapper<UploadBatch>()
+                .in(UploadBatch::getFileName, List.of(
                         dailyMetricFile.getOriginalFilename(),
                         trafficPromoFile.getOriginalFilename(),
                         productBaseFile.getOriginalFilename()
@@ -179,12 +179,12 @@ class TaobaoExcelImportOutOfOrderIntegrationTest {
 
         System.out.println("OUT_OF_ORDER_IMPORT_OK caseKey=" + caseKey
                 + " externalIds=" + List.of(externalId1, externalId2)
-                + " productIds=" + finalProducts.stream().map(BizProduct::getId).toList());
+                + " productIds=" + finalProducts.stream().map(Product::getId).toList());
     }
 
-    private List<BizProduct> loadProducts(String... externalIds) {
-        return productMapper.selectList(new LambdaQueryWrapper<BizProduct>()
-                .in(BizProduct::getExternalProductId, List.of(externalIds)));
+    private List<Product> loadProducts(String... externalIds) {
+        return productMapper.selectList(new LambdaQueryWrapper<Product>()
+                .in(Product::getExternalProductId, List.of(externalIds)));
     }
 
     private void assertImportResult(ImportResultVO result, String dataType, int successCount, boolean autoDetected) {

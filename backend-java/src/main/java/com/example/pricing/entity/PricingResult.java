@@ -7,24 +7,32 @@ import java.time.LocalDateTime;
 
 @Data
 @TableName("pricing_result")
-public class DecResult {
+public class PricingResult {
     @TableId(type = IdType.AUTO)
     private Long id;
 
+    @TableField("task_id")
     private Long taskId;
 
+    @TableField("final_price")
     private BigDecimal finalPrice;
 
+    @TableField("expected_sales")
     private Integer expectedSales;
 
+    @TableField("expected_profit")
     private BigDecimal expectedProfit;
 
+    @TableField("profit_growth")
     private BigDecimal profitGrowth;
 
+    @TableField("is_pass")
     private Integer isPass;
 
+    @TableField("execute_strategy")
     private String executeStrategy;
 
+    @TableField("result_summary")
     private String resultSummary;
 
     @TableField(exist = false)
@@ -39,9 +47,9 @@ public class DecResult {
     @TableField(exist = false)
     private Boolean applied;
 
-    @TableField(fill = FieldFill.INSERT)
+    @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 
-    @TableField(fill = FieldFill.INSERT_UPDATE)
+    @TableField(value = "updated_at", fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updatedAt;
 }
