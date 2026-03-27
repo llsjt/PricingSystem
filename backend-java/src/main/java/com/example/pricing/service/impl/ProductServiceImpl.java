@@ -63,13 +63,14 @@ public class ProductServiceImpl implements ProductService {
 
         BizProduct product = new BizProduct();
         product.setShopId(shopId);
-        product.setItemId(resolveItemId(dto.getItemId()));
+        product.setExternalProductId(resolveExternalProductId(dto.getItemId()));
         product.setTitle(dto.getTitle().trim());
         product.setCategory(trimToNull(dto.getCategory()));
         product.setCostPrice(defaultDecimal(dto.getCostPrice()));
         product.setCurrentPrice(defaultDecimal(dto.getCurrentPrice()));
         product.setStock(defaultInteger(dto.getStock()));
         product.setStatus(dto.getStatus() == null || dto.getStatus().isBlank() ? "ON_SALE" : dto.getStatus().trim());
+        product.setProfileStatus("COMPLETE");
         productMapper.insert(product);
 
         seedRecentMetricsIfAbsent(product, safeMonthlySales(dto.getMonthlySales()), defaultDecimal(dto.getConversionRate()));
@@ -89,10 +90,10 @@ public class ProductServiceImpl implements ProductService {
             wrapper.and(query -> query.like(BizProduct::getTitle, trimmedKeyword)
                     .or()
                     .like(BizProduct::getCategory, trimmedKeyword)
+                    .or()
+                    .like(BizProduct::getExternalProductId, trimmedKeyword)
                     .or(numericKeyword != null)
-                    .eq(numericKeyword != null, BizProduct::getId, numericKeyword)
-                    .or(numericKeyword != null)
-                    .eq(numericKeyword != null, BizProduct::getItemId, numericKeyword));
+                    .eq(numericKeyword != null, BizProduct::getId, numericKeyword));
         }
         wrapper.orderByDesc(BizProduct::getUpdatedAt, BizProduct::getId);
 
@@ -101,7 +102,7 @@ public class ProductServiceImpl implements ProductService {
             ProductMetricSummary summary = loadMetricSummary(product.getId());
             ProductListVO vo = new ProductListVO();
             vo.setId(product.getId());
-            vo.setItemId(product.getItemId());
+            vo.setItemId(product.getExternalProductId());
             vo.setTitle(product.getTitle());
             vo.setCategory(product.getCategory());
             vo.setCostPrice(product.getCostPrice());
@@ -381,11 +382,11 @@ public class ProductServiceImpl implements ProductService {
         return shop.getId();
     }
 
-    private Long resolveItemId(Long itemId) {
-        if (itemId != null && itemId > 0) {
-            return itemId;
+    private String resolveExternalProductId(String externalProductId) {
+        if (externalProductId != null && !externalProductId.isBlank()) {
+            return externalProductId.trim();
         }
-        return System.currentTimeMillis();
+        return "MANUAL-" + System.currentTimeMillis();
     }
 
     private int safeMonthlySales(Integer monthlySales) {

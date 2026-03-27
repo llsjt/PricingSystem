@@ -301,25 +301,20 @@ public class TaobaoExcelImportService {
     }
 
     private LocalDate importProductBase(Long shopId, ParsedRow row) {
-        Long itemId = parseLong(row.getFirst("\u5546\u54c1ID", "\u5546\u54c1\u7f16\u53f7", "\u5b9d\u8d1dID", "Item ID", "item_id"));
+        String externalProductId = parseExternalProductId(row.getFirst("\u5546\u54c1ID", "\u5546\u54c1\u7f16\u53f7", "\u5b9d\u8d1dID", "Item ID", "item_id"));
         String title = row.getRequired("\u5546\u54c1\u6807\u9898", "\u5b9d\u8d1d\u6807\u9898", "\u5546\u54c1\u540d\u79f0", "\u6807\u9898");
 
-        BizProduct product = findProduct(shopId, itemId, title);
-        if (product == null) {
-            product = new BizProduct();
-            product.setShopId(shopId);
-            product.setItemId(itemId == null ? System.currentTimeMillis() : itemId);
-        } else if (itemId != null) {
-            product.setItemId(itemId);
-        }
+        BizProduct product = getOrCreateProduct(shopId, externalProductId, title);
+        product.setExternalProductId(resolveExternalProductId(externalProductId, title));
 
         product.setTitle(title);
         product.setCategory(row.getFirst("\u5546\u54c1\u7c7b\u76ee", "\u7c7b\u76ee\u540d\u79f0", "\u5546\u54c1\u5206\u7c7b", "\u7c7b\u76ee"));
-        product.setCostPrice(defaultMoney(parseAmount(row.getFirst("\u6210\u672c\u4ef7", "\u4f9b\u8d27\u4ef7", "\u91c7\u8d2d\u4ef7"))));
-        product.setCurrentPrice(defaultMoney(parseAmount(row.getFirst("\u5f53\u524d\u552e\u4ef7", "\u552e\u4ef7", "\u9500\u552e\u4ef7", "\u4e00\u53e3\u4ef7", "\u5546\u54c1\u4ef7\u683c"))));
+        product.setCostPrice(nullableMoney(parseAmount(row.getFirst("\u6210\u672c\u4ef7", "\u4f9b\u8d27\u4ef7", "\u91c7\u8d2d\u4ef7"))));
+        product.setCurrentPrice(nullableMoney(parseAmount(row.getFirst("\u5f53\u524d\u552e\u4ef7", "\u552e\u4ef7", "\u9500\u552e\u4ef7", "\u4e00\u53e3\u4ef7", "\u5546\u54c1\u4ef7\u683c"))));
         product.setStock(defaultInt(parseInteger(row.getFirst("\u5e93\u5b58", "\u53ef\u552e\u5e93\u5b58", "\u603b\u5e93\u5b58"))));
         String status = row.getFirst("\u5546\u54c1\u72b6\u6001", "\u5b9d\u8d1d\u72b6\u6001", "\u72b6\u6001");
         product.setStatus(status == null || status.isBlank() ? "ON_SALE" : status.trim());
+        product.setProfileStatus("COMPLETE");
 
         if (product.getId() == null) {
             productMapper.insert(product);
@@ -331,9 +326,9 @@ public class TaobaoExcelImportService {
 
     private LocalDate importProductDailyMetric(Long shopId, Long batchId, ParsedRow row) {
         LocalDate statDate = parseDate(row.getRequired("\u7edf\u8ba1\u65e5\u671f", "\u65e5\u671f", "\u6570\u636e\u65e5\u671f"));
-        Long itemId = parseLong(row.getFirst("\u5546\u54c1ID", "\u5546\u54c1\u7f16\u53f7", "\u5b9d\u8d1dID", "Item ID", "item_id"));
+        String externalProductId = parseExternalProductId(row.getFirst("\u5546\u54c1ID", "\u5546\u54c1\u7f16\u53f7", "\u5b9d\u8d1dID", "Item ID", "item_id"));
         String title = row.getFirst("\u5546\u54c1\u6807\u9898", "\u5b9d\u8d1d\u6807\u9898", "\u5546\u54c1\u540d\u79f0", "\u6807\u9898");
-        BizProduct product = requireProduct(shopId, itemId, title);
+        BizProduct product = getOrCreateProduct(shopId, externalProductId, title);
 
         LambdaQueryWrapper<BizProductDailyStat> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BizProductDailyStat::getProductId, product.getId())
@@ -375,27 +370,23 @@ public class TaobaoExcelImportService {
 
     private LocalDate importTrafficPromoDaily(Long shopId, Long batchId, ParsedRow row) {
         LocalDate statDate = parseDate(row.getRequired("\u7edf\u8ba1\u65e5\u671f", "\u65e5\u671f", "\u6570\u636e\u65e5\u671f"));
-        Long itemId = parseLong(row.getFirst("\u5546\u54c1ID", "\u5546\u54c1\u7f16\u53f7", "\u5b9d\u8d1dID", "Item ID", "item_id"));
+        String externalProductId = parseExternalProductId(row.getFirst("\u5546\u54c1ID", "\u5546\u54c1\u7f16\u53f7", "\u5b9d\u8d1dID", "Item ID", "item_id"));
         String title = row.getFirst("\u5546\u54c1\u6807\u9898", "\u5b9d\u8d1d\u6807\u9898", "\u5546\u54c1\u540d\u79f0", "\u6807\u9898");
-        BizProduct product = findProduct(shopId, itemId, title);
+        BizProduct product = getOrCreateProduct(shopId, externalProductId, title);
 
         String trafficSource = row.getRequired("\u6d41\u91cf\u6765\u6e90", "\u6765\u6e90\u6e20\u9053", "\u63a8\u5e7f\u6e20\u9053", "\u6e20\u9053");
         LambdaQueryWrapper<TrafficPromoDaily> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(TrafficPromoDaily::getShopId, shopId)
                 .eq(TrafficPromoDaily::getStatDate, statDate)
-                .eq(TrafficPromoDaily::getTrafficSource, trafficSource);
-        if (product == null) {
-            wrapper.isNull(TrafficPromoDaily::getProductId);
-        } else {
-            wrapper.eq(TrafficPromoDaily::getProductId, product.getId());
-        }
+                .eq(TrafficPromoDaily::getTrafficSource, trafficSource)
+                .eq(TrafficPromoDaily::getProductId, product.getId());
         wrapper.last("LIMIT 1");
 
         TrafficPromoDaily traffic = trafficPromoDailyMapper.selectOne(wrapper);
         if (traffic == null) {
             traffic = new TrafficPromoDaily();
             traffic.setShopId(shopId);
-            traffic.setProductId(product == null ? null : product.getId());
+            traffic.setProductId(product.getId());
             traffic.setStatDate(statDate);
             traffic.setTrafficSource(trafficSource);
         }
@@ -418,19 +409,52 @@ public class TaobaoExcelImportService {
         return statDate;
     }
 
-    private BizProduct requireProduct(Long shopId, Long itemId, String title) {
-        BizProduct product = findProduct(shopId, itemId, title);
+    private BizProduct getOrCreateProduct(Long shopId, String externalProductId, String title) {
+        BizProduct product = findProduct(shopId, externalProductId, title);
+        boolean changed = false;
         if (product == null) {
-            throw new IllegalArgumentException("未匹配到商品，请先导入商品基础信息");
+            product = new BizProduct();
+            product.setShopId(shopId);
+            product.setExternalProductId(resolveExternalProductId(externalProductId, title));
+            product.setTitle(trimToNull(title));
+            product.setStock(0);
+            product.setStatus("UNKNOWN");
+            product.setProfileStatus("PLACEHOLDER");
+            productMapper.insert(product);
+            return product;
+        }
+
+        if (externalProductId != null
+                && !externalProductId.isBlank()
+                && (product.getExternalProductId() == null
+                || product.getExternalProductId().isBlank()
+                || product.getExternalProductId().startsWith("PLACEHOLDER-"))) {
+            product.setExternalProductId(externalProductId);
+            changed = true;
+        }
+        if ((product.getTitle() == null || product.getTitle().isBlank()) && title != null && !title.isBlank()) {
+            product.setTitle(title.trim());
+            changed = true;
+        }
+        if (product.getStatus() == null || product.getStatus().isBlank()) {
+            product.setStatus("UNKNOWN");
+            changed = true;
+        }
+        if (product.getProfileStatus() == null || product.getProfileStatus().isBlank()) {
+            product.setProfileStatus("PLACEHOLDER");
+            changed = true;
+        }
+        if (changed) {
+            productMapper.updateById(product);
         }
         return product;
     }
 
-    private BizProduct findProduct(Long shopId, Long itemId, String title) {
-        if (itemId != null) {
+    private BizProduct findProduct(Long shopId, String externalProductId, String title) {
+        if (externalProductId != null && !externalProductId.isBlank()) {
             LambdaQueryWrapper<BizProduct> wrapper = new LambdaQueryWrapper<>();
             wrapper.eq(BizProduct::getShopId, shopId)
-                    .eq(BizProduct::getItemId, itemId)
+                    .eq(BizProduct::getExternalProductId, externalProductId)
                     .last("LIMIT 1");
             BizProduct product = productMapper.selectOne(wrapper);
             if (product != null) {
@@ -472,19 +496,32 @@ public class TaobaoExcelImportService {
         return ParsedRow.normalizeStatic(value);
     }
 
-    private Long parseLong(String value) {
+    private String parseExternalProductId(String value) {
         if (value == null || value.isBlank()) {
             return null;
         }
-        try {
-            String normalized = value.replace(",", "").trim();
-            if (normalized.endsWith(".0")) {
-                normalized = normalized.substring(0, normalized.length() - 2);
-            }
-            return Long.parseLong(normalized);
-        } catch (Exception e) {
-            return null;
+        String normalized = value.replace(",", "").trim();
+        if (normalized.endsWith(".0")) {
+            normalized = normalized.substring(0, normalized.length() - 2);
         }
+        try {
+            if (normalized.matches("[+-]?\\d+(\\.\\d+)?([eE][+-]?\\d+)?")) {
+                return new BigDecimal(normalized).stripTrailingZeros().toPlainString();
+            }
+            return normalized;
+        } catch (Exception e) {
+            return normalized;
+        }
+    }
+
+    private String resolveExternalProductId(String externalProductId, String title) {
+        if (externalProductId != null && !externalProductId.isBlank()) {
+            return externalProductId.trim();
+        }
+        if (title != null && !title.isBlank()) {
+            return "PLACEHOLDER-" + Math.abs((title.trim() + "-" + System.nanoTime()).hashCode());
+        }
+        return "PLACEHOLDER-" + System.currentTimeMillis();
     }
 
     private Integer parseInteger(String value) {
@@ -586,12 +623,23 @@ public class TaobaoExcelImportService {
         return value.setScale(2, RoundingMode.HALF_UP);
     }
 
+    private BigDecimal nullableMoney(BigDecimal value) {
+        return value == null ? null : value.setScale(2, RoundingMode.HALF_UP);
+    }
+
     private BigDecimal calculateConversionRate(int salesCount, int visitorCount) {
         if (salesCount <= 0 || visitorCount <= 0) {
             return BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP);
         }
         return BigDecimal.valueOf(salesCount)
                 .divide(BigDecimal.valueOf(visitorCount), 4, RoundingMode.HALF_UP);
+    }
+
+    private String trimToNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
     }
 
     private record ParsedSheet(Set<String> headers, List<ParsedRow> rows) {

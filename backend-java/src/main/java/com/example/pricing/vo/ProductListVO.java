@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
 @Data
 public class ProductListVO {
     private Long id;
-    private Long itemId;
+    private String itemId;
     private String title;
     private String category;
     private BigDecimal costPrice;

@@ -5,7 +5,7 @@ import java.math.BigDecimal;
 
 @Data
 public class ProductManualDTO {
-    private Long itemId;
+    private String itemId;
     private String title;
     private String category;
     private BigDecimal costPrice;

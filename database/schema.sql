@@ -69,17 +69,18 @@ DROP TABLE IF EXISTS product;
 CREATE TABLE product (
     id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '商品ID',
     shop_id BIGINT NOT NULL COMMENT '店铺ID',
-    item_id BIGINT NOT NULL COMMENT '淘宝商品ID',
-    product_name VARCHAR(255) NOT NULL COMMENT '商品名称',
+    external_product_id VARCHAR(64) NOT NULL COMMENT '平台商品ID',
+    product_name VARCHAR(255) DEFAULT NULL COMMENT '商品名称',
     category_name VARCHAR(100) DEFAULT NULL COMMENT '类目名称',
-    sale_price DECIMAL(10,2) NOT NULL COMMENT '当前售价',
-    cost_price DECIMAL(10,2) NOT NULL COMMENT '成本价',
+    sale_price DECIMAL(10,2) DEFAULT NULL COMMENT '当前售价',
+    cost_price DECIMAL(10,2) DEFAULT NULL COMMENT '成本价',
     stock INT NOT NULL DEFAULT 0 COMMENT '库存',
-    status VARCHAR(20) DEFAULT 'ON_SALE' COMMENT '商品状态',
+    status VARCHAR(20) NOT NULL DEFAULT 'UNKNOWN' COMMENT '商品状态',
+    profile_status VARCHAR(20) NOT NULL DEFAULT 'COMPLETE' COMMENT '商品档案状态：PLACEHOLDER/COMPLETE',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    UNIQUE KEY uk_shop_item (shop_id, item_id),
-    KEY idx_shop_id (shop_id),
+    UNIQUE KEY uk_shop_external_product (shop_id, external_product_id),
+    KEY idx_shop_profile_status (shop_id, profile_status),
     CONSTRAINT fk_product_shop FOREIGN KEY (shop_id) REFERENCES shop(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='商品表';
 
@@ -90,7 +91,7 @@ DROP TABLE IF EXISTS product_sku;
 CREATE TABLE product_sku (
     id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT 'SKU主键ID',
     product_id BIGINT NOT NULL COMMENT '商品ID',
-    sku_id BIGINT NOT NULL COMMENT '淘宝SKU ID',
+    external_sku_id VARCHAR(64) NOT NULL COMMENT '平台SKU ID',
     sku_name VARCHAR(255) DEFAULT NULL COMMENT 'SKU名称',
     sku_attr VARCHAR(255) DEFAULT NULL COMMENT 'SKU属性，如颜色/尺码',
     sale_price DECIMAL(10,2) NOT NULL COMMENT 'SKU售价',
@@ -98,8 +99,7 @@ CREATE TABLE product_sku (
     stock INT NOT NULL DEFAULT 0 COMMENT 'SKU库存',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    UNIQUE KEY uk_product_sku (product_id, sku_id),
-    KEY idx_product_id (product_id),
+    UNIQUE KEY uk_product_external_sku (product_id, external_sku_id),
     CONSTRAINT fk_product_sku_product FOREIGN KEY (product_id) REFERENCES product(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='SKU表';
 
@@ -147,7 +147,7 @@ CREATE TABLE traffic_promo_daily (
     upload_batch_id BIGINT DEFAULT NULL COMMENT '上传批次ID',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     KEY idx_shop_date (shop_id, stat_date),
-    KEY idx_product_date (product_id, stat_date),
+    UNIQUE KEY uk_product_date_source (product_id, stat_date, traffic_source),
     CONSTRAINT fk_traffic_promo_daily_shop FOREIGN KEY (shop_id) REFERENCES shop(id),
     CONSTRAINT fk_traffic_promo_daily_product FOREIGN KEY (product_id) REFERENCES product(id),
     CONSTRAINT fk_traffic_promo_daily_batch FOREIGN KEY (upload_batch_id) REFERENCES upload_batch(id)

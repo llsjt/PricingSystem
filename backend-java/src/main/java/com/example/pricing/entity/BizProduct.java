@@ -13,7 +13,8 @@ public class BizProduct {
 
     private Long shopId;
 
-    private Long itemId;
+    @TableField("external_product_id")
+    private String externalProductId;
 
     @TableField("product_name")
     private String title;
@@ -32,6 +33,8 @@ public class BizProduct {
     private Integer stock;
 
     private String status;
+
+    private String profileStatus;
 
     @TableField(exist = false)
     private Integer monthlySales;
