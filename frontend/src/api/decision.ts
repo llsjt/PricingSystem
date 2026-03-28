@@ -82,6 +82,8 @@ export const getTaskLogs = (taskId: number) => {
   return request.get(`/decision/logs/${taskId}`)
 }
 
+export const getTaskLogStreamUrl = (taskId: number) => `/api/decision/stream/${taskId}`
+
 export const getTaskList = (params: DecisionTaskQuery) => {
   return request.get('/decision/tasks', { params })
 }

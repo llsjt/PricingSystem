@@ -260,9 +260,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { applyDecision, getTaskLogs, getTaskResult, startDecisionTask } from '../api/decision'
+import { applyDecision, getTaskLogStreamUrl, getTaskLogs, getTaskResult, startDecisionTask } from '../api/decision'
 import { getProductList } from '../api/product'
 
 interface ProductOption {
@@ -279,6 +279,8 @@ const taskLogs = ref<any[]>([])
 const comparisonData = ref<any[]>([])
 const applyingResultIds = ref<number[]>([])
 let latestProductLoadToken = 0
+let logStream: EventSource | null = null
+let streamCompleted = false
 
 const taskConfig = reactive({
   productId: undefined as number | undefined,
@@ -377,18 +379,72 @@ const fetchTaskResult = async (taskId: number) => {
   }
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
-const pollTaskProgress = async (taskId: number) => {
-  const maxRounds = 20
-  for (let i = 0; i < maxRounds; i++) {
-    await Promise.all([fetchTaskLogs(taskId), fetchTaskResult(taskId)])
-    if (taskLogs.value.length > 0 || comparisonData.value.length > 0) {
-      return true
-    }
-    await sleep(1000)
+const upsertTaskLog = (logItem: any) => {
+  if (!logItem) return
+  const id = Number(logItem.id || 0)
+  if (id <= 0) return
+  const idx = taskLogs.value.findIndex((item) => Number(item?.id || 0) === id)
+  if (idx >= 0) {
+    taskLogs.value[idx] = logItem
+    return
   }
-  return false
+  taskLogs.value.push(logItem)
+}
+
+const stopLogStream = () => {
+  if (logStream) {
+    logStream.close()
+    logStream = null
+  }
+}
+
+const startLogStream = (taskId: number) => {
+  stopLogStream()
+  streamCompleted = false
+  const source = new EventSource(getTaskLogStreamUrl(taskId))
+  logStream = source
+
+  source.addEventListener('log', (event: MessageEvent) => {
+    try {
+      const payload = JSON.parse(event.data)
+      upsertTaskLog(payload)
+    } catch {
+      // Ignore malformed event payload and keep stream alive.
+    }
+  })
+
+  source.addEventListener('result', (event: MessageEvent) => {
+    try {
+      const payload = JSON.parse(event.data)
+      comparisonData.value = Array.isArray(payload) ? payload : []
+    } catch {
+      comparisonData.value = []
+    }
+  })
+
+  source.addEventListener('done', () => {
+    if (!streamCompleted) {
+      streamCompleted = true
+      ElMessage.success('任务执行完成，结果已更新')
+    }
+    stopLogStream()
+  })
+
+  source.addEventListener('failed', () => {
+    if (!streamCompleted) {
+      streamCompleted = true
+      ElMessage.error('任务执行失败，请查看日志')
+    }
+    stopLogStream()
+  })
+
+  source.onerror = async () => {
+    stopLogStream()
+    if (!streamCompleted) {
+      // Stream disconnected unexpectedly, fallback to one-shot refresh.
+      await Promise.all([fetchTaskLogs(taskId), fetchTaskResult(taskId)])
+    }
+  }
 }
 
 const startTask = async () => {
@@ -414,12 +470,8 @@ const startTask = async () => {
     comparisonData.value = []
     activeStep.value = 1
 
-    const hasOutput = await pollTaskProgress(res.data)
-    if (hasOutput) {
-      ElMessage.success('定价任务已启动，Agent 日志已更新')
-    } else {
-      ElMessage.warning('任务已创建，但日志生成较慢，请稍后查看')
-    }
+    startLogStream(res.data)
+    ElMessage.success('任务已启动，Agent 日志将实时流式更新')
   } catch {
     ElMessage.error('启动智能决策失败')
   } finally {
@@ -472,6 +524,8 @@ const applyPrice = async (row: any) => {
 }
 
 const resetToConfig = () => {
+  stopLogStream()
+  streamCompleted = false
   activeStep.value = 0
   currentTaskId.value = null
   taskLogs.value = []
@@ -512,6 +566,10 @@ const formatSignedCurrency = (value?: number | string | null) => {
 
 onMounted(() => {
   loadProducts()
+})
+
+onBeforeUnmount(() => {
+  stopLogStream()
 })
 </script>
 

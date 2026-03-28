@@ -9,12 +9,19 @@ import com.example.pricing.vo.DecisionTaskItemVO;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 @RestController
 @RequestMapping("/api/decision")
@@ -52,6 +59,81 @@ public class DecisionController {
     @GetMapping("/logs/{taskId}")
     public Result<List<DecisionLogVO>> getTaskLogs(@PathVariable Long taskId) {
         return Result.success(decisionTaskService.getTaskLogs(taskId));
+    }
+
+    @GetMapping(value = "/stream/{taskId}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamTaskLogs(@PathVariable Long taskId) {
+        SseEmitter emitter = new SseEmitter(10 * 60 * 1000L);
+        ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+        AtomicLong lastLogId = new AtomicLong(0);
+        AtomicBoolean completed = new AtomicBoolean(false);
+
+        Runnable tick = () -> {
+            if (completed.get()) {
+                return;
+            }
+            try {
+                List<DecisionLogVO> logs = decisionTaskService.getTaskLogs(taskId);
+                for (DecisionLogVO logItem : logs) {
+                    if (logItem == null || logItem.getId() == null) {
+                        continue;
+                    }
+                    if (logItem.getId() <= lastLogId.get()) {
+                        continue;
+                    }
+                    sendEvent(emitter, "log", logItem);
+                    lastLogId.set(logItem.getId());
+                    if ("FAILED".equalsIgnoreCase(logItem.getRunStatus())) {
+                        sendEvent(emitter, "failed", Map.of("taskId", taskId, "message", "task failed"));
+                        completed.set(true);
+                        emitter.complete();
+                        return;
+                    }
+                }
+
+                List<DecisionComparisonVO> result = decisionTaskService.getTaskResult(taskId);
+                if (result != null && !result.isEmpty()) {
+                    sendEvent(emitter, "result", result);
+                    sendEvent(emitter, "done", Map.of("taskId", taskId, "status", "COMPLETED"));
+                    completed.set(true);
+                    emitter.complete();
+                    return;
+                }
+
+                sendEvent(
+                        emitter,
+                        "heartbeat",
+                        Map.of("taskId", taskId, "lastLogId", lastLogId.get(), "logCount", logs.size())
+                );
+            } catch (Exception ex) {
+                log.warn("stream task logs failed, taskId={}", taskId, ex);
+                if (completed.compareAndSet(false, true)) {
+                    try {
+                        sendEvent(emitter, "failed", Map.of("taskId", taskId, "message", ex.getMessage()));
+                    } catch (Exception ignore) {
+                    }
+                    emitter.completeWithError(ex);
+                }
+            }
+        };
+
+        scheduler.scheduleAtFixedRate(tick, 0, 1, TimeUnit.SECONDS);
+
+        emitter.onCompletion(() -> {
+            completed.set(true);
+            scheduler.shutdownNow();
+        });
+        emitter.onTimeout(() -> {
+            completed.set(true);
+            scheduler.shutdownNow();
+            emitter.complete();
+        });
+        emitter.onError((ex) -> {
+            completed.set(true);
+            scheduler.shutdownNow();
+        });
+
+        return emitter;
     }
 
     @GetMapping("/tasks")
@@ -110,5 +192,9 @@ public class DecisionController {
             }
         }
         return productIds;
+    }
+
+    private void sendEvent(SseEmitter emitter, String event, Object payload) throws IOException {
+        emitter.send(SseEmitter.event().name(event).data(payload));
     }
 }
