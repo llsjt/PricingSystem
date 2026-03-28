@@ -1,11 +1,12 @@
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.models.agent_run_log import AgentRunLog
 from app.utils.math_utils import money, ratio
+from app.utils.json_utils import to_json_compatible
 
 
 class LogRepo:
@@ -42,7 +43,7 @@ class LogRepo:
             run_status=run_status,
             input_summary=input_summary,
             output_summary=output_summary,
-            output_payload=output_payload,
+            output_payload=to_json_compatible(output_payload),
             suggested_price=money(suggested_price) if suggested_price is not None else None,
             predicted_profit=money(predicted_profit) if predicted_profit is not None else None,
             confidence_score=ratio(confidence_score) if confidence_score is not None else None,
@@ -55,3 +56,11 @@ class LogRepo:
         self.db.refresh(log)
         return log
 
+    def list_by_task_id(self, task_id: int, limit: int = 200) -> list[AgentRunLog]:
+        stmt = (
+            select(AgentRunLog)
+            .where(AgentRunLog.task_id == task_id)
+            .order_by(desc(AgentRunLog.run_order), desc(AgentRunLog.id))
+            .limit(limit)
+        )
+        return list(self.db.scalars(stmt).all())

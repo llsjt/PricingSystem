@@ -118,12 +118,12 @@
           <article
             v-for="log in orderedLogs"
             :key="log.id"
-            :class="['message-card', getAgentClass(log.agentName)]"
+            :class="['message-card', getAgentClass(log)]"
           >
-            <div class="message-avatar">{{ getAgentAvatar(log.agentName) }}</div>
+            <div class="message-avatar">{{ getAgentAvatar(log) }}</div>
             <div class="message-main">
               <div class="message-head">
-                <strong>{{ log.agentName }}</strong>
+                <strong>{{ getAgentLabel(log) }}</strong>
                 <span>{{ formatTime(log.createdAt) }}</span>
               </div>
               <div class="message-body">
@@ -278,6 +278,7 @@ const currentTaskId = ref<number | null>(null)
 const taskLogs = ref<any[]>([])
 const comparisonData = ref<any[]>([])
 const applyingResultIds = ref<number[]>([])
+let latestProductLoadToken = 0
 
 const taskConfig = reactive({
   productId: undefined as number | undefined,
@@ -318,14 +319,43 @@ const progress = computed(() => {
 })
 
 const loadProducts = async (query = '') => {
+  const loadToken = ++latestProductLoadToken
   searchLoading.value = true
   try {
-    const res: any = await getProductList({ page: 1, size: 20, keyword: query })
-    if (res.code === 200) {
-      productOptions.value = res.data.records || []
+    const pageSize = 100
+    const allProducts: ProductOption[] = []
+    let page = 1
+    let pages = 1
+
+    while (page <= pages) {
+      const res: any = await getProductList({ page, size: pageSize, keyword: query })
+      if (loadToken !== latestProductLoadToken) return
+      if (res.code !== 200) break
+
+      const records = Array.isArray(res.data?.records) ? res.data.records : []
+      records.forEach((item: any) => {
+        allProducts.push({
+          id: Number(item.id),
+          productName: String(item.productName || '')
+        })
+      })
+
+      const apiPages = Number(res.data?.pages || 1)
+      pages = Number.isFinite(apiPages) && apiPages > 0 ? apiPages : 1
+      page += 1
+    }
+
+    if (loadToken === latestProductLoadToken) {
+      const uniqueById = new Map<number, ProductOption>()
+      allProducts.forEach((item) => {
+        if (item.id) uniqueById.set(item.id, item)
+      })
+      productOptions.value = Array.from(uniqueById.values())
     }
   } finally {
-    searchLoading.value = false
+    if (loadToken === latestProductLoadToken) {
+      searchLoading.value = false
+    }
   }
 }
 
@@ -345,6 +375,20 @@ const fetchTaskResult = async (taskId: number) => {
   if (res.code === 200) {
     comparisonData.value = res.data || []
   }
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const pollTaskProgress = async (taskId: number) => {
+  const maxRounds = 20
+  for (let i = 0; i < maxRounds; i++) {
+    await Promise.all([fetchTaskLogs(taskId), fetchTaskResult(taskId)])
+    if (taskLogs.value.length > 0 || comparisonData.value.length > 0) {
+      return true
+    }
+    await sleep(1000)
+  }
+  return false
 }
 
 const startTask = async () => {
@@ -370,8 +414,12 @@ const startTask = async () => {
     comparisonData.value = []
     activeStep.value = 1
 
-    await Promise.all([fetchTaskLogs(res.data), fetchTaskResult(res.data)])
-    ElMessage.success('定价任务已完成')
+    const hasOutput = await pollTaskProgress(res.data)
+    if (hasOutput) {
+      ElMessage.success('定价任务已启动，Agent 日志已更新')
+    } else {
+      ElMessage.warning('任务已创建，但日志生成较慢，请稍后查看')
+    }
   } catch {
     ElMessage.error('启动智能决策失败')
   } finally {
@@ -430,19 +478,27 @@ const resetToConfig = () => {
   comparisonData.value = []
 }
 
-const getAgentClass = (name: string) => {
-  if (name?.includes('数据')) return 'agent-data'
-  if (name?.includes('市场')) return 'agent-market'
-  if (name?.includes('风险')) return 'agent-risk'
-  if (name?.includes('经理')) return 'agent-manager'
+const getAgentCode = (log: any) => String(log?.agentCode || '').toUpperCase()
+
+const getAgentLabel = (log: any) => log?.agentName || log?.agentCode || 'Agent'
+
+const getAgentClass = (log: any) => {
+  const code = getAgentCode(log)
+  if (code.includes('DATA')) return 'agent-data'
+  if (code.includes('MARKET')) return 'agent-market'
+  if (code.includes('RISK')) return 'agent-risk'
+  if (code.includes('MANAGER')) return 'agent-manager'
+  if (code.includes('CREWAI')) return 'agent-manager'
   return 'agent-default'
 }
 
-const getAgentAvatar = (name: string) => {
-  if (name?.includes('数据')) return '数据'
-  if (name?.includes('市场')) return '市场'
-  if (name?.includes('风险')) return '风控'
-  if (name?.includes('经理')) return '经理'
+const getAgentAvatar = (log: any) => {
+  const code = getAgentCode(log)
+  if (code.includes('DATA')) return '数据'
+  if (code.includes('MARKET')) return '市场'
+  if (code.includes('RISK')) return '风控'
+  if (code.includes('MANAGER')) return '经理'
+  if (code.includes('CREWAI')) return '协作'
   return 'Agent'
 }
 

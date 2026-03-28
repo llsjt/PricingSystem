@@ -26,6 +26,33 @@ class OrchestrationService:
             f"strategy={payload.strategy_goal}, constraints={payload.constraints}"
         )
 
+        # 启动 CrewAI 四 Agent 协作（用于毕业设计答辩展示“真实多 Agent 协同”）
+        if self.bundle.crewai_available:
+            from app.crew.crewai_runtime import run_crewai_session
+
+            crewai_output = run_crewai_session(payload)
+            self.log_tool.write(
+                task_id=payload.task_id,
+                agent_code="CREWAI",
+                agent_name="CrewAI协作引擎",
+                run_status="SUCCESS",
+                input_summary=context_text,
+                output_summary="CrewAI 4-Agent 协作已执行",
+                output_payload=crewai_output,
+                risk_level="LOW",
+            )
+        else:
+            self.log_tool.write(
+                task_id=payload.task_id,
+                agent_code="CREWAI",
+                agent_name="CrewAI协作引擎",
+                run_status="SUCCESS",
+                input_summary=context_text,
+                output_summary="未检测到 CrewAI，使用本地多 Agent 编排",
+                output_payload={"enabled": False},
+                risk_level="LOW",
+            )
+
         data_result = self.bundle.data_agent.run(
             product=payload.product,
             metrics=payload.metrics,
@@ -39,7 +66,7 @@ class OrchestrationService:
             run_status="SUCCESS",
             input_summary=context_text,
             output_summary=data_result.summary,
-            output_payload=data_result.model_dump(by_alias=True),
+            output_payload=data_result.model_dump(by_alias=True, mode="json"),
             suggested_price=data_result.suggested_price,
             predicted_profit=data_result.expected_profit,
             confidence_score=data_result.confidence,
@@ -57,7 +84,7 @@ class OrchestrationService:
             run_status="SUCCESS",
             input_summary=context_text,
             output_summary=market_result.summary,
-            output_payload=market_result.model_dump(by_alias=True),
+            output_payload=market_result.model_dump(by_alias=True, mode="json"),
             suggested_price=market_result.suggested_price,
             confidence_score=market_result.confidence,
             risk_level="MEDIUM",
@@ -77,15 +104,14 @@ class OrchestrationService:
             run_status="SUCCESS",
             input_summary=f"candidate_price={candidate_price}, constraints={payload.constraints}",
             output_summary=risk_result.summary,
-            output_payload=risk_result.model_dump(by_alias=True),
+            output_payload=risk_result.model_dump(by_alias=True, mode="json"),
             suggested_price=risk_result.suggested_price,
             confidence_score=0.86,
             risk_level=risk_result.risk_level,
             need_manual_review=risk_result.need_manual_review,
         )
 
-        # 避免退化为普通线性工作流：
-        # 当数据与市场分歧较大时，经理触发二次协商，而不是直接汇总。
+        # 避免退化为单向流水线：当 DATA 与 MARKET 分歧过大时，触发二次协商复议。
         spread = abs(data_result.suggested_price - market_result.suggested_price)
         if payload.product.current_price > 0 and spread / payload.product.current_price > Decimal("0.12"):
             second_strategy = "MARKET_SHARE" if payload.strategy_goal.upper() == "MAX_PROFIT" else payload.strategy_goal
@@ -102,7 +128,7 @@ class OrchestrationService:
                 run_status="SUCCESS",
                 input_summary=f"二次协商触发: spread={money(spread)} second_strategy={second_strategy}",
                 output_summary=data_result.summary,
-                output_payload=data_result.model_dump(by_alias=True),
+                output_payload=data_result.model_dump(by_alias=True, mode="json"),
                 suggested_price=data_result.suggested_price,
                 predicted_profit=data_result.expected_profit,
                 confidence_score=data_result.confidence,
@@ -117,7 +143,7 @@ class OrchestrationService:
                 run_status="SUCCESS",
                 input_summary=f"二次协商触发: spread={money(spread)} second_strategy={second_strategy}",
                 output_summary=market_result.summary,
-                output_payload=market_result.model_dump(by_alias=True),
+                output_payload=market_result.model_dump(by_alias=True, mode="json"),
                 suggested_price=market_result.suggested_price,
                 confidence_score=market_result.confidence,
                 risk_level="MEDIUM",
@@ -137,7 +163,7 @@ class OrchestrationService:
                 run_status="SUCCESS",
                 input_summary=f"二次风控 candidate_price={candidate_price}",
                 output_summary=risk_result.summary,
-                output_payload=risk_result.model_dump(by_alias=True),
+                output_payload=risk_result.model_dump(by_alias=True, mode="json"),
                 suggested_price=risk_result.suggested_price,
                 confidence_score=0.86,
                 risk_level=risk_result.risk_level,
@@ -161,7 +187,7 @@ class OrchestrationService:
             run_status="SUCCESS",
             input_summary="综合裁决",
             output_summary=manager_result.result_summary,
-            output_payload=manager_result.model_dump(by_alias=True),
+            output_payload=manager_result.model_dump(by_alias=True, mode="json"),
             suggested_price=manager_result.final_price,
             predicted_profit=manager_result.expected_profit,
             confidence_score=0.82 if manager_result.is_pass else 0.58,

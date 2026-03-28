@@ -3,26 +3,36 @@ import logging
 from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
+from app.crew.protocols import CrewRunPayload
 from app.db.session import SessionLocal
-from app.repos.task_repo import TaskRepo
+from app.repos.log_repo import LogRepo
 from app.repos.result_repo import ResultRepo
-from app.schemas.task import DispatchTaskRequest, DispatchTaskResponse, TaskStatusResponse
+from app.repos.task_repo import TaskRepo
+from app.schemas.task import (
+    AgentLogItem,
+    DispatchTaskRequest,
+    DispatchTaskResponse,
+    TaskDetailResponse,
+    TaskLogsResponse,
+    TaskResultBrief,
+    TaskStatusResponse,
+)
 from app.services.context_service import ContextService
 from app.services.orchestration_service import OrchestrationService
 from app.tools.log_writer_tool import LogWriterTool
-from app.crew.protocols import CrewRunPayload
 from app.utils.text_utils import parse_constraints
 
 logger = logging.getLogger(__name__)
 
 
 class DispatchService:
-    """任务派发服务：只做任务受理、状态流转和后台执行调度。"""
+    """任务派发服务：任务受理、状态流转、后台执行调度。"""
 
     def __init__(self, db: Session):
         self.db = db
         self.task_repo = TaskRepo(db)
         self.result_repo = ResultRepo(db)
+        self.log_repo = LogRepo(db)
 
     def dispatch(self, req: DispatchTaskRequest, background_tasks: BackgroundTasks) -> DispatchTaskResponse:
         # 幂等受理：避免重复派发同一个 task
@@ -56,6 +66,63 @@ class DispatchService:
         background_tasks.add_task(self._run_background, payload)
         return DispatchTaskResponse(accepted=True, taskId=req.task_id, status="RUNNING", message="retry accepted")
 
+    def get_detail(self, task_id: int) -> TaskDetailResponse:
+        task = self.task_repo.get_by_id(task_id)
+        if task is None:
+            raise ValueError(f"task not found: {task_id}")
+
+        result_entity = self.result_repo.get_by_task_id(task_id)
+        result = None
+        if result_entity is not None:
+            result = TaskResultBrief(
+                finalPrice=result_entity.final_price,
+                expectedSales=result_entity.expected_sales,
+                expectedProfit=result_entity.expected_profit,
+                profitGrowth=result_entity.profit_growth,
+                isPass=(result_entity.is_pass == 1),
+                executeStrategy=result_entity.execute_strategy,
+                resultSummary=result_entity.result_summary,
+            )
+
+        return TaskDetailResponse(
+            taskId=task.id,
+            status=task.task_status,
+            productId=task.product_id,
+            currentPrice=task.current_price,
+            suggestedMinPrice=task.suggested_min_price,
+            suggestedMaxPrice=task.suggested_max_price,
+            createdAt=task.created_at,
+            updatedAt=task.updated_at,
+            hasResult=result_entity is not None,
+            result=result,
+        )
+
+    def get_logs(self, task_id: int, limit: int = 200) -> TaskLogsResponse:
+        logs = self.log_repo.list_by_task_id(task_id, limit=limit)
+        return TaskLogsResponse(
+            taskId=task_id,
+            total=len(logs),
+            logs=[
+                AgentLogItem(
+                    id=item.id,
+                    taskId=item.task_id,
+                    agentCode=item.agent_code,
+                    agentName=item.agent_name,
+                    runOrder=item.run_order,
+                    runStatus=item.run_status,
+                    outputSummary=item.output_summary,
+                    outputPayload=item.output_payload,
+                    suggestedPrice=item.suggested_price,
+                    predictedProfit=item.predicted_profit,
+                    confidenceScore=item.confidence_score,
+                    riskLevel=item.risk_level,
+                    needManualReview=item.need_manual_review == 1,
+                    createdAt=item.created_at,
+                )
+                for item in logs
+            ],
+        )
+
     @staticmethod
     def _run_background(payload: dict) -> None:
         db = SessionLocal()
@@ -69,7 +136,7 @@ class DispatchService:
             db.close()
 
     def _execute(self, req: DispatchTaskRequest) -> None:
-        # 后台执行入口：聚合上下文 -> 多 Agent 协作 -> 落库结果
+        """后台执行入口：聚合上下文 -> 多 Agent 协作 -> 结果落库。"""
         task = self.task_repo.get_by_id(req.task_id)
         if task is None:
             raise ValueError(f"task not found: {req.task_id}")
@@ -103,17 +170,27 @@ class DispatchService:
             orchestration_service = OrchestrationService(self.db)
             orchestration_service.run(payload)
         except Exception as exc:
-            self.task_repo.update_status(task, "FAILED")
-            log_tool.write(
-                task_id=req.task_id,
-                agent_code="SYSTEM",
-                agent_name="系统调度",
-                run_status="FAILED",
-                input_summary=f"strategy={req.strategy_goal}",
-                output_summary="任务执行失败",
-                output_payload={"error": str(exc)},
-                error_message=str(exc),
-                need_manual_review=True,
-                risk_level="HIGH",
-            )
+            # 出现异常后先 rollback，避免 Session 进入 pending rollback 状态导致二次写入失败
+            self.db.rollback()
+
+            task = self.task_repo.get_by_id(req.task_id)
+            if task is not None:
+                self.task_repo.update_status(task, "FAILED")
+
+            try:
+                log_tool.write(
+                    task_id=req.task_id,
+                    agent_code="SYSTEM",
+                    agent_name="系统调度",
+                    run_status="FAILED",
+                    input_summary=f"strategy={req.strategy_goal}",
+                    output_summary="任务执行失败",
+                    output_payload={"error": str(exc)},
+                    error_message=str(exc),
+                    need_manual_review=True,
+                    risk_level="HIGH",
+                )
+            except Exception:
+                self.db.rollback()
+                logger.exception("Write failed system log error")
             raise
