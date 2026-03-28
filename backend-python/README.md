@@ -2,7 +2,7 @@
 
 本目录是毕业设计中的 Python 协作后端，负责：
 - 接收 Java 派发的定价任务
-- 启动 CrewAI 的 4 Agent 协作过程（离线可运行）
+- 启动 CrewAI 的 4 Agent 协作过程（真实 LLM 调用）
 - 将 Agent 关键输出写入 `agent_run_log`
 - 生成最终决策并写入 `pricing_result`
 - 回写 `pricing_task` 状态和建议价格区间
@@ -34,7 +34,7 @@ backend-python/
     repos/              # 仓储层（数据库读写）
     services/           # 调度与编排服务
     agents/             # 4 个业务 Agent（Data/Market/Risk/Manager）
-    crew/               # CrewAI 运行层（含 Mock LLM）
+    crew/               # CrewAI 运行层（OpenAI 兼容 LLM 调用）
     tools/              # 工具层（数据、风控、市场模拟、日志、结果）
     schemas/            # 接口/协作 DTO
     utils/              # 通用工具
@@ -116,7 +116,13 @@ pip install -r requirements.txt
 - `MYSQL_DB`
 - `MYSQL_USER`
 - `MYSQL_PASSWORD`
+- `LLM_API_KEY`
+- `LLM_BASE_URL`
+- `MODEL`
 - `INTERNAL_API_TOKEN`（可选，与 Java 对齐）
+
+可选参数：
+- `LLM_TIMEOUT_SECONDS`（默认 60 秒）
 
 ### 6.3 启动服务（Windows 推荐）
 ```bash

@@ -20,8 +20,10 @@ class Settings(BaseSettings):
     internal_api_token: str = Field(default="", alias="INTERNAL_API_TOKEN")
     python_base_prefix: str = Field(default="/internal", alias="PYTHON_BASE_PREFIX")
 
-    dashscope_api_key: str = Field(default="", alias="DASHSCOPE_API_KEY")
-    agent_model: str = Field(default="qwen-plus", alias="AGENT_MODEL")
+    llm_api_key: str = Field(default="", alias="LLM_API_KEY")
+    llm_base_url: str = Field(default="", alias="LLM_BASE_URL")
+    llm_model: str = Field(default="qwen-plus", alias="MODEL")
+    llm_timeout_seconds: int = Field(default=60, alias="LLM_TIMEOUT_SECONDS")
 
     market_simulation_enabled: bool = Field(default=True, alias="MARKET_SIMULATION_ENABLED")
 
@@ -36,4 +38,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-
