@@ -89,7 +89,7 @@
       <el-form ref="formRef" :model="form" :rules="rules" label-width="96px" class="product-form">
         <div class="form-grid">
           <el-form-item label="商品编号" prop="itemId">
-            <el-input-number v-model="form.itemId" :min="1" :precision="0" :step="1" style="width: 100%" />
+            <el-input v-model="form.itemId" clearable placeholder="可留空自动生成或输入商品编号" />
           </el-form-item>
           <el-form-item label="商品标题" prop="title">
             <el-input v-model="form.title" placeholder="请输入商品标题" />
@@ -152,7 +152,7 @@ const queryParams = reactive({
 })
 
 const form = reactive({
-  itemId: undefined as number | undefined,
+  itemId: '',
   title: '',
   category: '',
   costPrice: 0,
@@ -172,7 +172,7 @@ const rules = {
 const isMobile = computed(() => window.innerWidth <= 768)
 
 const resetForm = () => {
-  form.itemId = undefined
+  form.itemId = ''
   form.title = ''
   form.category = ''
   form.costPrice = 0

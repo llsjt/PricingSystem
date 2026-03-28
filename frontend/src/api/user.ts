@@ -1,6 +1,27 @@
 import request from './request'
 
-export const login = (data: any) => {
+export interface LoginPayload {
+  username: string
+  password: string
+}
+
+export interface UserListItem {
+  id: number
+  username: string
+  email: string
+  status: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface UserPayload {
+  username: string
+  password?: string
+  email: string
+  status?: number
+}
+
+export const login = (data: LoginPayload) => {
   return request({
     url: '/user/login',
     method: 'post',
@@ -15,7 +36,7 @@ export const logout = () => {
   })
 }
 
-export const getUserList = (params: any) => {
+export const getUserList = (params: { page: number; size: number }) => {
   return request({
     url: '/user/list',
     method: 'get',
@@ -23,7 +44,7 @@ export const getUserList = (params: any) => {
   })
 }
 
-export const addUser = (data: any) => {
+export const addUser = (data: UserPayload) => {
   return request({
     url: '/user/add',
     method: 'post',
@@ -31,7 +52,7 @@ export const addUser = (data: any) => {
   })
 }
 
-export const updateUser = (id: number, data: any) => {
+export const updateUser = (id: number, data: UserPayload) => {
   return request({
     url: `/user/${id}`,
     method: 'put',

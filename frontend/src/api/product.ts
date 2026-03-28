@@ -4,11 +4,11 @@ export type ImportDataType = 'AUTO' | 'PRODUCT_BASE' | 'PRODUCT_DAILY_METRIC' | 
 
 export interface ProductListVO {
   id: number
-  itemId: number
+  itemId: string
   title: string
   category?: string
-  costPrice: number
-  currentPrice: number
+  costPrice: number | null
+  currentPrice: number | null
   stock?: number
   status: string
   monthlySales?: number
@@ -17,7 +17,7 @@ export interface ProductListVO {
 }
 
 export interface ProductManualDTO {
-  itemId?: number
+  itemId?: string
   title: string
   category?: string
   costPrice: number

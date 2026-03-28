@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.pricing.common.Result;
 import com.example.pricing.entity.SysUser;
 import com.example.pricing.mapper.SysUserMapper;
+import com.example.pricing.vo.UserListVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -45,13 +46,19 @@ public class UserController {
     }
 
     @GetMapping("/list")
-    public Result<Page<SysUser>> getUserList(
+    public Result<Page<UserListVO>> getUserList(
             @RequestHeader(value = "X-Username", required = false) String currentUsername,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size) {
         requireAdmin(currentUsername);
         Page<SysUser> pageParam = new Page<>(page, size);
-        return Result.success(userMapper.selectPage(pageParam, null));
+        Page<SysUser> userPage = userMapper.selectPage(pageParam, null);
+        Page<UserListVO> resultPage = new Page<>();
+        resultPage.setCurrent(userPage.getCurrent());
+        resultPage.setSize(userPage.getSize());
+        resultPage.setTotal(userPage.getTotal());
+        resultPage.setRecords(userPage.getRecords().stream().map(this::toUserListVO).toList());
+        return Result.success(resultPage);
     }
 
     @PostMapping("/add")
@@ -67,7 +74,7 @@ public class UserController {
         }
 
         user.setAccount(user.getUsername());
-        user.setStatus(1);
+        user.setStatus(user.getStatus() == null ? 1 : user.getStatus());
         userMapper.insert(user);
         return Result.success(null);
     }
@@ -153,5 +160,16 @@ public class UserController {
         if (user == null || !"admin".equals(user.getUsername())) {
             throw new RuntimeException("无权进行此操作，仅限管理员");
         }
+    }
+
+    private UserListVO toUserListVO(SysUser user) {
+        UserListVO vo = new UserListVO();
+        vo.setId(user.getId());
+        vo.setUsername(user.getUsername());
+        vo.setEmail(user.getEmail());
+        vo.setStatus(user.getStatus());
+        vo.setCreatedAt(user.getCreatedAt());
+        vo.setUpdatedAt(user.getUpdatedAt());
+        return vo;
     }
 }

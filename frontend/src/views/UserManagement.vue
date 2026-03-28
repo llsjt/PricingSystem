@@ -25,6 +25,13 @@
         <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="username" label="用户名" min-width="160" />
         <el-table-column prop="email" label="邮箱" min-width="220" />
+        <el-table-column label="状态" width="120">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 1 ? 'success' : 'danger'" effect="plain">
+              {{ row.status === 1 ? '启用' : '禁用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" min-width="180" />
         <el-table-column label="角色说明" min-width="140">
           <template #default="{ row }">
@@ -78,6 +85,12 @@
         <el-form-item label="邮箱" prop="email">
           <el-input v-model="form.email" placeholder="请输入邮箱地址" />
         </el-form-item>
+        <el-form-item label="状态" prop="status">
+          <el-select v-model="form.status" :disabled="isEditMode && form.username === 'admin'">
+            <el-option label="启用" :value="1" />
+            <el-option label="禁用" :value="0" />
+          </el-select>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -90,10 +103,10 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { addUser, batchDeleteUsers, deleteUser, getUserList, updateUser } from '../api/user'
+import { addUser, batchDeleteUsers, deleteUser, getUserList, updateUser, type UserListItem } from '../api/user'
 
 const loading = ref(false)
-const tableData = ref<any[]>([])
+const tableData = ref<UserListItem[]>([])
 const total = ref(0)
 const dialogVisible = ref(false)
 const isEditMode = ref(false)
@@ -109,7 +122,8 @@ const queryParams = reactive({
 const form = reactive({
   username: '',
   password: '',
-  email: ''
+  email: '',
+  status: 1
 })
 
 const rules: FormRules = {
@@ -132,6 +146,7 @@ const resetForm = () => {
   form.username = ''
   form.password = ''
   form.email = ''
+  form.status = 1
   editingUserId.value = null
   isEditMode.value = false
 }
@@ -154,9 +169,9 @@ const fetchUsers = async () => {
   }
 }
 
-const isRowSelectable = (row: any) => row.username !== 'admin'
+const isRowSelectable = (row: UserListItem) => row.username !== 'admin'
 
-const handleSelectionChange = (rows: any[]) => {
+const handleSelectionChange = (rows: UserListItem[]) => {
   selectedIds.value = rows.map((row) => Number(row.id)).filter((id) => Number.isFinite(id))
 }
 
@@ -165,13 +180,14 @@ const openCreateDialog = () => {
   dialogVisible.value = true
 }
 
-const openEditDialog = (row: any) => {
+const openEditDialog = (row: UserListItem) => {
   resetForm()
   dialogVisible.value = true
   isEditMode.value = true
   editingUserId.value = row.id
   form.username = row.username || ''
   form.email = row.email || ''
+  form.status = row.status ?? 1
 }
 
 const submitUser = async () => {
@@ -183,9 +199,15 @@ const submitUser = async () => {
     try {
       let res: any
       if (isEditMode.value && editingUserId.value !== null) {
-        const payload: Record<string, string> = {
+        const payload: {
+          username: string
+          email: string
+          status: number
+          password?: string
+        } = {
           username: form.username,
-          email: form.email
+          email: form.email,
+          status: form.status
         }
         if (form.password) {
           payload.password = form.password
@@ -195,7 +217,8 @@ const submitUser = async () => {
         res = await addUser({
           username: form.username,
           password: form.password,
-          email: form.email
+          email: form.email,
+          status: form.status
         })
       }
 
@@ -213,7 +236,7 @@ const submitUser = async () => {
   })
 }
 
-const handleDelete = async (row: any) => {
+const handleDelete = async (row: UserListItem) => {
   try {
     const res: any = await deleteUser(row.id)
     if (res.code === 200) {
