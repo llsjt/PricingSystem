@@ -22,65 +22,30 @@
         <section class="panel-card import-panel">
           <div class="section-head">
             <div class="section-title">
-              <h2>淘宝 Excel 批量导入</h2>
-              <p>当前只围绕已有数据库表导入，支持商品基础信息、商品经营日报、流量推广日报三类淘宝导出 Excel。</p>
+              <h2>Excel 批量导入</h2>
+              <p>支持导入 4 类电商平台 Excel 模板：商品基础信息、商品SKU、商品经营日报、流量推广日报。</p>
+              <p>当前导入模式为自动识别 Excel（根据表头自动匹配模板类型）。</p>
             </div>
           </div>
 
-          <div class="guide-grid">
-            <article class="guide-card">
-              <strong>推荐导入顺序</strong>
-              <span>1. 商品基础信息 → 2. 商品经营日报 → 3. 流量推广日报</span>
-            </article>
-            <article class="guide-card warm">
-              <strong>为什么要拆成多类 Excel</strong>
-              <span>淘宝后台的商品、经营、推广数据分散在不同模块，字段结构不同，拆开导入才能稳定落到现有表结构里。</span>
-            </article>
+          <div class="template-brief">
+            <span>可导入模板：</span>
+            <el-tag size="small" effect="plain">商品基础信息</el-tag>
+            <el-tag size="small" effect="plain">商品SKU</el-tag>
+            <el-tag size="small" effect="plain">商品经营日报</el-tag>
+            <el-tag size="small" effect="plain">流量推广日报</el-tag>
           </div>
 
-          <div class="type-grid">
-            <article
-              v-for="item in importTypes"
-              :key="item.code"
-              :class="['type-card', { active: selectedType === item.code }]"
-              @click="selectedType = item.code"
-            >
-              <div class="type-head">
-                <div>
-                  <strong>{{ item.title }}</strong>
-                  <div class="type-table">目标表：`{{ item.table }}`</div>
-                </div>
-                <el-tag size="small" :type="selectedType === item.code ? 'success' : 'info'">
-                  {{ selectedType === item.code ? '当前模板' : '可选模板' }}
-                </el-tag>
-              </div>
-
-              <p class="type-desc">{{ item.description }}</p>
-
-              <div class="type-fields">
-                <span v-for="field in item.fields" :key="field">{{ field }}</span>
-              </div>
-
-              <div class="type-actions">
-                <el-button size="small" @click.stop="selectedType = item.code">使用此类型</el-button>
-                <el-button size="small" type="primary" plain @click.stop="handleDownloadTemplate(item.code)">
-                  下载模板
-                </el-button>
-              </div>
-            </article>
-          </div>
-
-          <div class="mode-row">
-            <div class="mode-summary">
-              <strong>当前上传模式</strong>
-              <span>{{ currentModeText }}</span>
-            </div>
-            <el-switch
-              v-model="autoDetect"
-              inline-prompt
-              active-text="自动识别"
-              inactive-text="手动指定"
-            />
+          <div class="platform-picker">
+            <span class="picker-label">电商平台</span>
+            <el-select v-model="selectedPlatform" placeholder="请先选择电商平台" class="platform-select" clearable>
+              <el-option
+                v-for="platform in platformOptions"
+                :key="platform"
+                :label="platform"
+                :value="platform"
+              />
+            </el-select>
           </div>
 
           <div class="import-layout">
@@ -95,24 +60,16 @@
                 :limit="1"
               >
                 <el-icon class="upload-icon"><UploadFilled /></el-icon>
-                <div class="upload-title">上传淘宝后台导出的 Excel</div>
+                <div class="upload-title">上传电商平台导出的 Excel</div>
                 <div class="upload-desc">
-                  {{ autoDetect ? '系统会根据表头自动识别导入类型' : `当前将按“${selectedTypeInfo.title}”解析` }}
+                  {{
+                    selectedPlatform
+                      ? `当前平台：${selectedPlatform}；${autoDetect ? '系统会根据表头自动识别导入类型' : `当前将按“${selectedTypeInfo.title}”解析`}`
+                      : '请先选择电商平台，再上传 Excel'
+                  }}
                 </div>
                 <div class="upload-hint">支持 `.xlsx` 和 `.xls`，单文件不超过 10MB</div>
               </el-upload>
-            </div>
-
-            <div class="import-side">
-              <div class="action-card">
-                <strong>当前选中的模板类型</strong>
-                <span>{{ selectedTypeInfo.title }}</span>
-                <small>{{ selectedTypeInfo.description }}</small>
-              </div>
-              <div class="action-card warm">
-                <strong>导入约束</strong>
-                <span>商品经营日报会先匹配已导入的商品基础信息；流量推广日报即使暂时匹配不到商品，也会先保留渠道数据。</span>
-              </div>
             </div>
           </div>
 
@@ -187,8 +144,15 @@ const importTypes: ImportTypeOption[] = [
     code: 'PRODUCT_BASE',
     title: '商品基础信息',
     table: 'product',
-    description: '同步淘宝商品主档，写入商品 ID、标题、类目、售价、成本价、库存和状态。',
+    description: '同步电商平台商品主档，写入商品 ID、标题、类目、售价、成本价、库存和状态。',
     fields: ['商品ID', '商品标题', '商品类目', '当前售价', '库存']
+  },
+  {
+    code: 'PRODUCT_SKU',
+    title: '商品SKU',
+    table: 'product_sku',
+    description: '导入商品 SKU 明细，按商品维度写入 SKU 编号、规格属性、价格和库存。',
+    fields: ['商品ID', 'SKU ID', 'SKU属性', 'SKU售价', 'SKU库存']
   },
   {
     code: 'PRODUCT_DAILY_METRIC',
@@ -209,6 +173,8 @@ const importTypes: ImportTypeOption[] = [
 const activeTab = ref('products')
 const autoDetect = ref(true)
 const selectedType = ref<Exclude<ImportDataType, 'AUTO'>>('PRODUCT_BASE')
+const selectedPlatform = ref('')
+const platformOptions = ['淘宝', '天猫', '京东', '拼多多', '抖音']
 const importResult = ref<ImportResultVO | null>(null)
 const productListRef = ref<any>(null)
 
@@ -218,13 +184,6 @@ const selectedTypeInfo = computed(() => {
 
 const requestType = computed<ImportDataType>(() => {
   return autoDetect.value ? 'AUTO' : selectedType.value
-})
-
-const currentModeText = computed(() => {
-  if (autoDetect.value) {
-    return `自动识别（当前参考模板：${selectedTypeInfo.value.title}）`
-  }
-  return `手动指定为：${selectedTypeInfo.value.title}`
 })
 
 const importAlertType = computed(() => {
@@ -255,6 +214,10 @@ const createUploadError = (message: string) => {
 }
 
 const beforeUpload: UploadProps['beforeUpload'] = (rawFile) => {
+  if (!selectedPlatform.value) {
+    ElMessage.warning('请先选择电商平台')
+    return false
+  }
   const name = rawFile.name.toLowerCase()
   if (!name.endsWith('.xlsx') && !name.endsWith('.xls')) {
     ElMessage.error('请上传 Excel 文件（.xls / .xlsx）')
@@ -273,7 +236,7 @@ const handleCustomUpload: UploadProps['httpRequest'] = async (options) => {
 
   try {
     const response: any = await request.post('/products/import', formData, {
-      params: { dataType: requestType.value },
+      params: { dataType: requestType.value, platform: selectedPlatform.value },
       headers: { 'Content-Type': 'multipart/form-data' }
     })
 
@@ -307,7 +270,7 @@ const handleDownloadTemplate = async (type: Exclude<ImportDataType, 'AUTO'> = se
     const link = document.createElement('a')
     const current = importTypes.find((item) => item.code === type)
     link.href = url
-    link.download = `${current?.title || '淘宝导入'}模板.xlsx`
+    link.download = `${current?.title || '电商平台导入'}模板.xlsx`
     link.click()
     window.URL.revokeObjectURL(url)
     ElMessage.success('模板下载成功')
@@ -371,138 +334,44 @@ const formatDateRange = (start?: string, end?: string) => {
   line-height: 1.6;
 }
 
-.guide-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin-bottom: 16px;
-}
-
-.guide-card {
-  display: grid;
-  gap: 8px;
-  padding: 16px 18px;
-  border-radius: 10px;
-  background: linear-gradient(180deg, rgba(31, 111, 235, 0.08), rgba(255, 255, 255, 0.96));
-  border: 1px solid rgba(31, 111, 235, 0.14);
-}
-
-.guide-card.warm {
-  background: linear-gradient(180deg, rgba(255, 159, 67, 0.12), rgba(255, 255, 255, 0.96));
-  border-color: rgba(255, 159, 67, 0.22);
-}
-
-.guide-card strong {
-  color: #24324a;
-  font-size: 15px;
-}
-
-.guide-card span {
-  color: #5e6a7d;
-  line-height: 1.7;
-}
-
-.type-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-  margin-bottom: 18px;
-}
-
-.type-card {
-  display: grid;
-  gap: 12px;
-  padding: 16px;
-  border-radius: 12px;
-  border: 1px solid rgba(37, 99, 235, 0.12);
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(255, 255, 255, 1));
-  cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-}
-
-.type-card:hover,
-.type-card.active {
-  transform: translateY(-2px);
-  border-color: rgba(37, 99, 235, 0.3);
-  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.08);
-}
-
-.type-head {
+.template-brief {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.type-head strong {
-  font-size: 16px;
-  color: #20314c;
-}
-
-.type-table {
-  margin-top: 6px;
-  color: #5e6a7d;
-  font-size: 12px;
-}
-
-.type-desc {
-  margin: 0;
-  color: #5e6a7d;
-  line-height: 1.7;
-  min-height: 68px;
-}
-
-.type-fields {
-  display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+  margin-bottom: 16px;
+  color: #4b5b73;
 }
 
-.type-fields span {
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(37, 99, 235, 0.08);
-  color: #2756c4;
-  font-size: 12px;
+.template-brief :deep(.el-tag) {
+  border-color: rgba(37, 99, 235, 0.25);
+  color: #2356c5;
 }
 
-.type-actions {
+.platform-picker {
   display: flex;
-  gap: 10px;
-}
-
-.mode-row {
-  display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 18px;
-  padding: 14px 16px;
-  border-radius: 12px;
-  background: #f7f9fc;
+  gap: 10px;
+  margin-bottom: 14px;
 }
 
-.mode-summary {
-  display: grid;
-  gap: 6px;
+.picker-label {
+  color: #4b5b73;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
-.mode-summary strong {
-  color: #24324a;
-}
-
-.mode-summary span {
-  color: #5e6a7d;
+.platform-select {
+  width: 220px;
 }
 
 .import-layout {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: 1fr;
   gap: 16px;
 }
 
-.import-main,
-.import-side {
+.import-main {
   min-width: 0;
 }
 
@@ -538,36 +407,6 @@ const formatDateRange = (start?: string, end?: string) => {
 .upload-desc,
 .upload-hint {
   color: #627086;
-  line-height: 1.7;
-}
-
-.import-side {
-  display: grid;
-  gap: 12px;
-  align-content: start;
-}
-
-.action-card {
-  display: grid;
-  gap: 8px;
-  padding: 16px;
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(16, 185, 129, 0.08), rgba(255, 255, 255, 0.96));
-  border: 1px solid rgba(16, 185, 129, 0.16);
-}
-
-.action-card.warm {
-  background: linear-gradient(180deg, rgba(249, 115, 22, 0.1), rgba(255, 255, 255, 0.96));
-  border-color: rgba(249, 115, 22, 0.2);
-}
-
-.action-card strong {
-  color: #24324a;
-}
-
-.action-card span,
-.action-card small {
-  color: #5e6a7d;
   line-height: 1.7;
 }
 
@@ -630,7 +469,6 @@ const formatDateRange = (start?: string, end?: string) => {
 }
 
 @media (max-width: 1100px) {
-  .type-grid,
   .result-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -641,19 +479,17 @@ const formatDateRange = (start?: string, end?: string) => {
 }
 
 @media (max-width: 768px) {
-  .guide-grid,
-  .type-grid,
-  .result-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .mode-row {
+  .platform-picker {
     flex-direction: column;
     align-items: flex-start;
   }
 
-  .type-actions {
-    flex-direction: column;
+  .platform-select {
+    width: 100%;
+  }
+
+  .result-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

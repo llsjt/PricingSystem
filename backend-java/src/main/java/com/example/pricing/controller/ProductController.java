@@ -5,8 +5,11 @@ import com.example.pricing.common.Result;
 import com.example.pricing.dto.ProductManualDTO;
 import com.example.pricing.service.ProductService;
 import com.example.pricing.vo.ImportResultVO;
+import com.example.pricing.vo.ProductDailyMetricVO;
 import com.example.pricing.vo.ProductListVO;
+import com.example.pricing.vo.ProductSkuVO;
 import com.example.pricing.vo.ProductTrendVO;
+import com.example.pricing.vo.TrafficPromoDailyVO;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -34,9 +37,10 @@ public class ProductController {
     @PostMapping("/import")
     public Result<ImportResultVO> importData(
             @RequestParam("file") MultipartFile file,
-            @RequestParam(value = "dataType", required = false) String dataType
+            @RequestParam(value = "dataType", required = false) String dataType,
+            @RequestParam(value = "platform", required = false) String platform
     ) {
-        return productService.importData(file, dataType);
+        return productService.importData(file, dataType, platform);
     }
 
     @GetMapping("/template")
@@ -57,9 +61,10 @@ public class ProductController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String keyword,
-            @RequestParam(required = false) String dataSource
+            @RequestParam(required = false) String dataSource,
+            @RequestParam(required = false) String platform
     ) {
-        return productService.getProductList(page, size, keyword, dataSource);
+        return productService.getProductList(page, size, keyword, dataSource, platform);
     }
 
     @DeleteMapping("/batch-delete")
@@ -73,5 +78,26 @@ public class ProductController {
             @RequestParam(defaultValue = "30") int days
     ) {
         return productService.getProductTrend(id, days);
+    }
+
+    @GetMapping("/{id}/daily-metrics")
+    public Result<List<ProductDailyMetricVO>> getProductDailyMetrics(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "90") Integer limit
+    ) {
+        return productService.getProductDailyMetrics(id, limit);
+    }
+
+    @GetMapping("/{id}/skus")
+    public Result<List<ProductSkuVO>> getProductSkus(@PathVariable Long id) {
+        return productService.getProductSkus(id);
+    }
+
+    @GetMapping("/{id}/traffic-promo")
+    public Result<List<TrafficPromoDailyVO>> getTrafficPromoDaily(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "90") Integer limit
+    ) {
+        return productService.getTrafficPromoDaily(id, limit);
     }
 }

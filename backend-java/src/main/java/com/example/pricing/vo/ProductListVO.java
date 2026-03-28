@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 @Data
 public class ProductListVO {
     private Long id;
+    private String platform;
     private String externalProductId;
     private String productName;
     private String categoryName;

@@ -4,11 +4,13 @@ import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.pricing.entity.Product;
 import com.example.pricing.entity.ProductDailyMetric;
+import com.example.pricing.entity.ProductSku;
 import com.example.pricing.entity.Shop;
 import com.example.pricing.entity.UploadBatch;
 import com.example.pricing.entity.TrafficPromoDaily;
 import com.example.pricing.mapper.ProductDailyMetricMapper;
 import com.example.pricing.mapper.ProductMapper;
+import com.example.pricing.mapper.ProductSkuMapper;
 import com.example.pricing.mapper.ShopMapper;
 import com.example.pricing.mapper.UploadBatchMapper;
 import com.example.pricing.mapper.TrafficPromoDailyMapper;
@@ -56,12 +58,18 @@ public class TaobaoExcelImportService {
 
     private final ProductMapper productMapper;
     private final ProductDailyMetricMapper statMapper;
+    private final ProductSkuMapper productSkuMapper;
     private final TrafficPromoDailyMapper trafficPromoDailyMapper;
     private final UploadBatchMapper batchMapper;
     private final ShopMapper shopMapper;
 
     @Transactional(rollbackFor = Exception.class)
     public ImportResultVO importExcel(MultipartFile file, String requestedTypeCode) {
+        return importExcel(file, requestedTypeCode, null);
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public ImportResultVO importExcel(MultipartFile file, String requestedTypeCode, String platform) {
         validateFile(file);
         ParsedSheet sheet = parseSheet(file);
         if (sheet.rows().isEmpty()) {
@@ -73,7 +81,7 @@ public class TaobaoExcelImportService {
                 || requestedTypeCode.isBlank()
                 || "AUTO".equalsIgnoreCase(requestedTypeCode);
 
-        Long shopId = resolveDefaultShopId();
+        Long shopId = resolveShopId(platform);
         UploadBatch batch = createBatch(
                 shopId,
                 Objects.requireNonNullElse(file.getOriginalFilename(), "taobao-import.xlsx"),
@@ -90,6 +98,7 @@ public class TaobaoExcelImportService {
             try {
                 LocalDate rowDate = switch (resolvedType) {
                     case PRODUCT_BASE -> importProductBase(shopId, row);
+                    case PRODUCT_SKU -> importProductSku(shopId, row);
                     case PRODUCT_DAILY_METRIC -> importProductDailyMetric(shopId, batch.getId(), row);
                     case TRAFFIC_PROMO_DAILY -> importTrafficPromoDaily(shopId, batch.getId(), row);
                 };
@@ -324,6 +333,57 @@ public class TaobaoExcelImportService {
         return null;
     }
 
+    private LocalDate importProductSku(Long shopId, ParsedRow row) {
+        String externalProductId = parseExternalProductId(row.getFirst("\u5546\u54c1ID", "\u5546\u54c1\u7f16\u53f7", "\u5b9d\u8d1dID", "Item ID", "item_id"));
+        String title = row.getFirst("\u5546\u54c1\u6807\u9898", "\u5b9d\u8d1d\u6807\u9898", "\u5546\u54c1\u540d\u79f0", "\u6807\u9898");
+        Product product = getOrCreateProduct(shopId, externalProductId, title);
+
+        String rawExternalSkuId = row.getFirst("SKU ID", "SKU\u7f16\u53f7", "\u89c4\u683cID", "\u5b50\u5546\u54c1ID", "sku_id", "external_sku_id");
+        String skuAttr = trimToNull(row.getFirst("SKU\u5c5e\u6027", "\u89c4\u683c", "\u89c4\u683c\u5c5e\u6027", "\u9500\u552e\u5c5e\u6027"));
+        if (skuAttr == null) {
+            skuAttr = "\u9ed8\u8ba4\u89c4\u683c";
+        }
+
+        String skuName = trimToNull(row.getFirst("SKU\u540d\u79f0", "\u89c4\u683c\u540d\u79f0", "\u5b50\u5546\u54c1\u540d\u79f0"));
+        if (skuName == null) {
+            String productTitle = trimToNull(product.getTitle());
+            skuName = productTitle == null ? "\u9ed8\u8ba4SKU - " + skuAttr : productTitle + " - " + skuAttr;
+        }
+
+        String externalSkuId = resolveExternalSkuId(rawExternalSkuId, product, skuName, skuAttr);
+        LambdaQueryWrapper<ProductSku> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(ProductSku::getProductId, product.getId())
+                .eq(ProductSku::getExternalSkuId, externalSkuId)
+                .last("LIMIT 1");
+        ProductSku sku = productSkuMapper.selectOne(wrapper);
+        if (sku == null) {
+            sku = new ProductSku();
+            sku.setProductId(product.getId());
+            sku.setExternalSkuId(externalSkuId);
+        }
+
+        BigDecimal skuSalePrice = nullableMoney(parseAmount(row.getFirst("SKU\u552e\u4ef7", "SKU\u4ef7\u683c", "\u9500\u552e\u4ef7", "\u5f53\u524d\u552e\u4ef7", "\u4ef7\u683c")));
+        BigDecimal skuCostPrice = nullableMoney(parseAmount(row.getFirst("SKU\u6210\u672c\u4ef7", "\u6210\u672c\u4ef7", "\u4f9b\u8d27\u4ef7", "\u91c7\u8d2d\u4ef7")));
+        Integer skuStock = parseInteger(row.getFirst("SKU\u5e93\u5b58", "\u5e93\u5b58", "\u53ef\u552e\u5e93\u5b58", "\u5269\u4f59\u5e93\u5b58"));
+
+        BigDecimal finalSalePrice = resolveSkuSalePrice(skuSalePrice, product.getCurrentPrice());
+        BigDecimal finalCostPrice = resolveSkuCostPrice(skuCostPrice, product.getCostPrice(), finalSalePrice);
+        Integer finalStock = resolveSkuStock(skuStock, product.getStock());
+
+        sku.setSkuName(skuName);
+        sku.setSkuAttr(skuAttr);
+        sku.setSalePrice(finalSalePrice);
+        sku.setCostPrice(finalCostPrice);
+        sku.setStock(finalStock);
+
+        if (sku.getId() == null) {
+            productSkuMapper.insert(sku);
+        } else {
+            productSkuMapper.updateById(sku);
+        }
+        return null;
+    }
+
     private LocalDate importProductDailyMetric(Long shopId, Long batchId, ParsedRow row) {
         LocalDate statDate = parseDate(row.getRequired("\u7edf\u8ba1\u65e5\u671f", "\u65e5\u671f", "\u6570\u636e\u65e5\u671f"));
         String externalProductId = parseExternalProductId(row.getFirst("\u5546\u54c1ID", "\u5546\u54c1\u7f16\u53f7", "\u5b9d\u8d1dID", "Item ID", "item_id"));
@@ -482,6 +542,23 @@ public class TaobaoExcelImportService {
         return shop.getId();
     }
 
+    private Long resolveShopId(String platform) {
+        String normalizedPlatform = trimToNull(platform);
+        if (normalizedPlatform == null) {
+            return resolveDefaultShopId();
+        }
+
+        LambdaQueryWrapper<Shop> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Shop::getPlatform, normalizedPlatform)
+                .orderByAsc(Shop::getId)
+                .last("LIMIT 1");
+        Shop shop = shopMapper.selectOne(wrapper);
+        if (shop == null) {
+            throw new IllegalArgumentException("未找到平台【" + normalizedPlatform + "】对应店铺");
+        }
+        return shop.getId();
+    }
+
     private String buildSummary(ImportType importType, int successCount, int failCount, boolean autoDetected) {
         StringBuilder builder = new StringBuilder();
         builder.append("已按“").append(importType.label).append("”处理，成功 ")
@@ -522,6 +599,52 @@ public class TaobaoExcelImportService {
             return "PLACEHOLDER-" + Math.abs((title.trim() + "-" + System.nanoTime()).hashCode());
         }
         return "PLACEHOLDER-" + System.currentTimeMillis();
+    }
+
+    private String resolveExternalSkuId(String externalSkuId, Product product, String skuName, String skuAttr) {
+        String normalizedSkuId = parseExternalProductId(externalSkuId);
+        if (normalizedSkuId != null && !normalizedSkuId.isBlank()) {
+            return normalizedSkuId;
+        }
+        String productExternalId = trimToNull(product.getExternalProductId());
+        String baseId = productExternalId == null ? "P" + product.getId() : productExternalId;
+        String marker = skuAttr != null && !skuAttr.isBlank()
+                ? skuAttr
+                : Objects.requireNonNullElse(skuName, "DEFAULT");
+        return baseId + "-SKU-" + Math.abs(marker.hashCode());
+    }
+
+    private BigDecimal resolveSkuSalePrice(BigDecimal skuSalePrice, BigDecimal productSalePrice) {
+        if (skuSalePrice != null) {
+            return skuSalePrice.setScale(2, RoundingMode.HALF_UP);
+        }
+        if (productSalePrice != null) {
+            return productSalePrice.setScale(2, RoundingMode.HALF_UP);
+        }
+        return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal resolveSkuCostPrice(BigDecimal skuCostPrice, BigDecimal productCostPrice, BigDecimal skuSalePrice) {
+        if (skuCostPrice != null) {
+            return skuCostPrice.setScale(2, RoundingMode.HALF_UP);
+        }
+        if (productCostPrice != null) {
+            return productCostPrice.setScale(2, RoundingMode.HALF_UP);
+        }
+        if (skuSalePrice != null && skuSalePrice.compareTo(BigDecimal.ZERO) > 0) {
+            return skuSalePrice.multiply(BigDecimal.valueOf(0.65)).setScale(2, RoundingMode.HALF_UP);
+        }
+        return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private Integer resolveSkuStock(Integer skuStock, Integer productStock) {
+        if (skuStock != null && skuStock >= 0) {
+            return skuStock;
+        }
+        if (productStock != null && productStock > 0) {
+            return productStock;
+        }
+        return 0;
     }
 
     private Integer parseInteger(String value) {
@@ -699,6 +822,24 @@ public class TaobaoExcelImportService {
                         List.of("商品标题", "宝贝标题", "商品名称", "标题"),
                         List.of("当前售价", "售价", "销售价", "一口价", "商品价格"),
                         List.of("库存", "可售库存", "总库存")
+                )
+        ),
+        PRODUCT_SKU(
+                "PRODUCT_SKU",
+                "商品SKU",
+                "product_sku",
+                "商品SKU导入模板.xlsx",
+                "商品SKU",
+                List.of("商品ID", "商品标题", "SKU ID", "SKU名称", "SKU属性", "SKU售价", "SKU成本价", "SKU库存"),
+                List.of(
+                        List.<Object>of("202603260001", "防晒衣女夏季薄款", "202603260001-BLUE-M", "防晒衣女夏季薄款-蓝色/M", "颜色:蓝色;尺码:M", "99.00", "59.00", "66")
+                ),
+                List.of(
+                        List.of("商品ID", "商品编号", "宝贝ID", "Item ID"),
+                        List.of("SKU ID", "SKU编号", "规格ID", "子商品ID", "sku_id"),
+                        List.of("SKU属性", "规格", "规格属性", "销售属性"),
+                        List.of("SKU售价", "SKU价格", "销售价", "当前售价"),
+                        List.of("SKU库存", "库存", "可售库存")
                 )
         ),
         PRODUCT_DAILY_METRIC(

@@ -1,9 +1,10 @@
 import request from './request'
 
-export type ImportDataType = 'AUTO' | 'PRODUCT_BASE' | 'PRODUCT_DAILY_METRIC' | 'TRAFFIC_PROMO_DAILY'
+export type ImportDataType = 'AUTO' | 'PRODUCT_BASE' | 'PRODUCT_SKU' | 'PRODUCT_DAILY_METRIC' | 'TRAFFIC_PROMO_DAILY'
 
 export interface ProductListVO {
   id: number
+  platform?: string
   externalProductId: string
   productName: string
   categoryName?: string
@@ -14,6 +15,43 @@ export interface ProductListVO {
   monthlySales?: number
   conversionRate?: number
   updatedAt: string
+}
+
+export interface ProductDailyMetricVO {
+  id: number
+  statDate: string
+  visitorCount?: number
+  addCartCount?: number
+  payBuyerCount?: number
+  salesCount?: number
+  turnover?: number
+  refundAmount?: number
+  conversionRate?: number
+  createdAt?: string
+}
+
+export interface ProductSkuVO {
+  id: number
+  externalSkuId?: string
+  skuName?: string
+  skuAttr?: string
+  salePrice?: number
+  costPrice?: number
+  stock?: number
+  updatedAt?: string
+}
+
+export interface TrafficPromoDailyVO {
+  id: number
+  statDate: string
+  trafficSource?: string
+  impressionCount?: number
+  clickCount?: number
+  visitorCount?: number
+  costAmount?: number
+  payAmount?: number
+  roi?: number
+  createdAt?: string
 }
 
 export interface ProductManualDTO {
@@ -44,8 +82,20 @@ export interface ImportResultVO {
   errors?: string[]
 }
 
-export const getProductList = (params: { page: number; size: number; keyword?: string }) => {
+export const getProductList = (params: { page: number; size: number; keyword?: string; platform?: string }) => {
   return request.get('/products/list', { params })
+}
+
+export const getProductDailyMetrics = (id: number, params?: { limit?: number }) => {
+  return request.get(`/products/${id}/daily-metrics`, { params })
+}
+
+export const getProductSkus = (id: number) => {
+  return request.get(`/products/${id}/skus`)
+}
+
+export const getTrafficPromoDaily = (id: number, params?: { limit?: number }) => {
+  return request.get(`/products/${id}/traffic-promo`, { params })
 }
 
 export const addProductManual = (data: ProductManualDTO) => {

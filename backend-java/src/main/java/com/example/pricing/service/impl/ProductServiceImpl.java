@@ -9,6 +9,7 @@ import com.example.pricing.entity.PricingResult;
 import com.example.pricing.entity.PricingTask;
 import com.example.pricing.entity.Product;
 import com.example.pricing.entity.ProductDailyMetric;
+import com.example.pricing.entity.ProductSku;
 import com.example.pricing.entity.Shop;
 import com.example.pricing.entity.TrafficPromoDaily;
 import com.example.pricing.mapper.AgentRunLogMapper;
@@ -16,12 +17,16 @@ import com.example.pricing.mapper.PricingResultMapper;
 import com.example.pricing.mapper.PricingTaskMapper;
 import com.example.pricing.mapper.ProductDailyMetricMapper;
 import com.example.pricing.mapper.ProductMapper;
+import com.example.pricing.mapper.ProductSkuMapper;
 import com.example.pricing.mapper.ShopMapper;
 import com.example.pricing.mapper.TrafficPromoDailyMapper;
 import com.example.pricing.service.ProductService;
 import com.example.pricing.vo.ImportResultVO;
+import com.example.pricing.vo.ProductDailyMetricVO;
 import com.example.pricing.vo.ProductListVO;
+import com.example.pricing.vo.ProductSkuVO;
 import com.example.pricing.vo.ProductTrendVO;
+import com.example.pricing.vo.TrafficPromoDailyVO;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,8 +38,12 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -44,6 +53,7 @@ public class ProductServiceImpl implements ProductService {
 
     private final ProductMapper productMapper;
     private final ProductDailyMetricMapper statMapper;
+    private final ProductSkuMapper productSkuMapper;
     private final TrafficPromoDailyMapper trafficPromoDailyMapper;
     private final PricingTaskMapper pricingTaskMapper;
     private final PricingResultMapper pricingResultMapper;
@@ -52,9 +62,12 @@ public class ProductServiceImpl implements ProductService {
     private final TaobaoExcelImportService taobaoExcelImportService;
 
     @Override
-    public Result<ImportResultVO> importData(MultipartFile file, String dataType) {
+    public Result<ImportResultVO> importData(MultipartFile file, String dataType, String platform) {
         try {
-            return Result.success(taobaoExcelImportService.importExcel(file, dataType));
+            if (platform == null || platform.isBlank()) {
+                return Result.error("请先选择电商平台");
+            }
+            return Result.success(taobaoExcelImportService.importExcel(file, dataType, platform));
         } catch (Exception e) {
             log.error("Import excel failed", e);
             return Result.error(e.getMessage());
@@ -90,7 +103,7 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
-    public Result<Page<ProductListVO>> getProductList(int page, int size, String keyword, String dataSource) {
+    public Result<Page<ProductListVO>> getProductList(int page, int size, String keyword, String dataSource, String platform) {
         int safePage = Math.max(page, 1);
         int safeSize = size <= 0 || size > 100 ? 10 : size;
 
@@ -107,13 +120,24 @@ public class ProductServiceImpl implements ProductService {
                     .or(numericKeyword != null)
                     .eq(numericKeyword != null, Product::getId, numericKeyword));
         }
+        if (platform != null && !platform.isBlank()) {
+            LambdaQueryWrapper<Shop> shopWrapper = new LambdaQueryWrapper<>();
+            shopWrapper.eq(Shop::getPlatform, platform.trim());
+            List<Long> shopIds = shopMapper.selectList(shopWrapper).stream().map(Shop::getId).toList();
+            if (shopIds.isEmpty()) {
+                return Result.success(emptyPage(safePage, safeSize));
+            }
+            wrapper.in(Product::getShopId, shopIds);
+        }
         wrapper.orderByDesc(Product::getUpdatedAt, Product::getId);
 
         Page<Product> productPage = productMapper.selectPage(pageParam, wrapper);
+        Map<Long, String> shopPlatformMap = loadShopPlatformMap(productPage.getRecords());
         List<ProductListVO> records = productPage.getRecords().stream().map(product -> {
             ProductMetricSummary summary = loadMetricSummary(product.getId());
             ProductListVO vo = new ProductListVO();
             vo.setId(product.getId());
+            vo.setPlatform(shopPlatformMap.getOrDefault(product.getShopId(), "-"));
             vo.setExternalProductId(product.getExternalProductId());
             vo.setProductName(product.getTitle());
             vo.setCategoryName(product.getCategory());
@@ -243,6 +267,52 @@ public class ProductServiceImpl implements ProductService {
         }
 
         return Result.success(vo);
+    }
+
+    @Override
+    public Result<List<ProductDailyMetricVO>> getProductDailyMetrics(Long productId, Integer limit) {
+        if (productMapper.selectById(productId) == null) {
+            return Result.error("商品不存在");
+        }
+        int safeLimit = normalizeLimit(limit, 90, 365);
+        LambdaQueryWrapper<ProductDailyMetric> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(ProductDailyMetric::getProductId, productId)
+                .orderByDesc(ProductDailyMetric::getStatDate, ProductDailyMetric::getId)
+                .last("LIMIT " + safeLimit);
+        List<ProductDailyMetricVO> rows = statMapper.selectList(wrapper).stream()
+                .map(this::toDailyMetricVO)
+                .collect(Collectors.toList());
+        return Result.success(rows);
+    }
+
+    @Override
+    public Result<List<ProductSkuVO>> getProductSkus(Long productId) {
+        if (productMapper.selectById(productId) == null) {
+            return Result.error("商品不存在");
+        }
+        LambdaQueryWrapper<ProductSku> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(ProductSku::getProductId, productId)
+                .orderByDesc(ProductSku::getUpdatedAt, ProductSku::getId);
+        List<ProductSkuVO> rows = productSkuMapper.selectList(wrapper).stream()
+                .map(this::toProductSkuVO)
+                .collect(Collectors.toList());
+        return Result.success(rows);
+    }
+
+    @Override
+    public Result<List<TrafficPromoDailyVO>> getTrafficPromoDaily(Long productId, Integer limit) {
+        if (productMapper.selectById(productId) == null) {
+            return Result.error("商品不存在");
+        }
+        int safeLimit = normalizeLimit(limit, 90, 365);
+        LambdaQueryWrapper<TrafficPromoDaily> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(TrafficPromoDaily::getProductId, productId)
+                .orderByDesc(TrafficPromoDaily::getStatDate, TrafficPromoDaily::getId)
+                .last("LIMIT " + safeLimit);
+        List<TrafficPromoDailyVO> rows = trafficPromoDailyMapper.selectList(wrapper).stream()
+                .map(this::toTrafficPromoVO)
+                .collect(Collectors.toList());
+        return Result.success(rows);
     }
 
     @Override
@@ -462,6 +532,85 @@ public class ProductServiceImpl implements ProductService {
             return null;
         }
         return value.trim();
+    }
+
+    private Page<ProductListVO> emptyPage(int current, int size) {
+        Page<ProductListVO> page = new Page<>();
+        page.setCurrent(current);
+        page.setSize(size);
+        page.setTotal(0);
+        page.setRecords(List.of());
+        return page;
+    }
+
+    private Map<Long, String> loadShopPlatformMap(List<Product> products) {
+        if (products == null || products.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Set<Long> shopIds = products.stream()
+                .map(Product::getShopId)
+                .filter(id -> id != null)
+                .collect(Collectors.toSet());
+        if (shopIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        LambdaQueryWrapper<Shop> wrapper = new LambdaQueryWrapper<>();
+        wrapper.in(Shop::getId, shopIds);
+        Map<Long, String> result = new HashMap<>();
+        for (Shop shop : shopMapper.selectList(wrapper)) {
+            result.put(shop.getId(), shop.getPlatform());
+        }
+        return result;
+    }
+
+    private int normalizeLimit(Integer limit, int defaultValue, int maxValue) {
+        if (limit == null || limit <= 0) {
+            return defaultValue;
+        }
+        return Math.min(limit, maxValue);
+    }
+
+    private ProductDailyMetricVO toDailyMetricVO(ProductDailyMetric row) {
+        ProductDailyMetricVO vo = new ProductDailyMetricVO();
+        vo.setId(row.getId());
+        vo.setStatDate(row.getStatDate());
+        vo.setVisitorCount(row.getVisitorCount());
+        vo.setAddCartCount(row.getAddCartCount());
+        vo.setPayBuyerCount(row.getPayBuyerCount());
+        vo.setSalesCount(row.getSalesCount());
+        vo.setTurnover(row.getTurnover());
+        vo.setRefundAmount(row.getRefundAmount());
+        vo.setConversionRate(row.getConversionRate());
+        vo.setCreatedAt(row.getCreatedAt());
+        return vo;
+    }
+
+    private ProductSkuVO toProductSkuVO(ProductSku row) {
+        ProductSkuVO vo = new ProductSkuVO();
+        vo.setId(row.getId());
+        vo.setExternalSkuId(row.getExternalSkuId());
+        vo.setSkuName(row.getSkuName());
+        vo.setSkuAttr(row.getSkuAttr());
+        vo.setSalePrice(row.getSalePrice());
+        vo.setCostPrice(row.getCostPrice());
+        vo.setStock(row.getStock());
+        vo.setUpdatedAt(row.getUpdatedAt());
+        return vo;
+    }
+
+    private TrafficPromoDailyVO toTrafficPromoVO(TrafficPromoDaily row) {
+        TrafficPromoDailyVO vo = new TrafficPromoDailyVO();
+        vo.setId(row.getId());
+        vo.setStatDate(row.getStatDate());
+        vo.setTrafficSource(row.getTrafficSource());
+        vo.setImpressionCount(row.getImpressionCount());
+        vo.setClickCount(row.getClickCount());
+        vo.setVisitorCount(row.getVisitorCount());
+        vo.setCostAmount(row.getCostAmount());
+        vo.setPayAmount(row.getPayAmount());
+        vo.setRoi(row.getRoi());
+        vo.setCreatedAt(row.getCreatedAt());
+        return vo;
     }
 
     private Long parseLongOrNull(String value) {
