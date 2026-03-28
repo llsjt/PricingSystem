@@ -77,14 +77,17 @@
             </template>
           </el-table-column>
 
-          <el-table-column label="库存与状态" width="140">
+          <el-table-column label="状态" width="110">
             <template #default="{ row }">
-              <div class="cell-stack">
-                <el-tag :type="statusTagType(row.status)">{{ formatStatusText(row.status) }}</el-tag>
-                <span :class="['stock-text', { low: Number(row.stock || 0) <= 20 }]">
-                  库存 {{ Number(row.stock || 0) }}
-                </span>
-              </div>
+              <el-tag :type="statusTagType(row.status)">{{ formatStatusText(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="库存" width="120">
+            <template #default="{ row }">
+              <span :class="['stock-text', { low: Number(row.stock || 0) <= 20 }]">
+                {{ formatCount(row.stock) }}
+              </span>
             </template>
           </el-table-column>
 
@@ -283,12 +286,12 @@
 
               <div class="base-meta-grid">
                 <div class="base-meta-item">
-                  <span>价格竞争力</span>
-                  <strong>{{ formatPercent(calcRate(calcGrossProfit(currentProduct.salePrice, currentProduct.costPrice), currentProduct.salePrice)) }}</strong>
+                  <span>商品平台</span>
+                  <strong>{{ currentProduct.platform || '-' }}</strong>
                 </div>
                 <div class="base-meta-item">
-                  <span>库存状态</span>
-                  <strong>{{ stockLevel(currentProduct.stock).text }}</strong>
+                  <span>库存数量</span>
+                  <strong>{{ formatCount(currentProduct.stock) }}</strong>
                 </div>
                 <div class="base-meta-item">
                   <span>销售状态</span>
@@ -358,8 +361,8 @@
                   <strong>{{ formatCount(skuSummary.totalStock) }}</strong>
                 </div>
                 <div class="detail-kpi-item">
-                  <span>低库存SKU</span>
-                  <strong>{{ skuSummary.lowStockCount }}</strong>
+                  <span>平均库存</span>
+                  <strong>{{ formatCount(skuSummary.avgStock) }}</strong>
                 </div>
                 <div class="detail-kpi-item">
                   <span>平均售价</span>
@@ -388,11 +391,11 @@
                 <el-table-column label="毛利空间" width="120">
                   <template #default="{ row }">{{ formatCurrency(calcGrossProfit(row.salePrice, row.costPrice)) }}</template>
                 </el-table-column>
-                <el-table-column label="库存状态" width="120">
+                <el-table-column label="库存数量" width="120">
                   <template #default="{ row }">
-                    <el-tag size="small" :type="stockLevel(row.stock).type" class="stock-tag">
-                      {{ stockLevel(row.stock).text }}
-                    </el-tag>
+                    <strong :class="['sku-stock-value', { low: Number(row.stock || 0) <= 20 }]">
+                      {{ formatCount(row.stock) }}
+                    </strong>
                   </template>
                 </el-table-column>
               </el-table>
@@ -558,13 +561,6 @@ const calcRate = (numerator?: number | null, denominator?: number | null) => {
 }
 const calcGrossProfit = (salePrice?: number | null, costPrice?: number | null) =>
   Number(salePrice || 0) - Number(costPrice || 0)
-const stockLevel = (stock?: number | null) => {
-  const value = Number(stock || 0)
-  if (value <= 20) return { type: 'warning' as const, text: '偏低' }
-  if (value <= 80) return { type: 'success' as const, text: '正常' }
-  return { type: 'info' as const, text: '充足' }
-}
-
 const dailySummary = computed(() => {
   const rows = dailyMetrics.value
   const totalVisitors = rows.reduce((sum, row) => sum + Number(row.visitorCount || 0), 0)
@@ -584,7 +580,7 @@ const dailySummary = computed(() => {
 const skuSummary = computed(() => {
   const rows = skus.value
   const totalStock = rows.reduce((sum, row) => sum + Number(row.stock || 0), 0)
-  const lowStockCount = rows.filter((row) => Number(row.stock || 0) <= 20).length
+  const avgStock = Math.round(average(totalStock, rows.length))
   const avgSalePrice = average(
     rows.reduce((sum, row) => sum + Number(row.salePrice || 0), 0),
     rows.length
@@ -592,7 +588,7 @@ const skuSummary = computed(() => {
   return {
     count: rows.length,
     totalStock,
-    lowStockCount,
+    avgStock,
     avgSalePrice
   }
 })
@@ -1145,14 +1141,14 @@ onBeforeUnmount(() => {
 .detail-kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: 12px;
+  margin-bottom: 14px;
 }
 
 .detail-kpi-item {
   display: grid;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 12px 14px;
   border-radius: 10px;
   border: 1px solid var(--line-soft);
   background: linear-gradient(135deg, #f8fbff 0%, #f1f6ff 100%);
@@ -1160,17 +1156,18 @@ onBeforeUnmount(() => {
 
 .detail-kpi-item span {
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .detail-kpi-item strong {
   color: var(--text-1);
+  font-size: 22px;
   line-height: 1.3;
 }
 
 .metric-pairs {
   display: grid;
-  gap: 5px;
+  gap: 8px;
 }
 
 .metric-pairs span {
@@ -1182,22 +1179,41 @@ onBeforeUnmount(() => {
 
 .metric-pairs label {
   color: var(--text-3);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .metric-pairs strong {
   color: var(--text-1);
-  font-size: 13px;
+  font-size: 15px;
 }
 
-.stock-tag {
-  min-width: 54px;
-  justify-content: center;
+.sku-stock-value {
+  color: var(--text-1);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.sku-stock-value.low {
+  color: #b45309;
 }
 
 .detail-table-wrap :deep(.el-table) {
   width: 100%;
   table-layout: fixed;
+}
+
+.detail-table-wrap :deep(.el-table th),
+.detail-table-wrap :deep(.el-table td) {
+  padding: 10px 0;
+}
+
+.detail-table-wrap :deep(.el-table th .cell) {
+  font-size: 14px;
+}
+
+.detail-table-wrap :deep(.el-table td .cell) {
+  font-size: 14px;
+  line-height: 1.65;
 }
 
 .detail-actions {
