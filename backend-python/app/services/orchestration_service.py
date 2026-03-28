@@ -1,7 +1,11 @@
 from decimal import Decimal
+from queue import Empty, Queue
+from threading import Thread
+from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.crew.crew_factory import build_crew_bundle
 from app.crew.protocols import CrewRunPayload
 from app.schemas.result import TaskFinalResult
@@ -11,13 +15,123 @@ from app.utils.math_utils import money
 
 
 class OrchestrationService:
-    """编排服务：组织 4 个 Agent 协作，并将过程日志和最终结果落库。"""
+    """Coordinate multi-agent collaboration and persist logs/results."""
 
     def __init__(self, db: Session):
         self.db = db
         self.bundle = build_crew_bundle()
         self.log_tool = LogWriterTool(db)
         self.result_tool = ResultWriterTool(db)
+
+    @staticmethod
+    def _run_crewai_with_deadline(
+        payload: CrewRunPayload, timeout_seconds: int
+    ) -> tuple[dict[str, Any] | None, Exception | None]:
+        timeout_seconds = max(int(timeout_seconds or 0), 1)
+        result_queue: Queue[tuple[str, Any]] = Queue(maxsize=1)
+
+        def runner() -> None:
+            try:
+                from app.crew.crewai_runtime import run_crewai_session
+
+                result_queue.put(("SUCCESS", run_crewai_session(payload)))
+            except Exception as exc:
+                result_queue.put(("ERROR", exc))
+
+        worker = Thread(target=runner, daemon=True, name=f"crewai-task-{payload.task_id}")
+        worker.start()
+        worker.join(timeout=timeout_seconds)
+
+        if worker.is_alive():
+            return None, TimeoutError(f"CrewAI session timed out after {timeout_seconds}s")
+
+        try:
+            status, value = result_queue.get_nowait()
+        except Empty:
+            return None, RuntimeError("CrewAI session ended without output")
+
+        if status == "ERROR":
+            if isinstance(value, Exception):
+                return None, value
+            return None, RuntimeError(str(value))
+
+        if isinstance(value, dict):
+            return value, None
+        return {"rawOutput": str(value)}, None
+
+    def _run_crewai_with_fallback(self, payload: CrewRunPayload, context_text: str) -> None:
+        settings = get_settings()
+        session_timeout = max(settings.crewai_session_timeout_seconds, 10)
+
+        self.log_tool.write(
+            task_id=payload.task_id,
+            agent_code="CREWAI",
+            agent_name="CrewAI协作引擎",
+            run_status="RUNNING",
+            input_summary=context_text,
+            output_summary="CrewAI 协作已启动，正在执行多 Agent 协商",
+            output_payload={
+                "phase": "STARTED",
+                "enabled": self.bundle.crewai_available,
+                "sessionTimeoutSeconds": session_timeout,
+            },
+            risk_level="LOW",
+        )
+
+        if not self.bundle.crewai_available:
+            self.log_tool.write(
+                task_id=payload.task_id,
+                agent_code="CREWAI",
+                agent_name="CrewAI协作引擎",
+                run_status="SUCCESS",
+                input_summary=context_text,
+                output_summary="未检测到 CrewAI，已降级为本地多 Agent 编排",
+                output_payload={"enabled": False},
+                risk_level="LOW",
+            )
+            return
+
+        crewai_output, err = self._run_crewai_with_deadline(
+            payload=payload, timeout_seconds=session_timeout
+        )
+        if err is None:
+            self.log_tool.write(
+                task_id=payload.task_id,
+                agent_code="CREWAI",
+                agent_name="CrewAI协作引擎",
+                run_status="SUCCESS",
+                input_summary=context_text,
+                output_summary="CrewAI 4-Agent 协作执行完成",
+                output_payload=crewai_output,
+                risk_level="LOW",
+            )
+            return
+
+        if isinstance(err, TimeoutError):
+            self.log_tool.write(
+                task_id=payload.task_id,
+                agent_code="CREWAI",
+                agent_name="CrewAI协作引擎",
+                run_status="FAILED",
+                input_summary=context_text,
+                output_summary=f"CrewAI 执行超时（>{session_timeout}s），已降级为本地多 Agent 继续执行",
+                output_payload={"phase": "TIMEOUT", "error": str(err)},
+                error_message=str(err),
+                risk_level="MEDIUM",
+            )
+            return
+
+        self.log_tool.write(
+            task_id=payload.task_id,
+            agent_code="CREWAI",
+            agent_name="CrewAI协作引擎",
+            run_status="FAILED",
+            input_summary=context_text,
+            output_summary="CrewAI 调用异常，已降级为本地多 Agent 继续执行",
+            output_payload={"phase": "ERROR", "error": str(err)},
+            error_message=str(err),
+            risk_level="MEDIUM",
+        )
 
     def run(self, payload: CrewRunPayload) -> TaskFinalResult:
         product = payload.product
@@ -26,32 +140,7 @@ class OrchestrationService:
             f"strategy={payload.strategy_goal}, constraints={payload.constraints}"
         )
 
-        # 启动 CrewAI 四 Agent 协作（用于毕业设计答辩展示“真实多 Agent 协同”）
-        if self.bundle.crewai_available:
-            from app.crew.crewai_runtime import run_crewai_session
-
-            crewai_output = run_crewai_session(payload)
-            self.log_tool.write(
-                task_id=payload.task_id,
-                agent_code="CREWAI",
-                agent_name="CrewAI协作引擎",
-                run_status="SUCCESS",
-                input_summary=context_text,
-                output_summary="CrewAI 4-Agent 协作已执行",
-                output_payload=crewai_output,
-                risk_level="LOW",
-            )
-        else:
-            self.log_tool.write(
-                task_id=payload.task_id,
-                agent_code="CREWAI",
-                agent_name="CrewAI协作引擎",
-                run_status="SUCCESS",
-                input_summary=context_text,
-                output_summary="未检测到 CrewAI，使用本地多 Agent 编排",
-                output_payload={"enabled": False},
-                risk_level="LOW",
-            )
+        self._run_crewai_with_fallback(payload, context_text)
 
         data_result = self.bundle.data_agent.run(
             product=payload.product,
@@ -111,10 +200,11 @@ class OrchestrationService:
             need_manual_review=risk_result.need_manual_review,
         )
 
-        # 避免退化为单向流水线：当 DATA 与 MARKET 分歧过大时，触发二次协商复议。
+        # Avoid a rigid one-pass pipeline: trigger re-negotiation when DATA/MARKET diverge a lot.
         spread = abs(data_result.suggested_price - market_result.suggested_price)
         if payload.product.current_price > 0 and spread / payload.product.current_price > Decimal("0.12"):
             second_strategy = "MARKET_SHARE" if payload.strategy_goal.upper() == "MAX_PROFIT" else payload.strategy_goal
+
             data_result = self.bundle.data_agent.run(
                 product=payload.product,
                 metrics=payload.metrics,

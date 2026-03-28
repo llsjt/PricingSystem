@@ -1,10 +1,11 @@
 import json
 import os
+import time
 from typing import Any
 
 import httpx
 
-# 禁用 CrewAI 远端遥测，避免本地离线演示时出现 30s+ 超时。
+# Disable telemetry to reduce startup/remote-side overhead in local demos.
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
@@ -17,7 +18,7 @@ from app.utils.math_utils import money
 
 
 class OpenAICompatibleCrewAILLM(BaseLLM):
-    """通过 OpenAI 兼容接口真实调用大模型。"""
+    """Call OpenAI-compatible chat completions endpoint for CrewAI."""
 
     def __init__(
         self,
@@ -26,6 +27,10 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
         base_url: str,
         model: str,
         timeout_seconds: int,
+        connect_timeout_seconds: int,
+        read_timeout_seconds: int,
+        max_retries: int,
+        retry_backoff_seconds: float,
         temperature: float = 0.2,
     ) -> None:
         normalized_base = (base_url or "").strip().rstrip("/")
@@ -35,6 +40,7 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
             raise ValueError("LLM_BASE_URL is required")
         if not model.strip():
             raise ValueError("MODEL is required")
+
         super().__init__(
             model=model.strip(),
             provider="openai-compatible",
@@ -42,8 +48,13 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
             base_url=normalized_base,
             temperature=temperature,
         )
+
         self.chat_completions_url = self._build_chat_completions_url(normalized_base)
         self.timeout_seconds = max(int(timeout_seconds or 0), 5)
+        self.connect_timeout_seconds = max(int(connect_timeout_seconds or 0), 2)
+        self.read_timeout_seconds = max(int(read_timeout_seconds or 0), 5)
+        self.max_retries = max(int(max_retries or 0), 0)
+        self.retry_backoff_seconds = max(float(retry_backoff_seconds or 0), 0.1)
 
     @staticmethod
     def _build_chat_completions_url(base_url: str) -> str:
@@ -66,6 +77,53 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
                     chunks.append(item.strip())
             return "\n".join(chunks)
         return ""
+
+    def _build_httpx_timeout(self) -> httpx.Timeout:
+        return httpx.Timeout(
+            timeout=float(self.timeout_seconds),
+            connect=float(self.connect_timeout_seconds),
+            read=float(self.read_timeout_seconds),
+        )
+
+    def _request_with_retry(self, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+        retryable_statuses = {408, 429, 500, 502, 503, 504}
+        last_error: Exception | None = None
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                with httpx.Client(timeout=self._build_httpx_timeout()) as client:
+                    resp = client.post(self.chat_completions_url, json=payload, headers=headers)
+                resp.raise_for_status()
+                return resp.json()
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                status_code = exc.response.status_code
+                if status_code in retryable_statuses and attempt < self.max_retries:
+                    time.sleep(self.retry_backoff_seconds * (2**attempt))
+                    continue
+                detail = exc.response.text[:600]
+                raise RuntimeError(
+                    f"LLM API HTTP {status_code}, url={self.chat_completions_url}, body={detail}"
+                ) from exc
+            except httpx.TimeoutException as exc:
+                last_error = exc
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff_seconds * (2**attempt))
+                    continue
+                raise RuntimeError(
+                    "LLM API timeout "
+                    f"(connect={self.connect_timeout_seconds}s, read={self.read_timeout_seconds}s, total={self.timeout_seconds}s)"
+                ) from exc
+            except httpx.RequestError as exc:
+                last_error = exc
+                if attempt < self.max_retries:
+                    time.sleep(self.retry_backoff_seconds * (2**attempt))
+                    continue
+                raise RuntimeError(f"LLM API request failed: {exc}") from exc
+            except ValueError as exc:
+                raise RuntimeError(f"LLM API returned non-JSON response: {exc}") from exc
+
+        raise RuntimeError(f"LLM API request failed after retries: {last_error}")
 
     def call(
         self,
@@ -97,20 +155,7 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
             "Content-Type": "application/json",
         }
 
-        try:
-            with httpx.Client(timeout=self.timeout_seconds) as client:
-                resp = client.post(self.chat_completions_url, json=payload, headers=headers)
-            resp.raise_for_status()
-            result = resp.json()
-        except httpx.HTTPStatusError as exc:
-            detail = exc.response.text[:600]
-            raise RuntimeError(
-                f"LLM API HTTP {exc.response.status_code}, url={self.chat_completions_url}, body={detail}"
-            ) from exc
-        except httpx.RequestError as exc:
-            raise RuntimeError(f"LLM API request failed: {exc}") from exc
-        except ValueError as exc:
-            raise RuntimeError(f"LLM API returned non-JSON response: {exc}") from exc
+        result = self._request_with_retry(payload=payload, headers=headers)
 
         usage = result.get("usage")
         if isinstance(usage, dict):
@@ -144,6 +189,7 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
                                 parsed_args = {}
                         elif isinstance(raw_args, dict):
                             parsed_args = raw_args
+
                         if isinstance(function_name, str) and function_name:
                             maybe_output = self._handle_tool_execution(
                                 function_name=function_name,
@@ -154,6 +200,7 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
                             )
                             if isinstance(maybe_output, str) and maybe_output.strip():
                                 content = maybe_output
+
         if not content:
             raise RuntimeError("LLM response did not contain text content")
 
@@ -180,44 +227,57 @@ def build_crewai_llm() -> OpenAICompatibleCrewAILLM:
         base_url=settings.llm_base_url,
         model=settings.llm_model,
         timeout_seconds=settings.llm_timeout_seconds,
+        connect_timeout_seconds=settings.llm_connect_timeout_seconds,
+        read_timeout_seconds=settings.llm_read_timeout_seconds,
+        max_retries=settings.llm_max_retries,
+        retry_backoff_seconds=settings.llm_retry_backoff_seconds,
     )
 
 
 def run_crewai_session(payload: CrewRunPayload) -> dict[str, Any]:
-    """启动 4 Agent CrewAI 协作过程，返回可记录的执行摘要。"""
+    """Start 4-Agent CrewAI collaboration and return a summary payload."""
     llm = build_crewai_llm()
+    settings = get_settings()
+
+    max_iter = max(settings.crewai_agent_max_iter, 1)
+    max_execution_time = max(settings.crewai_agent_max_execution_seconds, 10)
+    max_retry_limit = max(settings.crewai_agent_max_retry_limit, 0)
+
+    common_agent_kwargs = {
+        "llm": llm,
+        "verbose": False,
+        "max_iter": max_iter,
+        "max_execution_time": max_execution_time,
+        "max_retry_limit": max_retry_limit,
+    }
 
     data_agent = Agent(
         role="数据分析Agent",
         goal="分析商品数据趋势并给出价格建议",
         backstory="擅长销量、转化率和利润弹性分析。",
-        llm=llm,
-        verbose=False,
         allow_delegation=False,
+        **common_agent_kwargs,
     )
     market_agent = Agent(
         role="市场情报Agent",
         goal="基于竞品样本判断市场价格带",
         backstory="擅长比较同类商品的市场价格水平。",
-        llm=llm,
-        verbose=False,
         allow_delegation=False,
+        **common_agent_kwargs,
     )
     risk_agent = Agent(
         role="风控Agent",
         goal="校验利润率和价格上下限约束",
         backstory="擅长识别价格决策中的经营风险。",
-        llm=llm,
-        verbose=False,
         allow_delegation=False,
+        **common_agent_kwargs,
     )
     manager_agent = Agent(
         role="经理协调Agent",
         goal="综合三方意见输出最终决策",
         backstory="负责多 Agent 结果整合和冲突裁决。",
-        llm=llm,
-        verbose=False,
         allow_delegation=True,
+        **common_agent_kwargs,
     )
 
     product = payload.product
@@ -275,6 +335,11 @@ def run_crewai_session(payload: CrewRunPayload) -> dict[str, Any]:
         "taskCount": 4,
         "llmModel": llm.model,
         "llmBaseUrl": llm.base_url,
+        "tuning": {
+            "maxIter": max_iter,
+            "maxExecutionSeconds": max_execution_time,
+            "maxRetryLimit": max_retry_limit,
+        },
         "agentRoles": [data_agent.role, market_agent.role, risk_agent.role, manager_agent.role],
         "crewOutput": str(output),
     }

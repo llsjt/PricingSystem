@@ -24,6 +24,15 @@ class Settings(BaseSettings):
     llm_base_url: str = Field(default="", alias="LLM_BASE_URL")
     llm_model: str = Field(default="qwen-plus", alias="MODEL")
     llm_timeout_seconds: int = Field(default=60, alias="LLM_TIMEOUT_SECONDS")
+    llm_connect_timeout_seconds: int = Field(default=8, alias="LLM_CONNECT_TIMEOUT_SECONDS")
+    llm_read_timeout_seconds: int = Field(default=25, alias="LLM_READ_TIMEOUT_SECONDS")
+    llm_max_retries: int = Field(default=1, alias="LLM_MAX_RETRIES")
+    llm_retry_backoff_seconds: float = Field(default=1.2, alias="LLM_RETRY_BACKOFF_SECONDS")
+
+    crewai_agent_max_iter: int = Field(default=4, alias="CREWAI_AGENT_MAX_ITER")
+    crewai_agent_max_execution_seconds: int = Field(default=40, alias="CREWAI_AGENT_MAX_EXEC_SECONDS")
+    crewai_agent_max_retry_limit: int = Field(default=1, alias="CREWAI_AGENT_MAX_RETRY_LIMIT")
+    crewai_session_timeout_seconds: int = Field(default=90, alias="CREWAI_SESSION_TIMEOUT_SECONDS")
 
     market_simulation_enabled: bool = Field(default=True, alias="MARKET_SIMULATION_ENABLED")
 
