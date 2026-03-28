@@ -65,21 +65,21 @@ public class ProductServiceImpl implements ProductService {
     @Transactional(rollbackFor = Exception.class)
     public Result<Void> addProductManual(ProductManualDTO dto) {
         Long shopId = resolveDefaultShopId();
-        if (dto.getTitle() == null || dto.getTitle().isBlank()) {
-            return Result.error("商品标题不能为空");
+        if (dto.getProductName() == null || dto.getProductName().isBlank()) {
+            return Result.error("商品名称不能为空");
         }
 
-        if (findProductByTitle(shopId, dto.getTitle()) != null) {
+        if (findProductByTitle(shopId, dto.getProductName()) != null) {
             return Result.error("商品名称已存在");
         }
 
         Product product = new Product();
         product.setShopId(shopId);
-        product.setExternalProductId(resolveExternalProductId(dto.getItemId()));
-        product.setTitle(dto.getTitle().trim());
-        product.setCategory(trimToNull(dto.getCategory()));
+        product.setExternalProductId(resolveExternalProductId(dto.getExternalProductId()));
+        product.setTitle(dto.getProductName().trim());
+        product.setCategory(trimToNull(dto.getCategoryName()));
         product.setCostPrice(defaultDecimal(dto.getCostPrice()));
-        product.setCurrentPrice(defaultDecimal(dto.getCurrentPrice()));
+        product.setCurrentPrice(defaultDecimal(dto.getSalePrice()));
         product.setStock(defaultInteger(dto.getStock()));
         product.setStatus(dto.getStatus() == null || dto.getStatus().isBlank() ? "ON_SALE" : dto.getStatus().trim());
         product.setProfileStatus("COMPLETE");
@@ -114,11 +114,11 @@ public class ProductServiceImpl implements ProductService {
             ProductMetricSummary summary = loadMetricSummary(product.getId());
             ProductListVO vo = new ProductListVO();
             vo.setId(product.getId());
-            vo.setItemId(product.getExternalProductId());
-            vo.setTitle(product.getTitle());
-            vo.setCategory(product.getCategory());
+            vo.setExternalProductId(product.getExternalProductId());
+            vo.setProductName(product.getTitle());
+            vo.setCategoryName(product.getCategory());
             vo.setCostPrice(product.getCostPrice());
-            vo.setCurrentPrice(product.getCurrentPrice());
+            vo.setSalePrice(product.getCurrentPrice());
             vo.setStock(product.getStock());
             vo.setStatus(product.getStatus());
             vo.setMonthlySales(summary.monthlySales());

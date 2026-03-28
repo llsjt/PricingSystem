@@ -9,10 +9,10 @@
       <section v-if="product" class="panel-card product-panel">
         <div class="section-head">
           <div class="section-title">
-            <h3>{{ product.title }}</h3>
+            <h3>{{ product.productName }}</h3>
             <p>围绕销量、访客和转化表现查看商品近期经营波动。</p>
           </div>
-          <div class="price-pill">当前售价 {{ formatCurrency(product.currentPrice) }}</div>
+          <div class="price-pill">当前售价 {{ formatCurrency(product.salePrice) }}</div>
         </div>
 
         <div class="metric-grid compact-metrics" v-if="trendData">

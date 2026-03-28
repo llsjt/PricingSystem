@@ -7,11 +7,11 @@ import java.time.LocalDateTime;
 @Data
 public class ProductListVO {
     private Long id;
-    private String itemId;
-    private String title;
-    private String category;
+    private String externalProductId;
+    private String productName;
+    private String categoryName;
     private BigDecimal costPrice;
-    private BigDecimal currentPrice;
+    private BigDecimal salePrice;
     private Integer stock;
     private String status;
     private Integer monthlySales;

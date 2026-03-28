@@ -5,11 +5,11 @@ import java.math.BigDecimal;
 
 @Data
 public class ProductManualDTO {
-    private String itemId;
-    private String title;
-    private String category;
+    private String externalProductId;
+    private String productName;
+    private String categoryName;
     private BigDecimal costPrice;
-    private BigDecimal currentPrice;
+    private BigDecimal salePrice;
     private Integer stock;
     private Integer monthlySales = 0;
     private BigDecimal conversionRate = BigDecimal.ZERO;

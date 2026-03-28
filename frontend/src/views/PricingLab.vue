@@ -38,11 +38,11 @@
               <el-option
                 v-for="item in productOptions"
                 :key="item.id"
-                :label="item.title"
+                :label="item.productName"
                 :value="item.id"
               >
                 <div class="option-row">
-                  <span>{{ item.title }}</span>
+                  <span>{{ item.productName }}</span>
                   <span class="option-id">ID {{ item.id }}</span>
                 </div>
               </el-option>
@@ -267,7 +267,7 @@ import { getProductList } from '../api/product'
 
 interface ProductOption {
   id: number
-  title: string
+  productName: string
 }
 
 const activeStep = ref(0)
@@ -301,7 +301,7 @@ const strategyGoalText = computed(() => {
 })
 
 const selectedProductName = computed(() => {
-  return productOptions.value.find((item) => item.id === taskConfig.productId)?.title || ''
+  return productOptions.value.find((item) => item.id === taskConfig.productId)?.productName || ''
 })
 
 const orderedLogs = computed(() =>
