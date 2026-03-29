@@ -20,7 +20,7 @@ from app.schemas.task import (
 )
 from app.services.context_service import ContextService
 from app.services.orchestration_service import OrchestrationService
-from app.utils.text_utils import parse_constraints
+from app.utils.text_utils import is_manual_review_action, parse_constraints
 
 logger = logging.getLogger(__name__)
 
@@ -128,10 +128,10 @@ class DispatchService:
                     agentName=item.role_name,
                     runOrder=order,
                     displayOrder=order,
-                    stage="completed",
-                    runStatus="SUCCESS",
+                    stage="已完成",
+                    runStatus="成功",
                     outputSummary=thinking,
-                    needManualReview=(action == "MANUAL_REVIEW"),
+                    needManualReview=is_manual_review_action(action),
                     thinking=thinking,
                     evidence=evidence,
                     suggestion=suggestion,

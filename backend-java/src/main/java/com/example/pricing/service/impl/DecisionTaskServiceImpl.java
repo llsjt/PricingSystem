@@ -132,6 +132,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
             List<Map<String, Object>> evidence = parseJsonArray(logItem.getEvidenceJson());
             Map<String, Object> suggestion = parseJsonObject(logItem.getSuggestionJson());
             String action = String.valueOf(suggestion.getOrDefault("action", ""));
+            boolean needManualReview = "MANUAL_REVIEW".equalsIgnoreCase(action) || "人工审核".equals(action);
 
             vo.setId(logItem.getId());
             vo.setTaskId(logItem.getTaskId());
@@ -142,10 +143,10 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
             vo.setAgentName(logItem.getRoleName());
             vo.setRunOrder(displayOrder);
             vo.setDisplayOrder(displayOrder);
-            vo.setStage("completed");
-            vo.setRunStatus("SUCCESS");
+            vo.setStage("已完成");
+            vo.setRunStatus("成功");
             vo.setOutputSummary(thinking);
-            vo.setNeedManualReview("MANUAL_REVIEW".equalsIgnoreCase(action));
+            vo.setNeedManualReview(needManualReview);
             vo.setThinking(thinking);
             vo.setEvidence(evidence);
             vo.setSuggestion(suggestion);

@@ -9,6 +9,7 @@ from app.schemas.result import TaskFinalResult
 from app.tools.log_writer_tool import LogWriterTool
 from app.tools.result_writer_tool import ResultWriterTool
 from app.utils.math_utils import money
+from app.utils.text_utils import to_action_cn, to_risk_level_cn, to_strategy_goal_cn
 
 
 class OrchestrationService:
@@ -43,7 +44,7 @@ class OrchestrationService:
         evidence = [
             {
                 "label": "策略目标",
-                "value": payload.strategy_goal,
+                "value": to_strategy_goal_cn(payload.strategy_goal),
             },
             {
                 "label": "基线销量(月)",
@@ -134,10 +135,10 @@ class OrchestrationService:
         hard_pass = bool(risk_result.is_pass) and no_negative_profit and better_than_baseline
 
         if hard_pass:
-            action = "AUTO_EXECUTE"
+            action = to_action_cn("AUTO_EXECUTE")
             summary = "满足硬约束，建议自动执行。"
         else:
-            action = "MANUAL_REVIEW"
+            action = to_action_cn("MANUAL_REVIEW")
             summary = "触发硬约束，需人工复核。"
 
         thinking = "执行成本底线与利润提升双硬约束校验，判断是否允许自动执行。"
@@ -174,7 +175,7 @@ class OrchestrationService:
         suggestion = {
             "recommendedPrice": self._to_float(risk_result.suggested_price),
             "pass": hard_pass,
-            "riskLevel": risk_result.risk_level,
+            "riskLevel": to_risk_level_cn(risk_result.risk_level),
             "action": action,
             "summary": summary,
         }

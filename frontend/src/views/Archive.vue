@@ -250,19 +250,40 @@
             <article v-for="log in orderedLogs" :key="log.id" class="log-card">
               <div class="log-head">
                 <div class="log-title">
-                  <strong>{{ log.agentName || log.agentCode || 'Agent' }}</strong>
-                  <el-tag size="small" :type="log.runStatus === 'SUCCESS' ? 'success' : 'warning'">
-                    {{ log.runStatus || '-' }}
+                  <strong>{{ getLogAgentName(log) }}</strong>
+                  <el-tag size="small" :type="isSuccessStatus(log.runStatus) ? 'success' : 'warning'">
+                    {{ getRunStatusText(log.runStatus) }}
                   </el-tag>
                 </div>
                 <span>{{ formatDateTime(log.createdAt) }}</span>
               </div>
-              <div class="log-body" v-html="formatContent(log.outputSummary)"></div>
+              <div class="log-content">
+                <section class="log-section">
+                  <h4>思考过程</h4>
+                  <p>{{ getLogThinking(log) }}</p>
+                </section>
+                <section class="log-section">
+                  <h4>依据</h4>
+                  <ul class="info-list">
+                    <li v-for="(line, idx) in getLogEvidenceLines(log)" :key="`e-${log.id}-${idx}`">{{ line }}</li>
+                  </ul>
+                </section>
+                <section class="log-section">
+                  <h4>建议</h4>
+                  <ul class="info-list">
+                    <li v-for="(line, idx) in getLogSuggestionLines(log)" :key="`s-${log.id}-${idx}`">{{ line }}</li>
+                  </ul>
+                </section>
+                <section v-if="getLogReason(log)" class="log-section">
+                  <h4>为什么给出这个建议</h4>
+                  <p>{{ getLogReason(log) }}</p>
+                </section>
+              </div>
               <div class="log-meta">
                 <span>建议价：{{ formatCurrency(log.suggestedPrice) }}</span>
                 <span>预估利润：{{ formatCurrency(log.predictedProfit) }}</span>
                 <span>置信度：{{ formatPercent(log.confidenceScore) }}</span>
-                <span>风险等级：{{ log.riskLevel || '-' }}</span>
+                <span>风险等级：{{ toNaturalChinese(log.riskLevel) }}</span>
                 <span>人工复核：{{ log.needManualReview ? '需要' : '否' }}</span>
               </div>
             </article>
@@ -286,6 +307,7 @@ import {
   getTaskStats,
   type DecisionComparisonItem,
   type DecisionLogItem,
+  type PricingAgentCode,
   type DecisionTaskItem,
   type DecisionTaskStats
 } from '../api/decision'
@@ -343,9 +365,87 @@ const statusOptions = [
 
 const drawerSize = computed(() => (viewportWidth.value < 900 ? '100%' : '78%'))
 const summaryRow = computed(() => comparisonData.value[0] || null)
+const agentOrderByCode: Record<PricingAgentCode, number> = {
+  DATA_ANALYSIS: 1,
+  MARKET_INTEL: 2,
+  RISK_CONTROL: 3,
+  MANAGER_COORDINATOR: 4
+}
+const agentNameByCode: Record<PricingAgentCode, string> = {
+  DATA_ANALYSIS: '数据分析Agent',
+  MARKET_INTEL: '市场情报Agent',
+  RISK_CONTROL: '风险控制Agent',
+  MANAGER_COORDINATOR: '经理协调Agent'
+}
+
+const normalizeAgentCode = (code?: string | null): PricingAgentCode | null => {
+  const normalized = String(code || '') as PricingAgentCode
+  return normalized in agentOrderByCode ? normalized : null
+}
+
+const resolveLogOrder = (log: DecisionLogItem) => {
+  const displayOrder = Number(log.displayOrder || 0)
+  if (displayOrder >= 1 && displayOrder <= 4) return displayOrder
+  const runOrder = Number(log.runOrder || 0)
+  if (runOrder >= 1 && runOrder <= 4) return runOrder
+  const code = normalizeAgentCode(log.agentCode)
+  return code ? agentOrderByCode[code] : 99
+}
+
+const isCrewAiLog = (log: DecisionLogItem) => {
+  const role = String(log.agentName || log.agentCode || log.roleName || '')
+  return role.toUpperCase().includes('CREWAI') || role.includes('协作引擎')
+}
+
 const orderedLogs = computed(() =>
-  [...agentLogs.value].sort((a, b) => Number(a.runOrder || 0) - Number(b.runOrder || 0))
+  [...agentLogs.value]
+    .filter((log) => !isCrewAiLog(log))
+    .sort((a, b) => {
+      const orderDiff = resolveLogOrder(a) - resolveLogOrder(b)
+      if (orderDiff !== 0) return orderDiff
+      return Number(a.id || 0) - Number(b.id || 0)
+    })
 )
+
+const getLogAgentName = (log: DecisionLogItem) => {
+  if (log.agentName) return log.agentName
+  const code = normalizeAgentCode(log.agentCode)
+  if (code) return agentNameByCode[code]
+  return log.agentCode || log.roleName || 'Agent'
+}
+
+const textValueMap: Record<string, string> = {
+  MAX_PROFIT: '利润优先',
+  CLEARANCE: '清仓促销',
+  MARKET_SHARE: '市场份额优先',
+  AUTO_EXECUTE: '自动执行',
+  MANUAL_REVIEW: '人工审核',
+  LOW: '低风险',
+  MEDIUM: '中风险',
+  HIGH: '高风险',
+  SUCCESS: '成功',
+  RUNNING: '执行中',
+  COMPLETED: '已完成',
+  FAILED: '失败',
+  PENDING: '待执行'
+}
+
+const toNaturalChinese = (value: unknown): string => {
+  const text = String(value ?? '').trim()
+  if (!text) return '-'
+  const upper = text.toUpperCase()
+  return textValueMap[upper] || text
+}
+
+const isSuccessStatus = (status?: string | null) => {
+  const normalized = String(status || '').trim().toUpperCase()
+  return normalized === 'SUCCESS' || normalized === '成功'
+}
+
+const getRunStatusText = (status?: string | null) => {
+  if (!status) return '-'
+  return toNaturalChinese(status)
+}
 
 const formatDateTime = (dateStr?: string) => {
   if (!dateStr) return '-'
@@ -366,7 +466,169 @@ const formatSignedCurrency = (value?: number | string | null) => {
   return `${numeric >= 0 ? '+' : '-'}￥${Math.abs(numeric).toFixed(2)}`
 }
 const formatRange = (min?: number | null, max?: number | null) => `${formatCurrency(min)} - ${formatCurrency(max)}`
-const formatContent = (text?: string) => (text ? String(text).replace(/\n/g, '<br>') : '-')
+
+const toNumber = (value: unknown): number | null => {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+const formatBoolean = (value: boolean) => (value ? '是' : '否')
+
+const formatPrimitive = (key: string, value: unknown): string => {
+  if (value == null) return '-'
+  if (typeof value === 'boolean') return formatBoolean(value)
+
+  const numeric = toNumber(value)
+  if (numeric != null) {
+    const lowered = key.toLowerCase()
+    if (lowered.includes('price') || lowered.includes('profit') || lowered.includes('amount')) {
+      return formatCurrency(numeric)
+    }
+    if (lowered.includes('rate')) {
+      return `${(numeric * 100).toFixed(2)}%`
+    }
+    return String(numeric)
+  }
+  return toNaturalChinese(value)
+}
+
+const formatObjectLine = (value: Record<string, unknown>): string => {
+  if ('competitorName' in value) {
+    const name = String(value.competitorName || '竞品')
+    const platform = String(value.sourcePlatform || '')
+    const shopType = String(value.shopType || '')
+    const header = `${name}${platform ? `（${platform}${shopType ? `/${shopType}` : ''}）` : ''}`
+
+    const parts: string[] = [header]
+    if (value.price != null) parts.push(`价格${formatPrimitive('price', value.price)}`)
+    if (value.originalPrice != null) parts.push(`原价${formatPrimitive('originalPrice', value.originalPrice)}`)
+    if (value.salesVolumeHint != null) parts.push(`销量提示：${toNaturalChinese(value.salesVolumeHint)}`)
+    if (value.promotionTag != null) parts.push(`促销：${toNaturalChinese(value.promotionTag)}`)
+    return parts.join('，')
+  }
+
+  const keyMap: Record<string, string> = {
+    competitorName: '竞品',
+    sourcePlatform: '平台',
+    shopType: '店铺类型',
+    promotionTag: '促销信息',
+    salesVolumeHint: '销量提示',
+    marketScore: '市场评分',
+    riskLevel: '风险等级'
+  }
+
+  return Object.entries(value)
+    .filter(([, v]) => v !== null && v !== undefined)
+    .map(([k, v]) => `${keyMap[k] || k}：${formatPrimitive(k, v)}`)
+    .join('，')
+}
+
+const formatEvidenceValue = (label: unknown, value: unknown): string => {
+  if (value == null) return '-'
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '暂无数据'
+    const lines = value.map((item) => {
+      if (item && typeof item === 'object') {
+        return formatObjectLine(item as Record<string, unknown>)
+      }
+      return toNaturalChinese(item)
+    })
+    const joined = lines.join('；')
+    if (String(label || '').includes('竞品摘要')) {
+      return `共 ${value.length} 条：${joined}`
+    }
+    return joined
+  }
+  if (value && typeof value === 'object') {
+    return formatObjectLine(value as Record<string, unknown>)
+  }
+  return toNaturalChinese(value)
+}
+
+const getSuggestionLines = (code: PricingAgentCode | null, suggestion?: Record<string, unknown>) => {
+  if (!suggestion || Object.keys(suggestion).length === 0) return ['暂无建议内容']
+
+  const lines: string[] = []
+  const priceRange = suggestion.priceRange
+  if (priceRange && typeof priceRange === 'object') {
+    const range = priceRange as Record<string, unknown>
+    const min = toNumber(range.min)
+    const max = toNumber(range.max)
+    if (min != null && max != null) {
+      lines.push(`建议价格区间：${formatCurrency(min)} ~ ${formatCurrency(max)}`)
+    }
+  }
+
+  if (code === 'DATA_ANALYSIS') {
+    const recommendedPrice = toNumber(suggestion.recommendedPrice)
+    if (recommendedPrice != null) lines.push(`建议定价：${formatCurrency(recommendedPrice)}`)
+    const expectedSales = toNumber(suggestion.expectedSales)
+    if (expectedSales != null) lines.push(`预期销量：${expectedSales}`)
+    const expectedProfit = toNumber(suggestion.expectedProfit)
+    if (expectedProfit != null) lines.push(`预期利润：${formatCurrency(expectedProfit)}`)
+    const expectedProfitRate = toNumber(suggestion.expectedProfitRate)
+    if (expectedProfitRate != null) lines.push(`预期利润率：${(expectedProfitRate * 100).toFixed(2)}%`)
+  }
+
+  if (code === 'MARKET_INTEL') {
+    const recommendedPrice = toNumber(suggestion.recommendedPrice)
+    if (recommendedPrice != null) lines.push(`建议定价：${formatCurrency(recommendedPrice)}`)
+    const marketScore = toNumber(suggestion.marketScore)
+    if (marketScore != null) lines.push(`市场接受度评分：${marketScore.toFixed(1)}`)
+  }
+
+  if (code === 'RISK_CONTROL') {
+    const recommendedPrice = toNumber(suggestion.recommendedPrice)
+    if (recommendedPrice != null) lines.push(`风控建议价：${formatCurrency(recommendedPrice)}`)
+    if (typeof suggestion.pass === 'boolean') lines.push(`是否自动通过：${formatBoolean(suggestion.pass)}`)
+    if (suggestion.riskLevel != null) lines.push(`风险等级：${toNaturalChinese(suggestion.riskLevel)}`)
+    if (suggestion.action != null) {
+      lines.push(`建议动作：${toNaturalChinese(suggestion.action)}`)
+    }
+  }
+
+  if (code === 'MANAGER_COORDINATOR') {
+    const finalPrice = toNumber(suggestion.finalPrice)
+    if (finalPrice != null) lines.push(`最终建议价：${formatCurrency(finalPrice)}`)
+    const expectedSales = toNumber(suggestion.expectedSales)
+    if (expectedSales != null) lines.push(`预期销量：${expectedSales}`)
+    const expectedProfit = toNumber(suggestion.expectedProfit)
+    if (expectedProfit != null) lines.push(`预期利润：${formatCurrency(expectedProfit)}`)
+    if (suggestion.strategy != null) lines.push(`执行策略：${toNaturalChinese(suggestion.strategy)}`)
+  }
+
+  if (suggestion.summary != null) {
+    lines.push(`建议说明：${toNaturalChinese(suggestion.summary)}`)
+  }
+
+  if (lines.length > 0) return lines
+
+  return Object.entries(suggestion)
+    .filter(([, value]) => value !== null && value !== undefined)
+    .map(([key, value]) => `${key}：${formatPrimitive(key, value)}`)
+}
+
+const getLogThinking = (log: DecisionLogItem) => {
+  return String(log.thinking || log.outputSummary || log.thoughtContent || '-')
+}
+
+const getLogEvidenceLines = (log: DecisionLogItem) => {
+  const evidence = Array.isArray(log.evidence) ? log.evidence : []
+  if (evidence.length === 0) return ['暂无依据内容']
+  return evidence.map((item, idx) => {
+    const label = item?.label ?? `依据${idx + 1}`
+    return `${String(label)}：${formatEvidenceValue(label, item?.value)}`
+  })
+}
+
+const getLogSuggestionLines = (log: DecisionLogItem) => {
+  const suggestion = log.suggestion && typeof log.suggestion === 'object' ? log.suggestion : {}
+  return getSuggestionLines(normalizeAgentCode(log.agentCode), suggestion)
+}
+
+const getLogReason = (log: DecisionLogItem) => {
+  return String(log.reasonWhy || '').trim()
+}
 
 const handleSearch = () => {
   queryParams.page = 1
@@ -757,9 +1019,36 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.log-body {
+.log-content {
+  display: grid;
+  gap: 10px;
+}
+
+.log-section {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+  background: var(--panel-muted);
+}
+
+.log-section h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.log-section p {
+  margin: 0;
   color: var(--text-primary);
-  line-height: 1.8;
+  line-height: 1.7;
+}
+
+.info-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  color: var(--text-primary);
+  line-height: 1.7;
 }
 
 .log-meta {

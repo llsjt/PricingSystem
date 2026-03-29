@@ -227,18 +227,18 @@ onBeforeUnmount(() => {
   width: 100%;
   max-width: 100%;
   overflow: hidden;
-  background: transparent;
+  background: linear-gradient(180deg, #edf3fa 0%, #f6f9fd 100%);
 }
 
 .sidebar {
-  position: sticky;
-  top: 0;
+  position: fixed;
+  inset: 0 auto 0 0;
   display: flex;
   flex-direction: column;
   gap: 18px;
   width: 286px;
   min-width: 286px;
-  height: auto;
+  height: 100vh;
   min-height: 100vh;
   padding: 18px 16px 16px;
   background:
@@ -399,6 +399,16 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   overflow-x: hidden;
+  width: calc(100% - 286px);
+  margin-left: 286px;
+  border-left: 1px solid rgba(24, 42, 58, 0.08);
+  background: rgba(255, 255, 255, 0.58);
+  transition: margin-left 0.2s ease-in-out, width 0.2s ease-in-out;
+}
+
+.sidebar.collapsed ~ .main-shell {
+  width: calc(100% - 84px);
+  margin-left: 84px;
 }
 
 .topbar {
@@ -530,6 +540,13 @@ onBeforeUnmount(() => {
 
   .sidebar.visible {
     transform: translateX(0);
+  }
+
+  .main-shell {
+    width: 100%;
+    margin-left: 0;
+    border-left: 0;
+    background: transparent;
   }
 
   .topbar {

@@ -80,7 +80,7 @@ class ManagerAgent:
             f"预计利润 {expected_profit}，利润变化 {profit_growth}，执行策略 {execute_strategy}。"
         )
         if hint_price is not None:
-            summary += f"CrewAI提示价 {hint_price} 已作为辅助信号。"
+            summary += f"协作引擎提示价 {hint_price} 已作为辅助信号。"
 
         return ManagerAgentOutput(
             finalPrice=final_price,

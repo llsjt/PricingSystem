@@ -2,6 +2,23 @@ import json
 import re
 from decimal import Decimal
 
+STRATEGY_GOAL_CN = {
+    "MAX_PROFIT": "利润优先",
+    "CLEARANCE": "清仓促销",
+    "MARKET_SHARE": "市场份额优先",
+}
+
+RISK_LEVEL_CN = {
+    "LOW": "低风险",
+    "MEDIUM": "中风险",
+    "HIGH": "高风险",
+}
+
+ACTION_CN = {
+    "AUTO_EXECUTE": "自动执行",
+    "MANUAL_REVIEW": "人工审核",
+}
+
 
 def parse_constraints(raw: str) -> dict:
     text = (raw or "").strip()
@@ -43,3 +60,25 @@ def parse_constraints(raw: str) -> dict:
         constraints["force_manual_review"] = True
 
     return constraints
+
+
+def to_strategy_goal_cn(value: str | None) -> str:
+    code = str(value or "").strip().upper()
+    return STRATEGY_GOAL_CN.get(code, str(value or "").strip())
+
+
+def to_risk_level_cn(value: str | None) -> str:
+    code = str(value or "").strip().upper()
+    return RISK_LEVEL_CN.get(code, str(value or "").strip())
+
+
+def to_action_cn(value: str | None) -> str:
+    code = str(value or "").strip().upper()
+    return ACTION_CN.get(code, str(value or "").strip())
+
+
+def is_manual_review_action(value: str | None) -> bool:
+    action = str(value or "").strip()
+    if not action:
+        return False
+    return action.upper() == "MANUAL_REVIEW" or action == "人工审核"
