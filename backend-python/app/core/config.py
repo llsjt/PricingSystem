@@ -1,11 +1,18 @@
+from pathlib import Path
 from functools import lru_cache
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+BASE_DIR = Path(__file__).resolve().parents[2]
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=(str(BASE_DIR / ".env"), str(BASE_DIR / ".env.local")),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     app_name: str = Field(default="pricing-agent-backend", alias="APP_NAME")
     app_env: str = Field(default="dev", alias="APP_ENV")

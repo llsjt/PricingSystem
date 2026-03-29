@@ -1,4 +1,4 @@
-from decimal import Decimal
+﻿from decimal import Decimal
 from typing import Any
 
 from app.schemas.agent import DataAgentOutput, ManagerAgentOutput, MarketAgentOutput, RiskAgentOutput
@@ -7,7 +7,7 @@ from app.utils.math_utils import clamp_decimal, money
 
 
 class ManagerAgent:
-    code = "MANAGER"
+    code = "MANAGER_COORDINATOR"
     name = "经理协调Agent"
 
     def __init__(self) -> None:
@@ -41,27 +41,16 @@ class ManagerAgent:
         else:
             candidate = money(max(data_result.suggested_price, market_result.suggested_price))
 
-        # CrewAI 在 MVP 模式下只提供轻量提示，不替代本地风控兜底。
         hint_price: Decimal | None = None
-        hint_reason: str | None = None
-        hint_execute_strategy: str | None = None
         if isinstance(crewai_hint, dict):
             raw_hint_price = crewai_hint.get("recommendedPrice")
             try:
                 if raw_hint_price is not None:
-                    parsed_hint_price = money(raw_hint_price)
-                    if parsed_hint_price > 0:
-                        hint_price = parsed_hint_price
+                    parsed = money(raw_hint_price)
+                    if parsed > 0:
+                        hint_price = parsed
             except Exception:
                 hint_price = None
-
-            raw_reason = crewai_hint.get("reason")
-            if isinstance(raw_reason, str) and raw_reason.strip():
-                hint_reason = raw_reason.strip()
-
-            raw_strategy = crewai_hint.get("executeStrategy")
-            if isinstance(raw_strategy, str) and raw_strategy.strip():
-                hint_execute_strategy = raw_strategy.strip().upper()
 
         if hint_price is not None:
             candidate = money(candidate * Decimal("0.70") + hint_price * Decimal("0.30"))
@@ -86,25 +75,12 @@ class ManagerAgent:
         else:
             execute_strategy = "灰度发布"
 
-        if is_pass and hint_execute_strategy:
-            strategy_mapping = {
-                "DIRECT_EXECUTE": "直接执行",
-                "GRAY_RELEASE": "灰度发布",
-                "MANUAL_REVIEW": "人工审核",
-            }
-            mapped = strategy_mapping.get(hint_execute_strategy)
-            if mapped:
-                execute_strategy = mapped
-
         summary = (
-            f"综合数据、市场、风控三方意见，最终建议价 {final_price}；"
-            f"预计销量 {expected_sales}；预计利润 {expected_profit}；利润变化 {profit_growth}；"
-            f"执行策略 {execute_strategy}"
+            f"综合数据、市场、风控意见，最终建议价 {final_price}，预计销量 {expected_sales}，"
+            f"预计利润 {expected_profit}，利润变化 {profit_growth}，执行策略 {execute_strategy}。"
         )
         if hint_price is not None:
-            summary += f"；CrewAI 提示价 {hint_price}"
-        if hint_reason:
-            summary += f"；协作理由 {hint_reason}"
+            summary += f"CrewAI提示价 {hint_price} 已作为辅助信号。"
 
         return ManagerAgentOutput(
             finalPrice=final_price,

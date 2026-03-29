@@ -1,4 +1,3 @@
-from decimal import Decimal
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -7,38 +6,27 @@ from app.repos.log_repo import LogRepo
 
 
 class LogWriterTool:
+    """统一日志写入工具：MVP 只写 Agent 卡片。"""
+
     def __init__(self, db: Session):
         self.log_repo = LogRepo(db)
 
-    def write(
+    def write_agent_card(
         self,
         task_id: int,
-        agent_code: str,
         agent_name: str,
-        run_status: str,
-        input_summary: str,
-        output_summary: str,
-        output_payload: dict[str, Any] | None = None,
-        suggested_price: Decimal | None = None,
-        predicted_profit: Decimal | None = None,
-        confidence_score: Decimal | float | None = None,
-        risk_level: str | None = None,
-        need_manual_review: bool = False,
-        error_message: str | None = None,
+        display_order: int,
+        thinking_summary: str,
+        evidence: list[dict[str, Any]],
+        suggestion: dict[str, Any],
+        reason_why: str | None = None,
     ) -> None:
-        self.log_repo.append_log(
+        self.log_repo.append_card(
             task_id=task_id,
-            agent_code=agent_code,
             agent_name=agent_name,
-            run_status=run_status,
-            input_summary=input_summary,
-            output_summary=output_summary,
-            output_payload=output_payload,
-            suggested_price=suggested_price,
-            predicted_profit=predicted_profit,
-            confidence_score=confidence_score,
-            risk_level=risk_level,
-            need_manual_review=need_manual_review,
-            error_message=error_message,
+            display_order=display_order,
+            thinking_summary=thinking_summary,
+            evidence=evidence,
+            suggestion=suggestion,
+            reason_why=reason_why,
         )
-

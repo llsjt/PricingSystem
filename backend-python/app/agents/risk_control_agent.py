@@ -1,4 +1,4 @@
-from decimal import Decimal
+﻿from decimal import Decimal
 
 from app.schemas.agent import RiskAgentOutput
 from app.tools.risk_rule_tool import RiskRuleTool
@@ -6,7 +6,7 @@ from app.utils.math_utils import money
 
 
 class RiskControlAgent:
-    code = "RISK"
+    code = "RISK_CONTROL"
     name = "风险控制Agent"
 
     def __init__(self) -> None:
@@ -34,7 +34,6 @@ class RiskControlAgent:
             summary=(
                 f"安全底价 {money(evaluated['safe_floor_price'])}，"
                 f"风控建议价 {money(evaluated['suggested_price'])}，"
-                f"结果 {'通过' if evaluated['is_pass'] else '需审核'}"
+                f"结果 {'通过' if evaluated['is_pass'] else '需人工复核'}。"
             ),
         )
-

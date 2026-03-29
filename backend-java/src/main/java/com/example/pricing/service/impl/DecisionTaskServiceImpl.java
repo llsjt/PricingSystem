@@ -15,6 +15,9 @@ import com.example.pricing.service.DecisionTaskService;
 import com.example.pricing.vo.DecisionComparisonVO;
 import com.example.pricing.vo.DecisionLogVO;
 import com.example.pricing.vo.DecisionTaskItemVO;
+import com.example.pricing.vo.PricingTaskDetailVO;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +40,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -59,6 +63,18 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
 
     @Value("${agent.python.internal-token:}")
     private String pythonInternalToken;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Override
+    public Long createPricingTask(Long productId, String strategyGoal, String constraints) {
+        if (productId == null) {
+            throw new IllegalArgumentException("productId不能为空");
+        }
+        String goal = (strategyGoal == null || strategyGoal.isBlank()) ? "MAX_PROFIT" : strategyGoal.trim();
+        String constraintText = constraints == null ? "" : constraints.trim();
+        return startTask(List.of(productId), goal, constraintText);
+    }
 
     @Override
     public Long startTask(List<Long> productIds, String strategyGoal, String constraints) {
@@ -103,32 +119,40 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     @Override
     public List<DecisionLogVO> getTaskLogs(Long taskId) {
         LambdaQueryWrapper<AgentRunLog> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(AgentRunLog::getTaskId, taskId).orderByAsc(AgentRunLog::getRunOrder, AgentRunLog::getId);
+        wrapper.eq(AgentRunLog::getTaskId, taskId)
+                .orderByAsc(AgentRunLog::getDisplayOrder, AgentRunLog::getSpeakOrder, AgentRunLog::getId);
         return logMapper.selectList(wrapper).stream().map(logItem -> {
             DecisionLogVO vo = new DecisionLogVO();
+            Integer displayOrder = logItem.getDisplayOrder() == null ? logItem.getSpeakOrder() : logItem.getDisplayOrder();
+            String thinking = logItem.getThinkingSummary();
+            if (thinking == null || thinking.isBlank()) {
+                thinking = logItem.getThoughtContent();
+            }
+
+            List<Map<String, Object>> evidence = parseJsonArray(logItem.getEvidenceJson());
+            Map<String, Object> suggestion = parseJsonObject(logItem.getSuggestionJson());
+            String action = String.valueOf(suggestion.getOrDefault("action", ""));
+
             vo.setId(logItem.getId());
-            vo.setAgentCode(logItem.getAgentCode());
-            vo.setAgentName(logItem.getAgentName());
-            vo.setRunOrder(logItem.getRunOrder());
-            vo.setRunStatus(logItem.getRunStatus());
-            vo.setOutputSummary(logItem.getOutputSummary());
-            vo.setSuggestedPrice(logItem.getSuggestedPrice());
-            vo.setPredictedProfit(logItem.getPredictedProfit());
-            vo.setConfidenceScore(logItem.getConfidenceScore());
-            vo.setRiskLevel(logItem.getRiskLevel());
-            vo.setNeedManualReview(logItem.getNeedManualReview() != null && logItem.getNeedManualReview() == 1);
+            vo.setTaskId(logItem.getTaskId());
+            vo.setRoleName(logItem.getRoleName());
+            vo.setSpeakOrder(logItem.getSpeakOrder());
+            vo.setThoughtContent(logItem.getThoughtContent());
+            vo.setAgentCode(resolveAgentCode(displayOrder));
+            vo.setAgentName(logItem.getRoleName());
+            vo.setRunOrder(displayOrder);
+            vo.setDisplayOrder(displayOrder);
+            vo.setStage("completed");
+            vo.setRunStatus("SUCCESS");
+            vo.setOutputSummary(thinking);
+            vo.setNeedManualReview("MANUAL_REVIEW".equalsIgnoreCase(action));
+            vo.setThinking(thinking);
+            vo.setEvidence(evidence);
+            vo.setSuggestion(suggestion);
+            vo.setReasonWhy(logItem.getFinalReason());
             vo.setCreatedAt(logItem.getCreatedAt());
             return vo;
         }).toList();
-    }
-
-    @Override
-    public String getTaskStatus(Long taskId) {
-        PricingTask task = taskMapper.selectById(taskId);
-        if (task == null || task.getTaskStatus() == null || task.getTaskStatus().isBlank()) {
-            return "NOT_FOUND";
-        }
-        return task.getTaskStatus().trim();
     }
 
     @Override
@@ -186,6 +210,33 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     @Override
     public List<DecisionComparisonVO> getTaskComparison(Long taskId) {
         return buildComparisonRows(taskId);
+    }
+
+    @Override
+    public PricingTaskDetailVO getTaskDetail(Long taskId) {
+        PricingTask task = taskMapper.selectById(taskId);
+        if (task == null) {
+            throw new IllegalArgumentException("任务不存在");
+        }
+        Product product = productMapper.selectById(task.getProductId());
+        PricingResult result = getResultByTaskId(taskId);
+
+        PricingTaskDetailVO vo = new PricingTaskDetailVO();
+        vo.setTaskId(task.getId());
+        vo.setProductId(task.getProductId());
+        vo.setProductTitle(product == null ? "-" : product.getTitle());
+        vo.setTaskStatus(task.getTaskStatus());
+        vo.setCurrentPrice(task.getCurrentPrice());
+        vo.setSuggestedMinPrice(task.getSuggestedMinPrice());
+        vo.setSuggestedMaxPrice(task.getSuggestedMaxPrice());
+        vo.setFinalPrice(result == null ? null : result.getFinalPrice());
+        vo.setExpectedSales(result == null ? null : result.getExpectedSales());
+        vo.setExpectedProfit(result == null ? null : result.getExpectedProfit());
+        vo.setStrategy(result == null ? null : result.getExecuteStrategy());
+        vo.setFinalSummary(result == null ? null : result.getResultSummary());
+        vo.setCreatedAt(task.getCreatedAt());
+        vo.setUpdatedAt(task.getUpdatedAt());
+        return vo;
     }
 
     @Override
@@ -324,6 +375,43 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
             return endOfDay ? date.atTime(23, 59, 59) : date.atStartOfDay();
         } catch (Exception ignore) {
             return null;
+        }
+    }
+
+    private String resolveAgentCode(Integer displayOrder) {
+        if (displayOrder == null) {
+            return "UNKNOWN";
+        }
+        return switch (displayOrder) {
+            case 1 -> "DATA_ANALYSIS";
+            case 2 -> "MARKET_INTEL";
+            case 3 -> "RISK_CONTROL";
+            case 4 -> "MANAGER_COORDINATOR";
+            default -> "UNKNOWN";
+        };
+    }
+
+    private List<Map<String, Object>> parseJsonArray(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(json, new TypeReference<List<Map<String, Object>>>() {
+            });
+        } catch (Exception ignore) {
+            return List.of();
+        }
+    }
+
+    private Map<String, Object> parseJsonObject(String json) {
+        if (json == null || json.isBlank()) {
+            return new LinkedHashMap<>();
+        }
+        try {
+            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {
+            });
+        } catch (Exception ignore) {
+            return new LinkedHashMap<>();
         }
     }
 

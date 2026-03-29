@@ -53,17 +53,28 @@ class RetryTaskRequest(BaseModel):
 class AgentLogItem(BaseModel):
     id: int
     task_id: int = Field(alias="taskId")
-    agent_code: str = Field(alias="agentCode")
-    agent_name: str = Field(alias="agentName")
-    run_order: int = Field(alias="runOrder")
-    run_status: str = Field(alias="runStatus")
+    role_name: str = Field(alias="roleName")
+    speak_order: int = Field(alias="speakOrder")
+    thought_content: str | None = Field(default=None, alias="thoughtContent")
+
+    # Legacy compatibility fields for current consumers.
+    agent_code: str | None = Field(default=None, alias="agentCode")
+    agent_name: str | None = Field(default=None, alias="agentName")
+    run_order: int | None = Field(default=None, alias="runOrder")
+    display_order: int | None = Field(default=None, alias="displayOrder")
+    stage: str | None = None
+    run_status: str | None = Field(default=None, alias="runStatus")
     output_summary: str | None = Field(default=None, alias="outputSummary")
     output_payload: dict[str, Any] | None = Field(default=None, alias="outputPayload")
     suggested_price: Decimal | None = Field(default=None, alias="suggestedPrice")
     predicted_profit: Decimal | None = Field(default=None, alias="predictedProfit")
     confidence_score: Decimal | None = Field(default=None, alias="confidenceScore")
     risk_level: str | None = Field(default=None, alias="riskLevel")
-    need_manual_review: bool = Field(alias="needManualReview")
+    need_manual_review: bool | None = Field(default=None, alias="needManualReview")
+    thinking: str | None = None
+    evidence: list[dict[str, Any]] | None = None
+    suggestion: dict[str, Any] | None = None
+    reason_why: str | None = Field(default=None, alias="reasonWhy")
     created_at: datetime = Field(alias="createdAt")
 
     model_config = ConfigDict(populate_by_name=True)

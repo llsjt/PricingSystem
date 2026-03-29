@@ -13,53 +13,29 @@ public class AgentRunLog {
     @TableField("task_id")
     private Long taskId;
 
-    @TableField("agent_code")
-    private String agentCode;
-
-    @TableField("agent_name")
-    private String agentName;
-
-    @TableField("run_order")
-    private Integer runOrder;
-
-    @TableField("run_status")
-    private String runStatus;
-
-    @TableField("input_summary")
-    private String inputSummary;
-
-    @TableField("output_summary")
-    private String outputSummary;
-
-    @TableField("output_payload")
-    private String outputPayload;
-
-    @TableField("suggested_price")
-    private java.math.BigDecimal suggestedPrice;
-
-    @TableField("predicted_profit")
-    private java.math.BigDecimal predictedProfit;
-
-    @TableField("confidence_score")
-    private java.math.BigDecimal confidenceScore;
-
-    @TableField("risk_level")
-    private String riskLevel;
-
-    @TableField("need_manual_review")
-    private Integer needManualReview;
-
-    @TableField("error_message")
-    private String errorMessage;
-
-    @TableField(exist = false)
+    @TableField("role_name")
     private String roleName;
 
-    @TableField(exist = false)
+    @TableField("speak_order")
     private Integer speakOrder;
 
-    @TableField(exist = false)
+    @TableField("thought_content")
     private String thoughtContent;
+
+    @TableField("thinking_summary")
+    private String thinkingSummary;
+
+    @TableField("evidence_json")
+    private String evidenceJson;
+
+    @TableField("suggestion_json")
+    private String suggestionJson;
+
+    @TableField("final_reason")
+    private String finalReason;
+
+    @TableField("display_order")
+    private Integer displayOrder;
 
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

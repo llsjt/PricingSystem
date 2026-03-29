@@ -1,4 +1,4 @@
-import request from './request'
+﻿import request from './request'
 
 export interface DecisionTaskRequest {
   productIds: number[]
@@ -53,18 +53,115 @@ export interface DecisionTaskItem {
 
 export interface DecisionLogItem {
   id: number
-  agentCode: string
-  agentName: string
-  runOrder: number
-  runStatus: string
-  outputSummary: string
+  roleName?: string
+  speakOrder?: number
+  thoughtContent?: string
+  agentCode?: string
+  agentName?: string
+  runOrder?: number
+  displayOrder?: number
+  stage?: string
+  runStatus?: string
+  outputSummary?: string
   suggestedPrice?: number
   predictedProfit?: number
   confidenceScore?: number
   riskLevel?: string
   needManualReview?: boolean
+  thinking?: string
+  evidence?: Array<Record<string, unknown>>
+  suggestion?: Record<string, unknown>
+  reasonWhy?: string
   createdAt: string
 }
+
+export type PricingTaskStatus = 'IDLE' | 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED'
+
+export type PricingAgentCode = 'DATA_ANALYSIS' | 'MARKET_INTEL' | 'RISK_CONTROL' | 'MANAGER_COORDINATOR'
+
+export interface AgentCardContent {
+  thinking: string
+  evidence: Array<Record<string, unknown>>
+  suggestion: Record<string, unknown>
+  reasonWhy?: string | null
+}
+
+export interface PricingTaskDetail {
+  taskId: number
+  productId: number
+  productTitle: string
+  taskStatus: PricingTaskStatus
+  currentPrice: number
+  suggestedMinPrice?: number
+  suggestedMaxPrice?: number
+  finalPrice?: number
+  expectedSales?: number
+  expectedProfit?: number
+  strategy?: string
+  finalSummary?: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PricingTaskCreateRequest {
+  productId: number
+  constraints: string
+  strategyGoal?: string
+}
+
+export interface PricingTaskResultPayload {
+  finalPrice: number
+  expectedSales: number
+  expectedProfit: number
+  strategy?: string
+  summary?: string
+}
+
+export interface PricingTaskStartedMessage {
+  schemaVersion: string
+  channel: string
+  type: 'task_started'
+  taskId: number
+  timestamp: string
+  status?: PricingTaskStatus
+}
+
+export interface PricingAgentCardMessage {
+  schemaVersion: string
+  channel: string
+  type: 'agent_card'
+  taskId: number
+  timestamp: string
+  agentCode: PricingAgentCode
+  agentName: string
+  displayOrder: number
+  stage: string
+  card: AgentCardContent
+}
+
+export interface PricingTaskCompletedMessage {
+  schemaVersion: string
+  channel: string
+  type: 'task_completed'
+  taskId: number
+  timestamp: string
+  result?: PricingTaskResultPayload
+}
+
+export interface PricingTaskFailedMessage {
+  schemaVersion: string
+  channel: string
+  type: 'task_failed'
+  taskId: number
+  timestamp: string
+  message?: string
+}
+
+export type PricingWsMessage =
+  | PricingTaskStartedMessage
+  | PricingAgentCardMessage
+  | PricingTaskCompletedMessage
+  | PricingTaskFailedMessage
 
 export const startDecisionTask = (data: DecisionTaskRequest) => {
   return request.post('/decision/start', data)
@@ -82,7 +179,15 @@ export const getTaskLogs = (taskId: number) => {
   return request.get(`/decision/logs/${taskId}`)
 }
 
-export const getTaskLogStreamUrl = (taskId: number) => `/api/decision/stream/${taskId}`
+export const getTaskLogWebSocketUrl = (taskId: number) => {
+  const customBase = String(import.meta.env.VITE_AGENT_WS_BASE || '').trim()
+  if (customBase) {
+    return `${customBase.replace(/\/+$/, '')}/ws/decision/${taskId}`
+  }
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  const hostname = window.location.hostname || '127.0.0.1'
+  return `${protocol}://${hostname}:8000/ws/decision/${taskId}`
+}
 
 export const getTaskList = (params: DecisionTaskQuery) => {
   return request.get('/decision/tasks', { params })
@@ -94,4 +199,26 @@ export const getTaskStats = (params?: Pick<DecisionTaskQuery, 'startTime' | 'end
 
 export const applyDecision = (resultId: number) => {
   return request.post(`/decision/apply/${resultId}`)
+}
+
+export const createPricingTask = (data: PricingTaskCreateRequest) => {
+  return request.post('/pricing/tasks', data)
+}
+
+export const getPricingTaskDetail = (taskId: number) => {
+  return request.get(`/pricing/tasks/${taskId}`)
+}
+
+export const getPricingTaskLogs = (taskId: number) => {
+  return request.get(`/pricing/tasks/${taskId}/logs`)
+}
+
+export const getPricingTaskWebSocketUrl = (taskId: number) => {
+  const customBase = String(import.meta.env.VITE_AGENT_WS_BASE || '').trim()
+  if (customBase) {
+    return `${customBase.replace(/\/+$/, '')}/ws/pricing/tasks/${taskId}`
+  }
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  const hostname = window.location.hostname || '127.0.0.1'
+  return `${protocol}://${hostname}:8000/ws/pricing/tasks/${taskId}`
 }

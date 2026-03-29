@@ -1,4 +1,4 @@
-from decimal import Decimal
+﻿from decimal import Decimal
 
 from app.schemas.agent import DataAgentOutput, DailyMetricSnapshot, ProductContext, TrafficSnapshot
 from app.tools.elasticity_profit_tool import ElasticityProfitTool
@@ -8,7 +8,7 @@ from app.utils.math_utils import money
 
 
 class DataAnalysisAgent:
-    code = "DATA"
+    code = "DATA_ANALYSIS"
     name = "数据分析Agent"
 
     def __init__(self) -> None:
@@ -57,8 +57,7 @@ class DataAnalysisAgent:
             expectedProfit=expected_profit,
             confidence=confidence,
             summary=(
-                f"基于近30天数据，建议价 {suggested}，预计销量 {expected_sales}，"
-                f"预计利润 {expected_profit}，趋势分数 {trend_score:.2f}"
+                f"基于近30天经营数据，建议价格 {suggested}，预计销量 {expected_sales}，"
+                f"预计利润 {expected_profit}，趋势评分 {trend_score:.2f}。"
             ),
         )
-
