@@ -398,6 +398,10 @@ const stopLogStream = () => {
   }
 }
 
+const refreshTaskSnapshot = async (taskId: number) => {
+  await Promise.all([fetchTaskLogs(taskId), fetchTaskResult(taskId)])
+}
+
 const startLogStream = (taskId: number) => {
   stopLogStream()
   streamCompleted = false
@@ -422,7 +426,8 @@ const startLogStream = (taskId: number) => {
     }
   })
 
-  source.addEventListener('done', () => {
+  source.addEventListener('done', async () => {
+    await refreshTaskSnapshot(taskId)
     if (!streamCompleted) {
       streamCompleted = true
       ElMessage.success('任务执行完成，结果已更新')
@@ -430,7 +435,8 @@ const startLogStream = (taskId: number) => {
     stopLogStream()
   })
 
-  source.addEventListener('failed', () => {
+  source.addEventListener('failed', async () => {
+    await refreshTaskSnapshot(taskId)
     if (!streamCompleted) {
       streamCompleted = true
       ElMessage.error('任务执行失败，请查看日志')
@@ -442,7 +448,7 @@ const startLogStream = (taskId: number) => {
     stopLogStream()
     if (!streamCompleted) {
       // Stream disconnected unexpectedly, fallback to one-shot refresh.
-      await Promise.all([fetchTaskLogs(taskId), fetchTaskResult(taskId)])
+      await refreshTaskSnapshot(taskId)
     }
   }
 }

@@ -83,12 +83,6 @@ public class DecisionController {
                     }
                     sendEvent(emitter, "log", logItem);
                     lastLogId.set(logItem.getId());
-                    if ("FAILED".equalsIgnoreCase(logItem.getRunStatus())) {
-                        sendEvent(emitter, "failed", Map.of("taskId", taskId, "message", "task failed"));
-                        completed.set(true);
-                        emitter.complete();
-                        return;
-                    }
                 }
 
                 List<DecisionComparisonVO> result = decisionTaskService.getTaskResult(taskId);
@@ -100,10 +94,23 @@ public class DecisionController {
                     return;
                 }
 
+                String taskStatus = decisionTaskService.getTaskStatus(taskId);
+                if ("FAILED".equalsIgnoreCase(taskStatus)) {
+                    sendEvent(emitter, "failed", Map.of("taskId", taskId, "message", "task failed"));
+                    completed.set(true);
+                    emitter.complete();
+                    return;
+                }
+
                 sendEvent(
                         emitter,
                         "heartbeat",
-                        Map.of("taskId", taskId, "lastLogId", lastLogId.get(), "logCount", logs.size())
+                        Map.of(
+                                "taskId", taskId,
+                                "lastLogId", lastLogId.get(),
+                                "logCount", logs.size(),
+                                "taskStatus", taskStatus
+                        )
                 );
             } catch (Exception ex) {
                 log.warn("stream task logs failed, taskId={}", taskId, ex);

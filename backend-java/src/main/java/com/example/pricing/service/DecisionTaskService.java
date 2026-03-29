@@ -17,6 +17,8 @@ public interface DecisionTaskService {
 
     List<DecisionLogVO> getTaskLogs(Long taskId);
 
+    String getTaskStatus(Long taskId);
+
     Page<DecisionTaskItemVO> getTasks(int page, int size, String status, String startTime, String endTime, String sortOrder);
 
     Map<String, Long> getTaskStats(String startTime, String endTime);

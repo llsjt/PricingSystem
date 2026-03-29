@@ -123,6 +123,15 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     }
 
     @Override
+    public String getTaskStatus(Long taskId) {
+        PricingTask task = taskMapper.selectById(taskId);
+        if (task == null || task.getTaskStatus() == null || task.getTaskStatus().isBlank()) {
+            return "NOT_FOUND";
+        }
+        return task.getTaskStatus().trim();
+    }
+
+    @Override
     public Page<DecisionTaskItemVO> getTasks(int page, int size, String status, String startTime, String endTime, String sortOrder) {
         Page<PricingTask> pageParam = new Page<>(Math.max(page, 1), size <= 0 ? 10 : size);
         LambdaQueryWrapper<PricingTask> wrapper = new LambdaQueryWrapper<>();

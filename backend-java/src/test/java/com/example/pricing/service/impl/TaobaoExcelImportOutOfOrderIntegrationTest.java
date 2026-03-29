@@ -4,10 +4,12 @@ import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.pricing.entity.Product;
 import com.example.pricing.entity.ProductDailyMetric;
+import com.example.pricing.entity.ProductSku;
 import com.example.pricing.entity.UploadBatch;
 import com.example.pricing.entity.TrafficPromoDaily;
 import com.example.pricing.mapper.ProductDailyMetricMapper;
 import com.example.pricing.mapper.ProductMapper;
+import com.example.pricing.mapper.ProductSkuMapper;
 import com.example.pricing.mapper.UploadBatchMapper;
 import com.example.pricing.mapper.TrafficPromoDailyMapper;
 import com.example.pricing.vo.ImportResultVO;
@@ -43,6 +45,9 @@ class TaobaoExcelImportOutOfOrderIntegrationTest {
 
     @Autowired
     private ProductDailyMetricMapper statMapper;
+
+    @Autowired
+    private ProductSkuMapper productSkuMapper;
 
     @Autowired
     private TrafficPromoDailyMapper trafficPromoDailyMapper;
@@ -151,6 +156,34 @@ class TaobaoExcelImportOutOfOrderIntegrationTest {
         assertEquals(0, new BigDecimal("66.00").compareTo(product2.getCostPrice()));
         assertEquals(124, product2.getStock());
 
+        MockMultipartFile skuFile = createExcel(
+                "tb-out-of-order-sku-" + caseKey + ".xlsx",
+                "商品SKU",
+                List.of("商品ID", "商品标题", "SKU ID", "SKU属性", "SKU售价", "SKU库存"),
+                List.of(
+                        List.of(externalId1, title1, externalId1 + "-BLUE-M", "颜色:蓝色;尺码:M", "109.00", "36"),
+                        List.of(externalId1, title1, "", "颜色:白色;尺码:L", "", ""),
+                        List.of(externalId2, title2, externalId2 + "-BLACK-S", "颜色:黑色;尺码:S", "129.00", "22")
+                )
+        );
+
+        ImportResultVO skuResult = importService.importExcel(skuFile, "PRODUCT_SKU");
+        assertImportResult(skuResult, "PRODUCT_SKU", 3, false);
+
+        List<ProductSku> skuRows = productSkuMapper.selectList(new LambdaQueryWrapper<ProductSku>()
+                .in(ProductSku::getProductId, finalProducts.stream().map(Product::getId).toList()));
+        assertEquals(3, skuRows.size());
+
+        ProductSku derivedSku = skuRows.stream()
+                .filter(candidate -> candidate.getProductId().equals(product1.getId()) && candidate.getSkuAttr().contains("白色"))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(derivedSku);
+        assertFalse(derivedSku.getExternalSkuId().isBlank());
+        assertEquals(0, new BigDecimal("109.00").compareTo(derivedSku.getSalePrice()));
+        assertEquals(0, new BigDecimal("58.50").compareTo(derivedSku.getCostPrice()));
+        assertEquals(168, derivedSku.getStock());
+
         ProductDailyMetric stat = stats.stream()
                 .filter(candidate -> candidate.getProductId().equals(placeholderByExternalId.get(externalId1).getId()) && candidate.getStatDate().equals(statDate1))
                 .findFirst()
@@ -171,9 +204,10 @@ class TaobaoExcelImportOutOfOrderIntegrationTest {
                 .in(UploadBatch::getFileName, List.of(
                         dailyMetricFile.getOriginalFilename(),
                         trafficPromoFile.getOriginalFilename(),
-                        productBaseFile.getOriginalFilename()
+                        productBaseFile.getOriginalFilename(),
+                        skuFile.getOriginalFilename()
                 )));
-        assertEquals(3, batches.size());
+        assertEquals(4, batches.size());
         assertTrue(batches.stream().allMatch(batch -> "SUCCESS".equals(batch.getUploadStatus())));
         assertTrue(batches.stream().allMatch(batch -> batch.getFailCount() == 0));
 
