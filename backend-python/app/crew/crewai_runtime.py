@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 from typing import Any
 
@@ -14,7 +15,6 @@ from crewai.llms.base_llm import BaseLLM
 
 from app.core.config import get_settings
 from app.crew.protocols import CrewRunPayload
-from app.utils.math_utils import money
 
 
 class OpenAICompatibleCrewAILLM(BaseLLM):
@@ -222,26 +222,94 @@ def build_crewai_llm() -> OpenAICompatibleCrewAILLM:
     if missing:
         raise RuntimeError(f"Missing required LLM config: {', '.join(missing)}")
 
+    # Constrain per-call timeout under CrewAI session budget to avoid long blocking.
+    session_budget = max(int(settings.crewai_session_timeout_seconds or 0), 10)
+    total_timeout = min(max(int(settings.crewai_llm_timeout_seconds or 0), 8), max(session_budget - 5, 8))
+    connect_timeout = min(max(int(settings.crewai_llm_connect_timeout_seconds or 0), 2), max(total_timeout - 2, 2))
+    read_timeout = min(max(int(settings.crewai_llm_read_timeout_seconds or 0), 5), max(total_timeout - 1, 5))
+    max_retries = max(int(settings.crewai_llm_max_retries or 0), 0)
+
     return OpenAICompatibleCrewAILLM(
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         model=settings.llm_model,
-        timeout_seconds=settings.llm_timeout_seconds,
-        connect_timeout_seconds=settings.llm_connect_timeout_seconds,
-        read_timeout_seconds=settings.llm_read_timeout_seconds,
-        max_retries=settings.llm_max_retries,
+        timeout_seconds=total_timeout,
+        connect_timeout_seconds=connect_timeout,
+        read_timeout_seconds=read_timeout,
+        max_retries=max_retries,
         retry_backoff_seconds=settings.llm_retry_backoff_seconds,
     )
 
 
-def run_crewai_session(payload: CrewRunPayload) -> dict[str, Any]:
-    """Start 4-Agent CrewAI collaboration and return a summary payload."""
+def _extract_json_object(raw_output: str) -> dict[str, Any]:
+    text = (raw_output or "").strip()
+    if not text:
+        return {}
+
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
+    if fence_match:
+        text = fence_match.group(1).strip()
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+
+    obj_match = re.search(r"\{[\s\S]*\}", text)
+    if obj_match:
+        try:
+            parsed = json.loads(obj_match.group(0))
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return {}
+    return {}
+
+
+def _normalize_decision_payload(parsed: dict[str, Any]) -> dict[str, Any]:
+    source = parsed
+    nested = parsed.get("decision")
+    if isinstance(nested, dict):
+        source = nested
+
+    def pick_number(*keys: str) -> float | None:
+        for key in keys:
+            value = source.get(key)
+            try:
+                if value is not None:
+                    return float(value)
+            except Exception:
+                continue
+        return None
+
+    def pick_text(*keys: str) -> str | None:
+        for key in keys:
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    return {
+        "recommendedPrice": pick_number("recommendedPrice", "consensusPrice"),
+        "recommendedMinPrice": pick_number("recommendedMinPrice", "consensusMinPrice"),
+        "recommendedMaxPrice": pick_number("recommendedMaxPrice", "consensusMaxPrice"),
+        "executeStrategy": pick_text("executeStrategy", "strategy"),
+        "reason": pick_text("reason", "riskNote", "decisionReason"),
+        "confidence": pick_number("confidence"),
+    }
+
+
+def run_crewai_session(payload: CrewRunPayload, decision_inputs: dict[str, Any]) -> dict[str, Any]:
+    """Start a lightweight MVP CrewAI collaboration and return normalized JSON decision."""
     llm = build_crewai_llm()
     settings = get_settings()
 
-    max_iter = max(settings.crewai_agent_max_iter, 1)
-    max_execution_time = max(settings.crewai_agent_max_execution_seconds, 10)
-    max_retry_limit = max(settings.crewai_agent_max_retry_limit, 0)
+    max_iter = max(min(settings.crewai_agent_max_iter, 3), 1)
+    max_execution_time = max(min(settings.crewai_agent_max_execution_seconds, 25), 8)
+    max_execution_time = min(max_execution_time, max(settings.crewai_session_timeout_seconds - 8, 8))
+    max_retry_limit = max(min(settings.crewai_agent_max_retry_limit, 1), 0)
 
     common_agent_kwargs = {
         "llm": llm,
@@ -251,95 +319,83 @@ def run_crewai_session(payload: CrewRunPayload) -> dict[str, Any]:
         "max_retry_limit": max_retry_limit,
     }
 
-    data_agent = Agent(
-        role="数据分析Agent",
-        goal="分析商品数据趋势并给出价格建议",
-        backstory="擅长销量、转化率和利润弹性分析。",
-        allow_delegation=False,
-        **common_agent_kwargs,
-    )
-    market_agent = Agent(
-        role="市场情报Agent",
-        goal="基于竞品样本判断市场价格带",
-        backstory="擅长比较同类商品的市场价格水平。",
-        allow_delegation=False,
-        **common_agent_kwargs,
-    )
-    risk_agent = Agent(
-        role="风控Agent",
-        goal="校验利润率和价格上下限约束",
-        backstory="擅长识别价格决策中的经营风险。",
+    analysis_agent = Agent(
+        role="Collab Analyst",
+        goal="Find pricing conflicts and feasible range from structured inputs quickly.",
+        backstory="Skilled in concise consistency analysis with limited context.",
         allow_delegation=False,
         **common_agent_kwargs,
     )
     manager_agent = Agent(
-        role="经理协调Agent",
-        goal="综合三方意见输出最终决策",
-        backstory="负责多 Agent 结果整合和冲突裁决。",
+        role="Decision Manager",
+        goal="Produce final executable pricing decision in strict JSON.",
+        backstory="Responsible for coordination and decision convergence.",
         allow_delegation=True,
         **common_agent_kwargs,
     )
 
-    product = payload.product
-    base_context = (
-        f"商品={product.product_name}; 当前价={money(product.current_price)}; "
-        f"成本={money(product.cost_price)}; 库存={product.stock}; 策略={payload.strategy_goal}; "
-        f"约束={payload.constraints}"
-    )
-
-    data_task = Task(
-        description=f"请完成数据分析并给出建议价格区间。上下文：{base_context}",
-        expected_output="包含价格区间、预估销量、预估利润、置信度的中文摘要。",
-        agent=data_agent,
-    )
-    market_task = Task(
-        description=f"请完成市场价带分析并给出建议价格。上下文：{base_context}",
-        expected_output="包含市场底价、市场上限、建议价、样本规模的中文摘要。",
-        agent=market_agent,
-        context=[data_task],
-    )
-    risk_task = Task(
-        description=f"请评估候选价格风险并给出风控建议。上下文：{base_context}",
-        expected_output="包含是否通过、风险等级、安全底价、是否人工复核的中文摘要。",
-        agent=risk_agent,
-        context=[data_task, market_task],
+    compact_inputs = json.dumps(decision_inputs, ensure_ascii=False, separators=(",", ":"))
+    analysis_task = Task(
+        description=(
+            "Read INPUT_JSON and output strict JSON only.\n"
+            "Required fields: consensusPrice, consensusMinPrice, consensusMaxPrice, riskNote, confidence.\n"
+            f"INPUT_JSON={compact_inputs}"
+        ),
+        expected_output='{"consensusPrice":0,"consensusMinPrice":0,"consensusMaxPrice":0,"riskNote":"","confidence":0}',
+        agent=analysis_agent,
     )
     manager_task = Task(
-        description="请综合数据、市场、风控三方意见，给出最终定价建议与执行策略。",
-        expected_output="包含最终价格、执行策略、结论摘要。",
+        description=(
+            "Based on previous result, output final decision in strict JSON only.\n"
+            "Required fields: recommendedPrice, recommendedMinPrice, recommendedMaxPrice, "
+            "executeStrategy(DIRECT_EXECUTE|GRAY_RELEASE|MANUAL_REVIEW), reason, confidence."
+        ),
+        expected_output=(
+            '{"recommendedPrice":0,"recommendedMinPrice":0,"recommendedMaxPrice":0,'
+            '"executeStrategy":"GRAY_RELEASE","reason":"","confidence":0}'
+        ),
         agent=manager_agent,
-        context=[data_task, market_task, risk_task],
+        context=[analysis_task],
     )
 
     crew = Crew(
-        name="pricing-multi-agent-crew",
-        agents=[data_agent, market_agent, risk_agent],
+        name="pricing-mvp-crewai-crew",
+        agents=[analysis_agent],
         manager_agent=manager_agent,
-        tasks=[data_task, market_task, risk_task, manager_task],
+        tasks=[analysis_task, manager_task],
         process=Process.hierarchical,
         verbose=False,
     )
+
+    kickoff_start = time.perf_counter()
     output = crew.kickoff(
         inputs={
             "task_id": payload.task_id,
-            "product_id": product.product_id,
+            "product_id": payload.product.product_id,
             "strategy_goal": payload.strategy_goal,
-            "baseline_sales": payload.baseline_sales,
-            "baseline_profit": str(payload.baseline_profit),
         }
     )
+    elapsed_ms = int((time.perf_counter() - kickoff_start) * 1000)
+
+    raw_output = str(output)
+    parsed = _extract_json_object(raw_output)
+    normalized_decision = _normalize_decision_payload(parsed)
 
     return {
         "enabled": True,
+        "mode": "MVP",
         "process": "hierarchical",
-        "taskCount": 4,
+        "taskCount": 2,
         "llmModel": llm.model,
         "llmBaseUrl": llm.base_url,
+        "elapsedMs": elapsed_ms,
+        "inputChars": len(compact_inputs),
         "tuning": {
             "maxIter": max_iter,
             "maxExecutionSeconds": max_execution_time,
             "maxRetryLimit": max_retry_limit,
         },
-        "agentRoles": [data_agent.role, market_agent.role, risk_agent.role, manager_agent.role],
-        "crewOutput": str(output),
+        "agentRoles": [analysis_agent.role, manager_agent.role],
+        "decision": normalized_decision,
+        "crewOutput": raw_output[:1200],
     }
