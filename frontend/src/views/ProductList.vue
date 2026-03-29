@@ -455,9 +455,6 @@
           </el-tab-pane>
         </el-tabs>
 
-        <div class="detail-actions">
-          <el-button type="primary" @click="openTrendFromDetail">查看趋势图</el-button>
-        </div>
       </div>
     </el-drawer>
 
@@ -775,12 +772,6 @@ const openDetailDrawer = async (row: ProductListVO) => {
   detailTab.value = 'base'
   detailVisible.value = true
   await loadDetailData(row.id)
-}
-
-const openTrendFromDetail = () => {
-  if (!currentProduct.value) return
-  detailVisible.value = false
-  openTrendDrawer(currentProduct.value)
 }
 
 const handleResize = () => {

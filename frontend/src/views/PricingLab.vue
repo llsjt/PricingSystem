@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="page-shell pricing-page">
     <section class="panel-card step-panel">
       <div class="section-head">
@@ -63,8 +63,6 @@
 
           <div class="toolbar-actions">
             <el-button :loading="starting" type="primary" size="large" @click="startTask">启动任务</el-button>
-            <el-button :disabled="!currentTaskId" @click="refreshSnapshot">刷新快照</el-button>
-            <el-button :disabled="!currentTaskId" @click="resetTask">重置</el-button>
           </div>
         </el-form>
       </section>
@@ -190,9 +188,54 @@
           </div>
         </div>
 
-        <div class="report-summary">
-          <strong>最终摘要：</strong>
-          <span>{{ reportSummary || '-' }}</span>
+        <div class="report-table">
+          <el-table :data="comparisonData" border stripe>
+            <el-table-column prop="productTitle" label="商品名称" min-width="180" show-overflow-tooltip />
+            <el-table-column label="原价" width="120">
+              <template #default="{ row }">{{ formatCurrency(row.originalPrice) }}</template>
+            </el-table-column>
+            <el-table-column label="建议价" width="120">
+              <template #default="{ row }">
+                <span class="price-text" style="color: #ff9900; font-weight: bold;">{{ formatCurrency(row.suggestedPrice) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="预期销量" width="110">
+              <template #default="{ row }">{{ row.expectedSales || 0 }}</template>
+            </el-table-column>
+            <el-table-column label="预期利润" width="120">
+              <template #default="{ row }">{{ formatCurrency(row.expectedProfit) }}</template>
+            </el-table-column>
+            <el-table-column label="利润变化" width="120">
+              <template #default="{ row }">
+                <el-tag :type="Number(row.profitChange || 0) >= 0 ? 'success' : 'danger'" effect="light">
+                  {{ formatSignedCurrency(row.profitChange) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="passStatus" label="风控结果" width="110" />
+            <el-table-column prop="executeStrategy" label="执行策略" width="120" />
+            <el-table-column label="应用状态" width="110">
+              <template #default="{ row }">
+                <el-tag :type="row.appliedStatus === '已应用' ? 'success' : 'info'" effect="light">
+                  {{ row.appliedStatus || '未应用' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="120" fixed="right">
+              <template #default="{ row }">
+                <el-tag v-if="row.appliedStatus === '已应用'" type="success" effect="light">已应用</el-tag>
+                <el-button
+                  v-else
+                  type="primary"
+                  link
+                  :loading="applyingResultIds.includes(Number(row.resultId))"
+                  @click="applyPrice(row)"
+                >
+                  应用建议
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
         </div>
       </section>
     </div>
@@ -201,8 +244,9 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  applyDecision,
   createPricingTask,
   getTaskComparison,
   getPricingTaskDetail,
@@ -294,6 +338,8 @@ const starting = ref(false)
 const currentTaskId = ref<number | null>(null)
 const activeStep = ref(0)
 const archiveReportSummary = ref('')
+const comparisonData = ref<DecisionComparisonItem[]>([])
+const applyingResultIds = ref<number[]>([])
 
 let latestProductLoadToken = 0
 let wsClient: WebSocket | null = null
@@ -536,13 +582,16 @@ const loadArchiveSummary = async (taskId: number) => {
     const res = (await getTaskComparison(taskId)) as ApiResponse<DecisionComparisonItem[]>
     if (res.code !== 200) {
       archiveReportSummary.value = ''
+      comparisonData.value = []
       return
     }
     const rows = Array.isArray(res.data) ? res.data : []
+    comparisonData.value = rows
     const row = rows.find((item) => String(item.resultSummary || '').trim())
     archiveReportSummary.value = row ? String(row.resultSummary || '').trim() : ''
   } catch {
     archiveReportSummary.value = ''
+    comparisonData.value = []
   }
 }
 
@@ -726,6 +775,7 @@ const resetTask = () => {
   taskState.strategy = ''
   taskState.finalSummary = ''
   archiveReportSummary.value = ''
+  comparisonData.value = []
   taskState.errorMessage = ''
   activeStep.value = 0
 }
@@ -902,6 +952,49 @@ const getSuggestionLines = (code: PricingAgentCode, suggestion?: Record<string, 
   }
 
   return lines.length > 0 ? lines : ['暂无建议内容']
+}
+
+const formatSignedCurrency = (value?: number | string | null) => {
+  const numeric = Number(value || 0)
+  return `${numeric >= 0 ? '+' : '-'}¥${Math.abs(numeric).toFixed(2)}`
+}
+
+const applyPrice = async (row: DecisionComparisonItem) => {
+  const resultId = Number(row.resultId || 0)
+  if (!resultId) {
+    ElMessage.error('未找到可应用的结果记录')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `确认将商品“${row.productTitle}”的售价更新为 ${formatCurrency(row.suggestedPrice as number)} 吗？`,
+      '应用价格建议',
+      {
+        type: 'warning',
+        confirmButtonText: '确认应用',
+        cancelButtonText: '取消'
+      }
+    )
+
+    applyingResultIds.value.push(resultId)
+    const res: any = await applyDecision(resultId)
+    if (res.code !== 200) {
+      ElMessage.error(res.message || '应用失败')
+      return
+    }
+
+    ElMessage.success('价格建议已应用')
+    if (currentTaskId.value) {
+      await loadArchiveSummary(currentTaskId.value)
+    }
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      ElMessage.error('应用失败')
+    }
+  } finally {
+    applyingResultIds.value = applyingResultIds.value.filter((id) => id !== resultId)
+  }
 }
 
 onMounted(() => {
@@ -1095,13 +1188,8 @@ onBeforeUnmount(() => {
   font-size: 18px;
 }
 
-.report-summary {
-  margin-top: 8px;
-  padding: 14px;
-  border-radius: 10px;
-  background: var(--surface-2);
-  border: 1px solid var(--line-soft);
-  line-height: 1.7;
+.report-table {
+  margin-top: 14px;
 }
 
 @media (max-width: 1200px) {

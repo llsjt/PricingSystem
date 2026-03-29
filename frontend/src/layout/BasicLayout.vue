@@ -21,6 +21,12 @@ interface NavItem {
   adminOnly?: boolean
 }
 
+interface OpenTab {
+  path: string
+  title: string
+  name?: string
+}
+
 const router = useRouter()
 const route = useRoute()
 
@@ -29,7 +35,6 @@ const isSidebarCollapsed = ref(false)
 const mobileMenuVisible = ref(false)
 const isMobile = ref(false)
 const appName = '智能定价平台'
-const appSubtitle = '多 Agent 协同工作台'
 
 const navItems: NavItem[] = [
   {
@@ -70,6 +75,12 @@ const visibleNavItems = computed(() => navItems.filter((item) => !item.adminOnly
 const currentNav = computed(() => visibleNavItems.value.find((item) => route.path.startsWith(item.path)))
 const pageTitle = computed(() => currentNav.value?.title || String(route.meta.title || '智能定价系统'))
 const pageDesc = computed(() => currentNav.value?.desc || '多 Agent 协同定价工作台')
+const openTabs = ref<OpenTab[]>([])
+const cacheNames = computed(() =>
+  openTabs.value
+    .map((tab) => tab.name)
+    .filter((name): name is string => Boolean(name))
+)
 
 const updateViewportState = () => {
   isMobile.value = window.innerWidth <= 960
@@ -82,6 +93,47 @@ const navigateTo = (path: string) => {
   router.push(path)
   if (isMobile.value) {
     mobileMenuVisible.value = false
+  }
+}
+
+const upsertTab = (tab: OpenTab) => {
+  const index = openTabs.value.findIndex((item) => item.path === tab.path)
+  if (index >= 0) {
+    openTabs.value[index] = { ...openTabs.value[index], ...tab }
+    return
+  }
+  openTabs.value.push(tab)
+}
+
+const ensureCurrentTab = () => {
+  if (route.path === '/login') return
+  const title = currentNav.value?.title || String(route.meta.title || route.name || route.path)
+  const name = typeof route.name === 'string' ? route.name : undefined
+  upsertTab({
+    path: route.path,
+    title,
+    name
+  })
+}
+
+const openTab = (path: string) => {
+  if (route.path === path) return
+  navigateTo(path)
+}
+
+const closeTab = (path: string) => {
+  if (openTabs.value.length <= 1) return
+  const index = openTabs.value.findIndex((item) => item.path === path)
+  if (index < 0) return
+
+  const isActive = route.path === path
+  openTabs.value.splice(index, 1)
+
+  if (!isActive) return
+
+  const fallback = openTabs.value[index] || openTabs.value[index - 1] || openTabs.value[0]
+  if (fallback) {
+    navigateTo(fallback.path)
   }
 }
 
@@ -112,12 +164,24 @@ watch(
     if (isMobile.value) {
       mobileMenuVisible.value = false
     }
+    ensureCurrentTab()
   }
+)
+
+watch(
+  visibleNavItems,
+  () => {
+    const allowedPaths = visibleNavItems.value.map((item) => item.path)
+    openTabs.value = openTabs.value.filter((tab) => allowedPaths.some((path) => tab.path.startsWith(path)))
+    ensureCurrentTab()
+  },
+  { deep: true }
 )
 
 onMounted(() => {
   updateViewportState()
   window.addEventListener('resize', updateViewportState)
+  ensureCurrentTab()
 })
 
 onBeforeUnmount(() => {
@@ -180,40 +244,76 @@ onBeforeUnmount(() => {
     </aside>
 
     <div class="main-shell">
-      <header class="topbar">
-        <div class="topbar-left">
-          <el-button class="menu-button" circle @click="toggleSidebar">
-            <el-icon><Menu /></el-icon>
-          </el-button>
-          <div class="page-meta">
-            <h1>{{ pageTitle }}</h1>
-            <p>{{ pageDesc }}</p>
+      <div class="header-wrapper">
+        <header class="topbar">
+          <div class="topbar-left">
+            <el-button class="menu-button" circle @click="toggleSidebar">
+              <el-icon><Menu /></el-icon>
+            </el-button>
+            <div class="page-meta">
+              <el-breadcrumb separator="/">
+                <el-breadcrumb-item :to="{ path: '/' }">{{ appName }}</el-breadcrumb-item>
+                <el-breadcrumb-item>
+                  <span class="page-title">{{ pageTitle }}</span>
+                </el-breadcrumb-item>
+              </el-breadcrumb>
+            </div>
+          </div>
+
+          <div class="topbar-right">
+            <el-dropdown trigger="click" @command="handleCommand">
+              <button type="button" class="user-entry">
+                <el-avatar :size="38" :icon="UserFilled" />
+                <div class="user-copy">
+                  <strong>{{ username }}</strong>
+                  <span>{{ isAdmin ? '管理员' : '普通用户' }}</span>
+                </div>
+                <el-icon><ArrowDown /></el-icon>
+              </button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="profile">个人中心</el-dropdown-item>
+                  <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+        </header>
+
+        <div class="tabs-shell" v-if="openTabs.length">
+          <div class="tabs-track">
+            <button
+              v-for="tab in openTabs"
+              :key="tab.path"
+              type="button"
+              class="tab-item"
+              :class="{ active: route.path === tab.path }"
+              @click="openTab(tab.path)"
+            >
+              <span class="tab-title">{{ tab.title }}</span>
+              <span
+                v-if="openTabs.length > 1"
+                class="tab-close"
+                role="button"
+                tabindex="0"
+                @click.stop="closeTab(tab.path)"
+                @keydown.enter.prevent="closeTab(tab.path)"
+                @keydown.space.prevent="closeTab(tab.path)"
+              >
+                <el-icon><Close /></el-icon>
+              </span>
+            </button>
           </div>
         </div>
-
-        <div class="topbar-right">
-          <el-dropdown trigger="click" @command="handleCommand">
-            <button type="button" class="user-entry">
-              <el-avatar :size="38" :icon="UserFilled" />
-              <div class="user-copy">
-                <strong>{{ username }}</strong>
-                <span>{{ isAdmin ? '管理员' : '普通用户' }}</span>
-              </div>
-              <el-icon><ArrowDown /></el-icon>
-            </button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="profile">个人中心</el-dropdown-item>
-                <el-dropdown-item divided command="logout">退出登录</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
-        </div>
-      </header>
+      </div>
 
       <main class="content-shell">
         <div class="content-inner">
-          <router-view />
+          <router-view v-slot="{ Component, route: activeRoute }">
+            <keep-alive :include="cacheNames">
+              <component :is="Component" :key="activeRoute.path" />
+            </keep-alive>
+          </router-view>
         </div>
       </main>
     </div>
@@ -222,7 +322,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .layout-shell {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   width: 100%;
   max-width: 100%;
@@ -396,6 +496,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-width: 0;
   max-width: 100%;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   overflow-x: hidden;
@@ -411,18 +512,23 @@ onBeforeUnmount(() => {
   margin-left: 84px;
 }
 
-.topbar {
+.header-wrapper {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 20;
+  flex-shrink: 0;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 21, 41, 0.04);
+}
+
+.topbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  padding: 16px 24px;
-  backdrop-filter: blur(14px);
-  background: linear-gradient(90deg, rgba(249, 252, 255, 0.9), rgba(246, 250, 255, 0.86));
-  border-bottom: 1px solid rgba(14, 30, 37, 0.07);
+  height: 52px;
+  padding: 0 16px;
+  border-bottom: 1px solid rgba(220, 226, 232, 0.6);
 }
 
 .topbar-left,
@@ -439,40 +545,33 @@ onBeforeUnmount(() => {
 }
 
 .page-meta {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  align-items: center;
+  margin-left: 8px;
 }
 
-.page-meta h1 {
+.page-title {
   margin: 0;
-  font-size: 26px;
-  line-height: 1.1;
-}
-
-.page-meta p {
-  margin: 0;
-  width: fit-content;
-  max-width: 100%;
-  padding: 4px 10px;
-  border-radius: 8px;
-  color: #35577c;
-  background: rgba(31, 111, 235, 0.1);
-  border: 1px solid rgba(31, 111, 235, 0.15);
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
+  color: #1f2d3d;
 }
 
 .user-entry {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 12px 8px 8px;
+  padding: 4px 10px;
   border-radius: 999px;
-  border: 1px solid var(--line-soft);
-  background: var(--surface-1);
-  box-shadow: var(--shadow-card);
+  border: 1px solid transparent;
+  background: transparent;
   cursor: pointer;
-  color: var(--text-1);
+  color: #333639;
+  transition: background 0.2s;
+}
+
+.user-entry:hover {
+  background: #f0f2f5;
 }
 
 .user-copy {
@@ -491,8 +590,94 @@ onBeforeUnmount(() => {
 }
 
 .content-shell {
+  flex: 1;
+  min-height: 0;
   padding: 24px 24px 32px;
   overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.tabs-shell {
+  padding: 0 16px;
+  background: #f4f7f9;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.02);
+  border-bottom: 1px solid #e1e4e8;
+}
+
+.tabs-track {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 6px 0 0;
+}
+
+.tabs-track::-webkit-scrollbar {
+  height: 0;
+}
+
+.tab-item {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  max-width: 220px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: #e2e8f0;
+  color: #64748b;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.2s cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+.tab-item:hover {
+  background: #cbd5e1;
+  color: #334155;
+}
+
+.tab-item.active {
+  background: #ffffff;
+  color: #1f6feb;
+  border: 1px solid #e1e4e8;
+  border-bottom: none;
+}
+
+.tab-item.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #ffffff;
+}
+
+.tab-title {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  border-radius: 50%;
+  color: #516d89;
+}
+
+.tab-close:hover {
+  color: #1f6feb;
+  background: rgba(31, 111, 235, 0.1);
 }
 
 .content-inner {
@@ -550,19 +735,19 @@ onBeforeUnmount(() => {
   }
 
   .topbar {
-    padding: 16px 16px 18px;
+    padding: 8px 12px;
   }
 
   .content-shell {
     padding: 14px 12px 22px;
   }
 
-  .page-meta h1 {
-    font-size: 22px;
+  .tabs-shell {
+    padding: 0 12px;
   }
 
-  .page-meta p {
-    display: none;
+  .page-title {
+    font-size: 14px;
   }
 
   .user-copy {
@@ -577,10 +762,6 @@ onBeforeUnmount(() => {
 
   .page-meta {
     min-width: 0;
-  }
-
-  .page-meta h1 {
-    font-size: 20px;
   }
 }
 </style>
