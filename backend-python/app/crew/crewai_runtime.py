@@ -1,3 +1,15 @@
+"""
+CrewAI LLM 适配器
+=================
+实现 OpenAI 兼容的 LLM 调用适配器，供 CrewAI Agent 使用。
+支持阿里通义千问（DashScope）、OpenAI 及其他兼容 API。
+
+主要组件：
+- OpenAICompatibleCrewAILLM: BaseLLM 子类，处理 HTTP 请求、重试、超时
+- build_crewai_llm(): 从配置构建 LLM 实例
+- extract_json_object(): 从 LLM 输出中提取 JSON（供卡片解析复用）
+"""
+
 import json
 import os
 import re
@@ -6,19 +18,21 @@ from typing import Any
 
 import httpx
 
-# Disable telemetry to reduce startup/remote-side overhead in local demos.
+# 禁用 CrewAI 遥测，减少本地开发时的网络开销
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
-from crewai import Agent, Crew, Process, Task
+from crewai import Agent, Task
 from crewai.llms.base_llm import BaseLLM
 
 from app.core.config import get_settings
-from app.crew.protocols import CrewRunPayload
 
 
 class OpenAICompatibleCrewAILLM(BaseLLM):
-    """Call OpenAI-compatible chat completions endpoint for CrewAI."""
+    """
+    OpenAI 兼容的 Chat Completions 端点适配器。
+    支持 DashScope（通义千问）、OpenAI 及其他兼容 API。
+    """
 
     def __init__(
         self,
@@ -33,13 +47,14 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
         retry_backoff_seconds: float,
         temperature: float = 0.2,
     ) -> None:
+        # 参数校验
         normalized_base = (base_url or "").strip().rstrip("/")
         if not api_key.strip():
-            raise ValueError("LLM_API_KEY is required")
+            raise ValueError("LLM_API_KEY 不能为空")
         if not normalized_base:
-            raise ValueError("LLM_BASE_URL is required")
+            raise ValueError("LLM_BASE_URL 不能为空")
         if not model.strip():
-            raise ValueError("MODEL is required")
+            raise ValueError("MODEL 不能为空")
 
         super().__init__(
             model=model.strip(),
@@ -49,7 +64,9 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
             temperature=temperature,
         )
 
+        # 构建 Chat Completions URL
         self.chat_completions_url = self._build_chat_completions_url(normalized_base)
+        # 超时与重试参数
         self.timeout_seconds = max(int(timeout_seconds or 0), 5)
         self.connect_timeout_seconds = max(int(connect_timeout_seconds or 0), 2)
         self.read_timeout_seconds = max(int(read_timeout_seconds or 0), 5)
@@ -58,12 +75,14 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
 
     @staticmethod
     def _build_chat_completions_url(base_url: str) -> str:
+        """拼接 /chat/completions 路径"""
         if base_url.endswith("/chat/completions"):
             return base_url
         return f"{base_url}/chat/completions"
 
     @staticmethod
     def _normalize_content(content: Any) -> str:
+        """将 LLM 响应中的 content 字段统一为纯文本"""
         if isinstance(content, str):
             return content
         if isinstance(content, list):
@@ -79,6 +98,7 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
         return ""
 
     def _build_httpx_timeout(self) -> httpx.Timeout:
+        """构建 httpx 超时配置"""
         return httpx.Timeout(
             timeout=float(self.timeout_seconds),
             connect=float(self.connect_timeout_seconds),
@@ -86,6 +106,10 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
         )
 
     def _request_with_retry(self, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
+        """
+        带重试的 HTTP 请求。
+        对 408/429/5xx 状态码自动重试，使用指数退避策略。
+        """
         retryable_statuses = {408, 429, 500, 502, 503, 504}
         last_error: Exception | None = None
 
@@ -111,19 +135,20 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
                     time.sleep(self.retry_backoff_seconds * (2**attempt))
                     continue
                 raise RuntimeError(
-                    "LLM API timeout "
-                    f"(connect={self.connect_timeout_seconds}s, read={self.read_timeout_seconds}s, total={self.timeout_seconds}s)"
+                    "LLM API 超时 "
+                    f"(connect={self.connect_timeout_seconds}s, "
+                    f"read={self.read_timeout_seconds}s, total={self.timeout_seconds}s)"
                 ) from exc
             except httpx.RequestError as exc:
                 last_error = exc
                 if attempt < self.max_retries:
                     time.sleep(self.retry_backoff_seconds * (2**attempt))
                     continue
-                raise RuntimeError(f"LLM API request failed: {exc}") from exc
+                raise RuntimeError(f"LLM API 请求失败: {exc}") from exc
             except ValueError as exc:
-                raise RuntimeError(f"LLM API returned non-JSON response: {exc}") from exc
+                raise RuntimeError(f"LLM API 返回非JSON响应: {exc}") from exc
 
-        raise RuntimeError(f"LLM API request failed after retries: {last_error}")
+        raise RuntimeError(f"LLM API 请求在重试后仍失败: {last_error}")
 
     def call(
         self,
@@ -135,10 +160,16 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
         from_agent: Agent | None = None,
         response_model: type | None = None,
     ) -> str | Any:
+        """
+        调用 LLM Chat Completions API。
+        这是 CrewAI BaseLLM 要求实现的核心方法。
+        """
+        # 格式化消息列表
         request_messages = self._format_messages(messages)
         if from_agent is None and not self._invoke_before_llm_call_hooks(request_messages, from_agent):
-            raise ValueError("LLM call blocked by before_llm_call hook")
+            raise ValueError("LLM 调用被 before_llm_call hook 阻止")
 
+        # 构建请求体
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": request_messages,
@@ -155,21 +186,27 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
             "Content-Type": "application/json",
         }
 
+        # 发送请求（带重试）
         result = self._request_with_retry(payload=payload, headers=headers)
 
+        # 记录 token 使用量
         usage = result.get("usage")
         if isinstance(usage, dict):
             self._track_token_usage_internal(usage)
 
+        # 解析响应
         choices = result.get("choices")
         if not isinstance(choices, list) or not choices:
-            raise RuntimeError("LLM response missing choices")
+            raise RuntimeError("LLM 响应缺少 choices 字段")
 
         message_payload = choices[0].get("message") if isinstance(choices[0], dict) else None
         if not isinstance(message_payload, dict):
-            raise RuntimeError("LLM response missing message")
+            raise RuntimeError("LLM 响应缺少 message 字段")
 
+        # 提取文本内容
         content = self._normalize_content(message_payload.get("content"))
+
+        # 如果没有文本内容，尝试处理 tool_calls（function calling）
         if not content:
             tool_calls = message_payload.get("tool_calls")
             if isinstance(tool_calls, list) and tool_calls and available_functions:
@@ -202,8 +239,9 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
                                 content = maybe_output
 
         if not content:
-            raise RuntimeError("LLM response did not contain text content")
+            raise RuntimeError("LLM 响应未包含文本内容")
 
+        # 应用停用词过滤
         content = self._apply_stop_words(content)
         if from_agent is None:
             content = self._invoke_after_llm_call_hooks(request_messages, content, from_agent)
@@ -211,7 +249,13 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
 
 
 def build_crewai_llm() -> OpenAICompatibleCrewAILLM:
+    """
+    从应用配置构建 CrewAI LLM 实例。
+    读取 .env 中的 LLM_API_KEY、LLM_BASE_URL、MODEL 等配置。
+    """
     settings = get_settings()
+
+    # 校验必需的 LLM 配置项
     missing: list[str] = []
     if not settings.llm_api_key.strip():
         missing.append("LLM_API_KEY")
@@ -220,9 +264,9 @@ def build_crewai_llm() -> OpenAICompatibleCrewAILLM:
     if not settings.llm_model.strip():
         missing.append("MODEL")
     if missing:
-        raise RuntimeError(f"Missing required LLM config: {', '.join(missing)}")
+        raise RuntimeError(f"缺少必需的 LLM 配置: {', '.join(missing)}")
 
-    # Constrain per-call timeout under CrewAI session budget to avoid long blocking.
+    # 计算超时参数，确保单次调用不超过 CrewAI 会话预算
     session_budget = max(int(settings.crewai_session_timeout_seconds or 0), 10)
     total_timeout = min(max(int(settings.crewai_llm_timeout_seconds or 0), 8), max(session_budget - 5, 8))
     connect_timeout = min(max(int(settings.crewai_llm_connect_timeout_seconds or 0), 2), max(total_timeout - 2, 2))
@@ -241,15 +285,22 @@ def build_crewai_llm() -> OpenAICompatibleCrewAILLM:
     )
 
 
-def _extract_json_object(raw_output: str) -> dict[str, Any]:
+def extract_json_object(raw_output: str) -> dict[str, Any]:
+    """
+    从 LLM 原始输出文本中提取 JSON 对象。
+    支持从 Markdown 代码块、纯 JSON 文本或混合文本中提取。
+    用于解析 Agent 输出并构建前端展示的卡片数据。
+    """
     text = (raw_output or "").strip()
     if not text:
         return {}
 
+    # 尝试从 Markdown 代码块中提取 JSON
     fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
     if fence_match:
         text = fence_match.group(1).strip()
 
+    # 尝试直接解析为 JSON
     try:
         parsed = json.loads(text)
         if isinstance(parsed, dict):
@@ -257,6 +308,7 @@ def _extract_json_object(raw_output: str) -> dict[str, Any]:
     except Exception:
         pass
 
+    # 兜底：提取文本中最后一个 JSON 对象（LLM 可能在 JSON 前后附加说明文字）
     obj_match = re.search(r"\{[\s\S]*\}", text)
     if obj_match:
         try:
@@ -266,136 +318,3 @@ def _extract_json_object(raw_output: str) -> dict[str, Any]:
         except Exception:
             return {}
     return {}
-
-
-def _normalize_decision_payload(parsed: dict[str, Any]) -> dict[str, Any]:
-    source = parsed
-    nested = parsed.get("decision")
-    if isinstance(nested, dict):
-        source = nested
-
-    def pick_number(*keys: str) -> float | None:
-        for key in keys:
-            value = source.get(key)
-            try:
-                if value is not None:
-                    return float(value)
-            except Exception:
-                continue
-        return None
-
-    def pick_text(*keys: str) -> str | None:
-        for key in keys:
-            value = source.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        return None
-
-    return {
-        "recommendedPrice": pick_number("recommendedPrice", "consensusPrice"),
-        "recommendedMinPrice": pick_number("recommendedMinPrice", "consensusMinPrice"),
-        "recommendedMaxPrice": pick_number("recommendedMaxPrice", "consensusMaxPrice"),
-        "executeStrategy": pick_text("executeStrategy", "strategy"),
-        "reason": pick_text("reason", "riskNote", "decisionReason"),
-        "confidence": pick_number("confidence"),
-    }
-
-
-def run_crewai_session(payload: CrewRunPayload, decision_inputs: dict[str, Any]) -> dict[str, Any]:
-    """Start a lightweight MVP CrewAI collaboration and return normalized JSON decision."""
-    llm = build_crewai_llm()
-    settings = get_settings()
-
-    max_iter = max(min(settings.crewai_agent_max_iter, 3), 1)
-    max_execution_time = max(min(settings.crewai_agent_max_execution_seconds, 25), 8)
-    max_execution_time = min(max_execution_time, max(settings.crewai_session_timeout_seconds - 8, 8))
-    max_retry_limit = max(min(settings.crewai_agent_max_retry_limit, 1), 0)
-
-    common_agent_kwargs = {
-        "llm": llm,
-        "verbose": False,
-        "max_iter": max_iter,
-        "max_execution_time": max_execution_time,
-        "max_retry_limit": max_retry_limit,
-    }
-
-    analysis_agent = Agent(
-        role="Collab Analyst",
-        goal="Find pricing conflicts and feasible range from structured inputs quickly.",
-        backstory="Skilled in concise consistency analysis with limited context.",
-        allow_delegation=False,
-        **common_agent_kwargs,
-    )
-    manager_agent = Agent(
-        role="Decision Manager",
-        goal="Produce final executable pricing decision in strict JSON.",
-        backstory="Responsible for coordination and decision convergence.",
-        allow_delegation=True,
-        **common_agent_kwargs,
-    )
-
-    compact_inputs = json.dumps(decision_inputs, ensure_ascii=False, separators=(",", ":"))
-    analysis_task = Task(
-        description=(
-            "Read INPUT_JSON and output strict JSON only.\n"
-            "Required fields: consensusPrice, consensusMinPrice, consensusMaxPrice, riskNote, confidence.\n"
-            f"INPUT_JSON={compact_inputs}"
-        ),
-        expected_output='{"consensusPrice":0,"consensusMinPrice":0,"consensusMaxPrice":0,"riskNote":"","confidence":0}',
-        agent=analysis_agent,
-    )
-    manager_task = Task(
-        description=(
-            "Based on previous result, output final decision in strict JSON only.\n"
-            "Required fields: recommendedPrice, recommendedMinPrice, recommendedMaxPrice, "
-            "executeStrategy(DIRECT_EXECUTE|GRAY_RELEASE|MANUAL_REVIEW), reason, confidence."
-        ),
-        expected_output=(
-            '{"recommendedPrice":0,"recommendedMinPrice":0,"recommendedMaxPrice":0,'
-            '"executeStrategy":"GRAY_RELEASE","reason":"","confidence":0}'
-        ),
-        agent=manager_agent,
-        context=[analysis_task],
-    )
-
-    crew = Crew(
-        name="pricing-mvp-crewai-crew",
-        agents=[analysis_agent],
-        manager_agent=manager_agent,
-        tasks=[analysis_task, manager_task],
-        process=Process.hierarchical,
-        verbose=False,
-    )
-
-    kickoff_start = time.perf_counter()
-    output = crew.kickoff(
-        inputs={
-            "task_id": payload.task_id,
-            "product_id": payload.product.product_id,
-            "strategy_goal": payload.strategy_goal,
-        }
-    )
-    elapsed_ms = int((time.perf_counter() - kickoff_start) * 1000)
-
-    raw_output = str(output)
-    parsed = _extract_json_object(raw_output)
-    normalized_decision = _normalize_decision_payload(parsed)
-
-    return {
-        "enabled": True,
-        "mode": "MVP",
-        "process": "hierarchical",
-        "taskCount": 2,
-        "llmModel": llm.model,
-        "llmBaseUrl": llm.base_url,
-        "elapsedMs": elapsed_ms,
-        "inputChars": len(compact_inputs),
-        "tuning": {
-            "maxIter": max_iter,
-            "maxExecutionSeconds": max_execution_time,
-            "maxRetryLimit": max_retry_limit,
-        },
-        "agentRoles": [analysis_agent.role, manager_agent.role],
-        "decision": normalized_decision,
-        "crewOutput": raw_output[:1200],
-    }
