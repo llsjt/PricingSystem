@@ -112,25 +112,49 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
         """
         retryable_statuses = {408, 429, 500, 502, 503, 504}
         last_error: Exception | None = None
+        msg_count = len(payload.get("messages", []))
+        payload_size = len(json.dumps(payload, ensure_ascii=False))
+        print(
+            f"[LLM] 发送请求: url={self.chat_completions_url}, model={self.model}, "
+            f"消息数={msg_count}, payload大小={payload_size}字符, "
+            f"timeout={self.timeout_seconds}s, read_timeout={self.read_timeout_seconds}s",
+            flush=True,
+        )
 
         for attempt in range(self.max_retries + 1):
+            t0 = time.time()
             try:
                 with httpx.Client(timeout=self._build_httpx_timeout()) as client:
                     resp = client.post(self.chat_completions_url, json=payload, headers=headers)
+                elapsed = time.time() - t0
+                print(f"[LLM] 响应: status={resp.status_code}, 耗时={elapsed:.1f}s", flush=True)
                 resp.raise_for_status()
-                return resp.json()
+                result = resp.json()
+                # 打印 token 用量
+                usage = result.get("usage")
+                if isinstance(usage, dict):
+                    print(f"[LLM] Token用量: {usage}", flush=True)
+                return result
             except httpx.HTTPStatusError as exc:
+                elapsed = time.time() - t0
                 last_error = exc
                 status_code = exc.response.status_code
+                detail = exc.response.text[:600]
+                print(f"[LLM] HTTP错误: status={status_code}, 耗时={elapsed:.1f}s, body={detail}", flush=True)
                 if status_code in retryable_statuses and attempt < self.max_retries:
                     time.sleep(self.retry_backoff_seconds * (2**attempt))
                     continue
-                detail = exc.response.text[:600]
                 raise RuntimeError(
                     f"LLM API HTTP {status_code}, url={self.chat_completions_url}, body={detail}"
                 ) from exc
             except httpx.TimeoutException as exc:
+                elapsed = time.time() - t0
                 last_error = exc
+                print(
+                    f"[LLM] 超时: 耗时={elapsed:.1f}s, "
+                    f"connect={self.connect_timeout_seconds}s, read={self.read_timeout_seconds}s",
+                    flush=True,
+                )
                 if attempt < self.max_retries:
                     time.sleep(self.retry_backoff_seconds * (2**attempt))
                     continue
@@ -140,7 +164,9 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
                     f"read={self.read_timeout_seconds}s, total={self.timeout_seconds}s)"
                 ) from exc
             except httpx.RequestError as exc:
+                elapsed = time.time() - t0
                 last_error = exc
+                print(f"[LLM] 请求错误: {exc}, 耗时={elapsed:.1f}s", flush=True)
                 if attempt < self.max_retries:
                     time.sleep(self.retry_backoff_seconds * (2**attempt))
                     continue
@@ -165,7 +191,10 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
         这是 CrewAI BaseLLM 要求实现的核心方法。
         """
         # 格式化消息列表
+        agent_name = getattr(from_agent, "role", "未知") if from_agent else "无Agent"
+        print(f"[LLM] call() 开始: agent={agent_name}", flush=True)
         request_messages = self._format_messages(messages)
+        print(f"[LLM] 消息格式化完成: {len(request_messages)}条消息", flush=True)
         if from_agent is None and not self._invoke_before_llm_call_hooks(request_messages, from_agent):
             raise ValueError("LLM 调用被 before_llm_call hook 阻止")
 
@@ -206,6 +235,9 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
         # 提取文本内容
         content = self._normalize_content(message_payload.get("content"))
 
+        if content:
+            print(f"[LLM] 文本响应前200字符: {content[:200]}", flush=True)
+
         # 如果没有文本内容，尝试处理 tool_calls（function calling）
         if not content:
             tool_calls = message_payload.get("tool_calls")
@@ -228,6 +260,7 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
                             parsed_args = raw_args
 
                         if isinstance(function_name, str) and function_name:
+                            print(f"[LLM] 处理tool_call: {function_name}, args={str(parsed_args)[:200]}", flush=True)
                             maybe_output = self._handle_tool_execution(
                                 function_name=function_name,
                                 function_args=parsed_args,

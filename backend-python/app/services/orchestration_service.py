@@ -200,6 +200,7 @@ class OrchestrationService:
         # ── 构建 CrewAI LLM 实例 ──────────────────────────────
         llm = build_crewai_llm()
         logger.info("CrewAI LLM 已构建: model=%s, base_url=%s", llm.model, llm.base_url)
+        print(f"[CrewAI] LLM 已构建: model={llm.model}, task_id={payload.task_id}", flush=True)
 
         # ── 用于收集每个 Task 的解析结果 ──────────────────────
         task_outputs: list[dict[str, Any]] = []
@@ -214,7 +215,10 @@ class OrchestrationService:
             try:
                 # 获取 LLM 原始输出并解析 JSON
                 raw = str(task_output.raw) if hasattr(task_output, "raw") else str(task_output)
+                print(f"[CrewAI] Task 回调触发, raw输出前200字符: {raw[:200]}", flush=True)
                 parsed = extract_json_object(raw)
+                if not parsed:
+                    print(f"[CrewAI] 警告: JSON解析为空, 完整raw输出: {raw[:500]}", flush=True)
                 task_outputs.append(parsed)
 
                 # 确定当前是第几个 Agent
@@ -265,14 +269,38 @@ class OrchestrationService:
             except Exception as exc:
                 # 回调异常不应中断 Crew 执行
                 logger.error("写入 Agent 卡片失败: %s", exc, exc_info=True)
+                print(f"[CrewAI] 写入卡片失败: {exc}", flush=True)
 
         # ── 构建并执行 Crew ────────────────────────────────────
         logger.info("开始构建定价 Crew (task_id=%d)", payload.task_id)
+        print(f"[CrewAI] 开始构建 Crew (task_id={payload.task_id})", flush=True)
         crew = build_pricing_crew(payload=payload, llm=llm, on_task_done=on_task_done)
 
         logger.info("Crew 启动执行 (task_id=%d)", payload.task_id)
-        crew_output = crew.kickoff()
+        print(f"[CrewAI] Crew 开始 kickoff (task_id={payload.task_id})", flush=True)
+        try:
+            crew_output = crew.kickoff()
+        except Exception as crew_exc:
+            # Crew 执行失败：为第一个未完成的 Agent 写入错误卡片，
+            # 让前端 WebSocket 能立即展示错误信息而非无限转圈
+            logger.error("Crew 执行失败: %s", crew_exc, exc_info=True)
+            print(f"[CrewAI] Crew 执行失败: {crew_exc}", flush=True)
+            error_idx = card_counter[0]  # 当前未完成的 Agent 索引
+            if error_idx < len(_AGENT_META):
+                meta = _AGENT_META[error_idx]
+                self.log_tool.write_agent_card(
+                    task_id=payload.task_id,
+                    agent_name=meta["name"],
+                    display_order=meta["order"],
+                    thinking_summary=f"Agent 执行失败: {str(crew_exc)[:300]}",
+                    evidence=[{"label": "错误信息", "value": str(crew_exc)[:200]}],
+                    suggestion={"error": True, "message": str(crew_exc)[:300]},
+                )
+                print(f"[CrewAI] 已写入错误卡片: {meta['name']}", flush=True)
+            raise  # 继续向上抛出，让 dispatch_service 标记 task 为 FAILED
+
         logger.info("Crew 执行完成 (task_id=%d)", payload.task_id)
+        print(f"[CrewAI] Crew 执行完成 (task_id={payload.task_id})", flush=True)
 
         # ── 解析最终经理决策 ──────────────────────────────────
         # 从最后一个 Task 的输出中提取最终定价结果

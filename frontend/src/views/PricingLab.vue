@@ -114,43 +114,66 @@
           <article v-for="meta in agentOrder" :key="meta.code" class="agent-card stream-card">
           <div class="card-head">
             <h3>{{ meta.order }}. {{ meta.name }}</h3>
-            <el-tag size="small" :type="taskState.cards[meta.code] ? 'success' : 'info'">
-              {{ taskState.cards[meta.code] ? '已完成' : '等待中' }}
+            <el-tag
+              size="small"
+              :type="typingStates[meta.code]?.thinkingDone ? 'success' : taskState.cards[meta.code] ? 'warning' : 'info'"
+            >
+              {{ typingStates[meta.code]?.thinkingDone ? '已完成' : taskState.cards[meta.code] ? '思考中...' : '等待中' }}
             </el-tag>
           </div>
 
           <div v-if="taskState.cards[meta.code]" class="card-body">
+            <!-- 思考过程：逐字流式输出 -->
             <section class="card-section">
               <h4>思考过程</h4>
-              <p>{{ taskState.cards[meta.code]?.thinking || '-' }}</p>
+              <p class="typing-text">
+                <span>{{ typingStates[meta.code]?.thinkingText || '' }}</span>
+                <span v-if="!typingStates[meta.code]?.thinkingDone" class="typing-cursor"></span>
+              </p>
             </section>
 
-            <section class="card-section">
-              <h4>依据</h4>
-              <ul class="info-list">
-                <li v-for="(item, idx) in taskState.cards[meta.code]?.evidence || []" :key="idx">
-                  <strong>{{ String(item.label || `依据${idx + 1}`) }}：</strong>
-                  <span>{{ formatEvidenceValue(item.label, item.value) }}</span>
-                </li>
-              </ul>
-            </section>
+            <!-- 依据：思考完成后淡入展开 -->
+            <transition name="card-fade">
+              <section v-if="typingStates[meta.code]?.showEvidence" class="card-section">
+                <h4>依据</h4>
+                <ul class="info-list">
+                  <li v-for="(item, idx) in taskState.cards[meta.code]?.evidence || []" :key="idx">
+                    <strong>{{ String(item.label || `依据${idx + 1}`) }}：</strong>
+                    <span>{{ formatEvidenceValue(item.label, item.value) }}</span>
+                  </li>
+                </ul>
+              </section>
+            </transition>
 
-            <section class="card-section">
-              <h4>建议</h4>
-              <ul class="info-list">
-                <li v-for="(line, index) in getSuggestionLines(meta.code, taskState.cards[meta.code]?.suggestion)" :key="index">
-                  {{ line }}
-                </li>
-              </ul>
-            </section>
+            <!-- 建议：依据展示后淡入展开 -->
+            <transition name="card-fade">
+              <section v-if="typingStates[meta.code]?.showSuggestion" class="card-section">
+                <h4>建议</h4>
+                <ul class="info-list">
+                  <li v-for="(line, index) in getSuggestionLines(meta.code, taskState.cards[meta.code]?.suggestion)" :key="index">
+                    {{ line }}
+                  </li>
+                </ul>
+              </section>
+            </transition>
 
-            <section v-if="meta.code === 'MANAGER_COORDINATOR'" class="card-section">
-              <h4>为什么给出这个建议</h4>
-              <p>{{ taskState.cards[meta.code]?.reasonWhy || '-' }}</p>
-            </section>
+            <!-- 经理Agent：决策理由 -->
+            <transition name="card-fade">
+              <section v-if="meta.code === 'MANAGER_COORDINATOR' && typingStates[meta.code]?.showReason" class="card-section">
+                <h4>为什么给出这个建议</h4>
+                <p>{{ taskState.cards[meta.code]?.reasonWhy || '-' }}</p>
+              </section>
+            </transition>
           </div>
 
-            <el-empty v-else description="等待该 Agent 输出卡片" :image-size="80" />
+          <!-- 等待状态：当前正在处理的 Agent 显示加载动画 -->
+          <div v-else-if="taskState.taskStatus === 'RUNNING' && meta.order === streamCursor" class="waiting-active">
+            <div class="thinking-dots">
+              <span></span><span></span><span></span>
+            </div>
+            <p class="waiting-text">正在分析中，请稍候...</p>
+          </div>
+          <el-empty v-else description="等待该 Agent 输出卡片" :image-size="80" />
           </article>
         </div>
       </section>
@@ -354,6 +377,102 @@ const pendingCards = reactive<Record<number, StreamCardItem | null>>({
 })
 const streamCursor = ref(1)
 
+// ── 流式打字机效果 ──────────────────────────────────────────
+interface TypingState {
+  thinkingText: string       // 当前显示的思考文字（逐字递增）
+  thinkingDone: boolean      // 思考打字完成
+  showEvidence: boolean      // 是否显示依据区块
+  showSuggestion: boolean    // 是否显示建议区块
+  showReason: boolean        // 是否显示理由区块（经理Agent）
+}
+
+const EMPTY_TYPING = (): TypingState => ({
+  thinkingText: '',
+  thinkingDone: false,
+  showEvidence: false,
+  showSuggestion: false,
+  showReason: false
+})
+
+const typingStates = reactive<Record<PricingAgentCode, TypingState>>({
+  DATA_ANALYSIS: EMPTY_TYPING(),
+  MARKET_INTEL: EMPTY_TYPING(),
+  RISK_CONTROL: EMPTY_TYPING(),
+  MANAGER_COORDINATOR: EMPTY_TYPING()
+})
+
+// 保存 typing interval ID，方便清理
+const typingTimerIds: Record<string, ReturnType<typeof setInterval> | null> = {
+  DATA_ANALYSIS: null,
+  MARKET_INTEL: null,
+  RISK_CONTROL: null,
+  MANAGER_COORDINATOR: null
+}
+
+// 清理某个 Agent 的打字定时器
+const clearTypingTimer = (code: string) => {
+  if (typingTimerIds[code]) {
+    clearInterval(typingTimerIds[code]!)
+    typingTimerIds[code] = null
+  }
+}
+
+// 启动打字机效果：逐字显示思考内容，然后依次展开依据、建议
+const startTypingEffect = (code: PricingAgentCode, immediate = false) => {
+  clearTypingTimer(code)
+  const card = taskState.cards[code]
+  if (!card) return
+
+  const state = typingStates[code]
+  const fullThinking = card.thinking || ''
+
+  // 快照加载时跳过动画，直接展示全部内容
+  if (immediate || !fullThinking) {
+    state.thinkingText = fullThinking
+    state.thinkingDone = true
+    state.showEvidence = true
+    state.showSuggestion = true
+    state.showReason = true
+    return
+  }
+
+  // 重置状态
+  state.thinkingText = ''
+  state.thinkingDone = false
+  state.showEvidence = false
+  state.showSuggestion = false
+  state.showReason = false
+
+  let idx = 0
+  // 每30ms输出2-4个字符，模拟 LLM 逐字输出效果
+  typingTimerIds[code] = setInterval(() => {
+    if (idx < fullThinking.length) {
+      const chunkSize = Math.min(3, fullThinking.length - idx)
+      state.thinkingText += fullThinking.slice(idx, idx + chunkSize)
+      idx += chunkSize
+    } else {
+      clearTypingTimer(code)
+      state.thinkingDone = true
+      // 依次展开依据、建议、理由区块（各间隔300ms）
+      setTimeout(() => {
+        state.showEvidence = true
+        setTimeout(() => {
+          state.showSuggestion = true
+          setTimeout(() => { state.showReason = true }, 200)
+        }, 300)
+      }, 300)
+    }
+  }, 30)
+}
+
+// 重置所有打字状态
+const resetTypingStates = () => {
+  for (const code of Object.keys(typingStates) as PricingAgentCode[]) {
+    clearTypingTimer(code)
+    typingStates[code] = EMPTY_TYPING()
+  }
+}
+
 const completedCount = computed(() => Object.values(taskState.cards).filter((item) => item !== null).length)
 
 const stepBarActive = computed(() => {
@@ -488,6 +607,7 @@ const resetCardStreaming = () => {
   pendingCards[2] = null
   pendingCards[3] = null
   pendingCards[4] = null
+  resetTypingStates()
 }
 
 const runStreamLoop = async (token: number) => {
@@ -504,6 +624,8 @@ const runStreamLoop = async (token: number) => {
       if (token !== streamToken) return
 
       taskState.cards[next.code] = normalizeCard(next.card)
+      // 实时推送的卡片启动打字机动画
+      startTypingEffect(next.code, false)
       streamCursor.value += 1
     }
   } finally {
@@ -513,17 +635,28 @@ const runStreamLoop = async (token: number) => {
   }
 }
 
-const queueCardForStreaming = (item: StreamCardItem) => {
+// isSnapshot 参数：快照加载时跳过打字动画，直接展示全部内容
+const queueCardForStreaming = (item: StreamCardItem, isSnapshot = false) => {
   if (item.order < streamCursor.value) {
     taskState.cards[item.code] = normalizeCard(item.card)
+    startTypingEffect(item.code, isSnapshot)
     return
   }
   if (item.order < 1 || item.order > 4) {
     taskState.cards[item.code] = normalizeCard(item.card)
+    startTypingEffect(item.code, isSnapshot)
     return
   }
   pendingCards[item.order] = item
-  void runStreamLoop(streamToken)
+  if (isSnapshot) {
+    // 快照模式：立即展示，不等待流式延迟
+    pendingCards[item.order] = null
+    taskState.cards[item.code] = normalizeCard(item.card)
+    startTypingEffect(item.code, true)
+    streamCursor.value = Math.max(streamCursor.value, item.order + 1)
+  } else {
+    void runStreamLoop(streamToken)
+  }
 }
 
 const normalizeCard = (card?: AgentCardContent | null): AgentCardContent => {
@@ -553,10 +686,11 @@ const applyLogSnapshot = (logs: DecisionLogItem[]) => {
     })
   }
 
+  // 快照加载：跳过打字动画，直接展示全部内容
   streamItems
     .sort((a, b) => a.order - b.order)
     .forEach((item) => {
-      queueCardForStreaming(item)
+      queueCardForStreaming(item, true)
     })
 }
 
@@ -1003,6 +1137,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopWebSocket()
+  resetTypingStates()
 })
 </script>
 
@@ -1121,6 +1256,90 @@ onBeforeUnmount(() => {
   border: 1px solid var(--line-soft);
   border-radius: 10px;
   padding: 18px;
+  transition: border-color 0.3s ease;
+}
+
+/* ── 流式打字机效果 ───────────────────────────── */
+.typing-text {
+  white-space: pre-wrap;
+  line-height: 1.8;
+}
+
+.typing-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  background: var(--el-color-primary);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: cursor-blink 0.8s step-end infinite;
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* 区块淡入动画 */
+.card-fade-enter-active {
+  animation: card-slide-in 0.4s ease-out;
+}
+
+@keyframes card-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 当前正在处理的 Agent 等待状态 */
+.waiting-active {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 0;
+  gap: 12px;
+}
+
+.waiting-text {
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.thinking-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.thinking-dots span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--el-color-primary);
+  animation: dot-bounce 1.4s ease-in-out infinite;
+}
+
+.thinking-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.thinking-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes dot-bounce {
+  0%, 80%, 100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
 }
 
 .card-head {

@@ -149,8 +149,10 @@ class DispatchService:
             req = DispatchTaskRequest.model_validate(payload)
             service = DispatchService(db)
             service._execute(req)
-        except Exception:
+        except Exception as exc:
             logger.exception("Background dispatch execution failed")
+            # 确保错误信息在控制台可见，方便调试 CrewAI 执行问题
+            print(f"[ERROR] Background dispatch failed: {exc}", flush=True)
         finally:
             db.close()
 

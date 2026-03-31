@@ -3,6 +3,9 @@ CrewAI Crew 构建工厂
 ====================
 根据定价任务的 Payload 动态生成 4 个 Task，
 组装成一个顺序执行的 Crew，支持 Task 完成时的回调（用于实时写入卡片到数据库）。
+
+优化：预计算数据摘要和竞品数据，直接注入到 prompt，
+减少 Agent 的工具调用次数和 LLM 往返，大幅降低总耗时。
 """
 
 import json
@@ -14,6 +17,8 @@ from crewai import Crew, Process, Task
 
 from app.agents.crewai_agents import build_crewai_agents
 from app.crew.protocols import CrewRunPayload
+from app.services.competitor_service import CompetitorService
+from app.tools.product_data_tool import ProductDataTool
 from app.utils.math_utils import money
 from app.utils.text_utils import to_strategy_goal_cn
 
@@ -26,14 +31,10 @@ def _serialize_decimal(obj: Any) -> Any:
 
 
 def _build_metrics_summary(payload: CrewRunPayload) -> str:
-    """
-    将近30天经营指标压缩为简洁的文本摘要，注入到 Task description 中，
-    让 LLM 能直接看到关键数据而无需额外工具调用。
-    """
+    """将近30天经营指标压缩为简洁的文本摘要"""
     if not payload.metrics:
         return "暂无近30天经营数据"
 
-    # 计算汇总指标
     total_sales = sum(m.sales_count for m in payload.metrics)
     total_turnover = sum(m.turnover for m in payload.metrics)
     total_visitors = sum(m.visitor_count for m in payload.metrics)
@@ -70,6 +71,64 @@ def _build_constraints_text(constraints: dict) -> str:
     return "，".join(parts) if parts else "最低利润率15%（默认）"
 
 
+def _precompute_data_summary(payload: CrewRunPayload) -> str:
+    """预计算商品数据汇总，转为紧凑文本直接注入 prompt（免去 Agent 调工具）"""
+    tool = ProductDataTool()
+    result = tool.summarize(
+        product=payload.product,
+        metrics=payload.metrics,
+        traffic=payload.traffic,
+    )
+    lines = [
+        f"月销量: {result.get('monthly_sales', 0)}件",
+        f"月营业额: {result.get('monthly_turnover', 0)}元",
+        f"平均转化率: {result.get('average_conversion_rate', 0)}",
+        f"总访客: {result.get('total_visitors', 0)}人",
+        f"流量点击率(CTR): {result.get('traffic_ctr', 0)}",
+        f"当前售价: {result.get('current_price', 0)}元",
+        f"成本价: {result.get('cost_price', 0)}元",
+        f"库存: {result.get('stock', 0)}件",
+    ]
+    return "\n".join(lines)
+
+
+def _precompute_competitor_summary(payload: CrewRunPayload) -> str:
+    """预计算竞品数据，转为紧凑文本直接注入 prompt（免去 Agent 调工具）"""
+    service = CompetitorService()
+    competitors = service.get_competitors(
+        product_id=payload.product.product_id,
+        product_title=payload.product.product_name,
+        category_name=payload.product.category_name,
+        current_price=payload.product.current_price,
+    )
+    if not competitors:
+        return "暂无竞品数据"
+
+    # 计算竞品统计
+    prices = [c["price"] for c in competitors if c.get("price")]
+    min_price = min(prices) if prices else 0
+    max_price = max(prices) if prices else 0
+    avg_price = sum(prices) / len(prices) if prices else 0
+
+    lines = [
+        f"竞品样本数: {len(competitors)}",
+        f"市场最低价: {min_price:.2f}元",
+        f"市场最高价: {max_price:.2f}元",
+        f"市场均价: {avg_price:.2f}元",
+        "竞品明细:",
+    ]
+    for c in competitors[:5]:  # 最多展示5条，避免 prompt 过长
+        line = f"  - {c.get('competitorName', '未知')}"
+        line += f" | 价格{c['price']:.2f}元"
+        if c.get("sourcePlatform"):
+            line += f" | {c['sourcePlatform']}"
+        if c.get("promotionTag"):
+            line += f" | {c['promotionTag']}"
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
 def build_pricing_crew(
     payload: CrewRunPayload,
     llm: object,
@@ -78,81 +137,42 @@ def build_pricing_crew(
     """
     构建定价决策 Crew。
 
-    参数:
-        payload: 定价任务上下文（商品信息、指标、约束等）
-        llm: CrewAI 兼容的 LLM 实例
-        on_task_done: Task 完成时的回调函数（用于实时写入Agent卡片到DB）
-
-    返回:
-        配置好的 Crew 实例，调用 crew.kickoff() 即可执行
+    优化策略：预计算数据摘要和竞品数据并注入 prompt，
+    减少 Agent 的工具调用轮次，降低 LLM 往返次数。
     """
     # ── 创建 4 个 Agent ────────────────────────────────────
     agents = build_crewai_agents(llm)
 
-    # ── 准备注入到 Task description 的上下文数据 ───────────
+    # ── 预计算数据摘要（免去 Agent 调用汇总工具） ─────────
     product = payload.product
     strategy_cn = to_strategy_goal_cn(payload.strategy_goal)
     metrics_summary = _build_metrics_summary(payload)
     constraints_text = _build_constraints_text(payload.constraints)
-
-    # 将商品数据和指标序列化为 JSON，供 LLM 传递给工具调用
-    product_dict = {
-        "productId": product.product_id,
-        "shopId": product.shop_id,
-        "productName": product.product_name,
-        "categoryName": product.category_name,
-        "currentPrice": str(product.current_price),
-        "costPrice": str(product.cost_price),
-        "stock": product.stock,
-    }
-    metrics_list = [
-        {
-            "statDate": str(m.stat_date),
-            "visitorCount": m.visitor_count,
-            "addCartCount": m.add_cart_count,
-            "payBuyerCount": m.pay_buyer_count,
-            "salesCount": m.sales_count,
-            "turnover": str(m.turnover),
-            "conversionRate": str(m.conversion_rate),
-        }
-        for m in payload.metrics
-    ]
-    traffic_list = [
-        {
-            "statDate": str(t.stat_date),
-            "trafficSource": t.traffic_source,
-            "impressionCount": t.impression_count,
-            "clickCount": t.click_count,
-            "visitorCount": t.visitor_count,
-            "payAmount": str(t.pay_amount),
-            "roi": str(t.roi),
-        }
-        for t in payload.traffic
-    ]
+    data_summary = _precompute_data_summary(payload)
+    competitor_summary = _precompute_competitor_summary(payload)
 
     # ── Task 1: 数据分析任务 ──────────────────────────────
-    # 数据分析Agent基于经营数据评估价格弹性，输出建议价格和预期利润
+    # 数据已预计算，Agent 只需分析摘要 + 调用销量/利润预估工具
     data_task = Task(
         description=(
             f"你正在为商品「{product.product_name}」制定定价策略。\n"
-            f"当前售价: {money(product.current_price)}元，成本价: {money(product.cost_price)}元，"
-            f"库存: {product.stock}件\n"
             f"策略目标: {strategy_cn}\n"
-            f"基线月销量: {payload.baseline_sales}件，基线月利润: {money(payload.baseline_profit)}元\n"
+            f"基线月销量: {payload.baseline_sales}件，基线月利润: {money(payload.baseline_profit)}元\n\n"
+            "以下是商品经营数据汇总（已预计算）：\n"
+            f"{data_summary}\n"
             f"{metrics_summary}\n\n"
-            "请按以下步骤操作：\n"
-            "1. 使用「汇总商品经营数据」工具，传入以下JSON参数：\n"
-            f'   {{"product": {json.dumps(product_dict, ensure_ascii=False)}, '
-            f'"metrics": {json.dumps(metrics_list, ensure_ascii=False)}, '
-            f'"traffic": {json.dumps(traffic_list, ensure_ascii=False)}}}\n'
-            "2. 分析汇总结果，评估销售趋势（上升/下降/平稳）\n"
-            "3. 根据策略目标确定建议价格：\n"
-            "   - 利润优先：适当提价（建议在当前价基础上+1%~4%）\n"
-            "   - 清仓促销：适当降价（建议降5%左右）\n"
-            "   - 市场份额优先：小幅降价（建议降3%左右）\n"
-            "4. 使用「预估调价后销量」工具计算预期销量\n"
-            "5. 使用「预估利润」工具计算预期利润\n"
-            "6. 确定建议价格区间（最低价不低于成本价×1.08）\n\n"
+            "请基于以上数据分析：\n"
+            "1. 评估销售趋势（上升/下降/平稳）\n"
+            "2. 根据策略目标确定建议价格：\n"
+            "   - 利润优先：适当提价（+1%~4%）\n"
+            "   - 清仓促销：适当降价（-5%左右）\n"
+            "   - 市场份额优先：小幅降价（-3%左右）\n"
+            "3. 使用「预估调价后销量」工具计算预期销量\n"
+            f'   参数: {{"baseline_sales": {payload.baseline_sales}, "current_price": "{money(product.current_price)}", '
+            f'"target_price": "你的建议价格", "strategy_goal": "{payload.strategy_goal}"}}\n'
+            "4. 使用「预估利润」工具计算预期利润\n"
+            f'   参数: {{"price": "你的建议价格", "cost_price": "{money(product.cost_price)}", "expected_sales": 预估销量}}\n'
+            "5. 确定建议价格区间（最低价不低于成本价×1.08）\n\n"
             "最终输出必须是严格的JSON格式，包含以下字段："
         ),
         expected_output=(
@@ -163,6 +183,7 @@ def build_pricing_crew(
             '"expectedSales": 预期月销量(整数), '
             '"expectedProfit": 预期月利润(数字), '
             '"confidence": 置信度(0-1之间的小数), '
+            '"thinking": "你的分析思路(中文)", '
             '"summary": "分析摘要(中文字符串)"}'
         ),
         agent=agents["DATA_ANALYSIS"],
@@ -170,21 +191,18 @@ def build_pricing_crew(
     )
 
     # ── Task 2: 市场情报任务 ──────────────────────────────
-    # 市场情报Agent基于竞品数据分析市场价格带，输出市场建议价格
+    # 竞品数据已预计算，Agent 无需调用工具，直接分析给出建议
     market_task = Task(
         description=(
             f"你正在为商品「{product.product_name}」分析市场竞争态势。\n"
             f"品类: {product.category_name or '通用品类'}，当前售价: {money(product.current_price)}元\n"
             f"策略目标: {strategy_cn}\n\n"
-            "请按以下步骤操作：\n"
-            "1. 使用「查询竞品价格数据」工具，传入以下JSON参数：\n"
-            f'   {{"product_id": {product.product_id}, '
-            f'"product_title": "{product.product_name}", '
-            f'"category_name": "{product.category_name or "通用品类"}", '
-            f'"current_price": "{money(product.current_price)}"}}\n'
-            "2. 分析竞品数据：识别价格地板（最低价）、天花板（最高价）和均价\n"
-            "3. 评估促销压力和竞争强度\n"
-            "4. 根据策略目标给出市场建议价格：\n"
+            "以下是竞品价格数据（已预获取）：\n"
+            f"{competitor_summary}\n\n"
+            "请基于以上竞品数据分析：\n"
+            "1. 识别市场价格带：地板价、天花板价、均价\n"
+            "2. 评估促销压力和竞争强度\n"
+            "3. 根据策略目标给出市场建议价格：\n"
             "   - 利润优先：可略高于市场均价\n"
             "   - 清仓促销：接近市场地板价\n"
             "   - 市场份额优先：接近市场均价\n\n"
@@ -197,6 +215,7 @@ def build_pricing_crew(
             '"marketFloor": 市场最低价(数字), '
             '"marketCeiling": 市场最高价(数字), '
             '"confidence": 置信度(0-1之间的小数), '
+            '"thinking": "你的分析思路(中文)", '
             '"summary": "市场分析摘要(中文字符串)", '
             '"simulatedSamples": 竞品样本数(整数)}'
         ),
@@ -206,7 +225,6 @@ def build_pricing_crew(
     )
 
     # ── Task 3: 风险控制任务 ──────────────────────────────
-    # 风控Agent对候选价格执行硬约束校验，确保定价安全
     risk_task = Task(
         description=(
             f"你正在为商品「{product.product_name}」的定价方案进行风险评估。\n"
@@ -231,6 +249,7 @@ def build_pricing_crew(
             '"suggestedPrice": 风控建议价(数字), '
             '"riskLevel": "LOW或HIGH", '
             '"needManualReview": 是否需人工复核(true/false), '
+            '"thinking": "你的分析思路(中文)", '
             '"summary": "风控评估摘要(中文字符串)"}'
         ),
         agent=agents["RISK_CONTROL"],
@@ -239,7 +258,6 @@ def build_pricing_crew(
     )
 
     # ── Task 4: 经理协调任务 ──────────────────────────────
-    # 经理Agent综合三个专家意见，输出最终可执行的定价决策
     manager_task = Task(
         description=(
             f"你是商品「{product.product_name}」定价决策的最终负责人。\n"
@@ -271,6 +289,7 @@ def build_pricing_crew(
             '"profitGrowth": 利润变化额(数字,可为负), '
             '"executeStrategy": "直接执行/灰度发布/人工审核", '
             '"isPass": 是否建议执行(true/false), '
+            '"thinking": "你的决策思路(中文)", '
             '"resultSummary": "综合决策摘要(中文字符串,包含对各专家意见的采纳理由)", '
             '"suggestedMinPrice": 建议最低价(数字), '
             '"suggestedMaxPrice": 建议最高价(数字)}'
@@ -289,7 +308,7 @@ def build_pricing_crew(
             agents["MANAGER_COORDINATOR"],
         ],
         tasks=[data_task, market_task, risk_task, manager_task],
-        process=Process.sequential,  # 4个任务按顺序串行执行
+        process=Process.sequential,
         verbose=True,
     )
 
