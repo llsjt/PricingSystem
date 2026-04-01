@@ -62,14 +62,14 @@
           v-model:page-size="queryParams.size"
           :total="total"
           :page-sizes="[10, 20, 50]"
-          layout="total, sizes, prev, pager, next, jumper"
+          :layout="paginationLayout"
           @size-change="fetchUsers"
           @current-change="fetchUsers"
         />
       </div>
     </section>
 
-    <el-dialog v-model="dialogVisible" :title="isEditMode ? '编辑用户' : '新增用户'" width="520px">
+    <el-dialog v-model="dialogVisible" :title="isEditMode ? '编辑用户' : '新增用户'" :width="dialogWidth">
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top" class="user-form">
         <el-form-item label="用户名" prop="username">
           <el-input v-model="form.username" :disabled="isEditMode && form.username === 'admin'" />
@@ -101,9 +101,19 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { addUser, batchDeleteUsers, deleteUser, getUserList, updateUser, type UserListItem } from '../api/user'
+
+const isMobile = ref(window.innerWidth <= 768)
+const onResize = () => { isMobile.value = window.innerWidth <= 768 }
+window.addEventListener('resize', onResize)
+onBeforeUnmount(() => window.removeEventListener('resize', onResize))
+
+const dialogWidth = computed(() => isMobile.value ? '90%' : '520px')
+const paginationLayout = computed(() =>
+  isMobile.value ? 'total, prev, next' : 'total, sizes, prev, pager, next, jumper'
+)
 
 const loading = ref(false)
 const tableData = ref<UserListItem[]>([])
@@ -322,6 +332,15 @@ onMounted(() => {
 @media (max-width: 768px) {
   .toolbar-actions {
     flex-wrap: wrap;
+  }
+
+  :deep(.el-table) {
+    font-size: 13px;
+  }
+
+  .table-footer :deep(.el-pagination) {
+    flex-wrap: wrap;
+    justify-content: center;
   }
 }
 </style>

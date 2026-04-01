@@ -7,7 +7,10 @@ import com.example.pricing.mapper.ShopMapper;
 import com.example.pricing.mapper.SysUserMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.mindrot.jbcrypt.BCrypt;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 @Component
 @RequiredArgsConstructor
@@ -21,6 +24,7 @@ public class DataBootstrap {
     public void initialize() {
         SysUser admin = ensureAdminUser();
         ensureDefaultShop(admin.getId());
+        migratePasswords();
     }
 
     private SysUser ensureAdminUser() {
@@ -34,12 +38,28 @@ public class DataBootstrap {
         admin = new SysUser();
         admin.setUsername("admin");
         admin.setAccount("admin");
-        admin.setPassword("123456");
+        admin.setPassword(BCrypt.hashpw("123456", BCrypt.gensalt()));
         admin.setEmail("admin@example.com");
         admin.setStatus(1);
         userMapper.insert(admin);
         log.info("初始化管理员账号：admin");
         return admin;
+    }
+
+    private void migratePasswords() {
+        List<SysUser> users = userMapper.selectList(null);
+        int migrated = 0;
+        for (SysUser user : users) {
+            String pwd = user.getPassword();
+            if (pwd != null && !pwd.startsWith("$2a$") && !pwd.startsWith("$2b$")) {
+                user.setPassword(BCrypt.hashpw(pwd, BCrypt.gensalt()));
+                userMapper.updateById(user);
+                migrated++;
+            }
+        }
+        if (migrated > 0) {
+            log.info("已将 {} 个用户的明文密码迁移为 BCrypt 哈希", migrated);
+        }
     }
 
     private void ensureDefaultShop(Long userId) {

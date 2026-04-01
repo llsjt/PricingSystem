@@ -2,11 +2,16 @@ package com.example.pricing.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.example.pricing.common.JwtUtil;
 import com.example.pricing.common.Result;
 import com.example.pricing.entity.SysUser;
+import com.example.pricing.exception.ForbiddenException;
+import com.example.pricing.exception.UnauthorizedException;
 import com.example.pricing.mapper.SysUserMapper;
 import com.example.pricing.vo.UserListVO;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.mindrot.jbcrypt.BCrypt;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -16,10 +21,10 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/user")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*")
 public class UserController {
 
     private final SysUserMapper userMapper;
+    private final JwtUtil jwtUtil;
 
     @PostMapping("/login")
     public Result<Map<String, Object>> login(@RequestBody Map<String, String> body) {
@@ -30,13 +35,21 @@ public class UserController {
         wrapper.and(query -> query.eq(SysUser::getUsername, username).or().eq(SysUser::getAccount, username));
         SysUser user = userMapper.selectOne(wrapper);
 
-        if (user == null || user.getStatus() != null && user.getStatus() == 0 || !user.getPassword().equals(password)) {
+        if (user == null || user.getStatus() != null && user.getStatus() == 0) {
             return Result.error("用户名或密码错误");
         }
 
+        if (!BCrypt.checkpw(password, user.getPassword())) {
+            return Result.error("用户名或密码错误");
+        }
+
+        boolean isAdmin = "admin".equals(user.getUsername());
+        String token = jwtUtil.generateToken(user.getId(), user.getUsername(), isAdmin);
+
         Map<String, Object> data = new HashMap<>();
+        data.put("token", token);
         data.put("username", user.getUsername());
-        data.put("isAdmin", "admin".equals(user.getUsername()));
+        data.put("isAdmin", isAdmin);
         return Result.success(data);
     }
 
@@ -47,10 +60,10 @@ public class UserController {
 
     @GetMapping("/list")
     public Result<Page<UserListVO>> getUserList(
-            @RequestHeader(value = "X-Username", required = false) String currentUsername,
+            HttpServletRequest request,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size) {
-        requireAdmin(currentUsername);
+        requireAdmin(request);
         Page<SysUser> pageParam = new Page<>(page, size);
         Page<SysUser> userPage = userMapper.selectPage(pageParam, null);
         Page<UserListVO> resultPage = new Page<>();
@@ -63,9 +76,9 @@ public class UserController {
 
     @PostMapping("/add")
     public Result<Void> addUser(
-            @RequestHeader(value = "X-Username", required = false) String currentUsername,
+            HttpServletRequest request,
             @RequestBody SysUser user) {
-        requireAdmin(currentUsername);
+        requireAdmin(request);
 
         LambdaQueryWrapper<SysUser> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(SysUser::getUsername, user.getUsername());
@@ -74,6 +87,7 @@ public class UserController {
         }
 
         user.setAccount(user.getUsername());
+        user.setPassword(BCrypt.hashpw(user.getPassword(), BCrypt.gensalt()));
         user.setStatus(user.getStatus() == null ? 1 : user.getStatus());
         userMapper.insert(user);
         return Result.success(null);
@@ -81,10 +95,10 @@ public class UserController {
 
     @PutMapping("/{id}")
     public Result<Void> updateUser(
-            @RequestHeader(value = "X-Username", required = false) String currentUsername,
+            HttpServletRequest request,
             @PathVariable Long id,
             @RequestBody SysUser user) {
-        requireAdmin(currentUsername);
+        requireAdmin(request);
 
         SysUser existing = userMapper.selectById(id);
         if (existing == null) {
@@ -102,7 +116,7 @@ public class UserController {
         }
 
         if (user.getPassword() != null && !user.getPassword().isBlank()) {
-            existing.setPassword(user.getPassword());
+            existing.setPassword(BCrypt.hashpw(user.getPassword(), BCrypt.gensalt()));
         }
         existing.setEmail(user.getEmail());
         if (user.getStatus() != null) {
@@ -115,9 +129,9 @@ public class UserController {
 
     @DeleteMapping("/{id:\\d+}")
     public Result<Void> deleteUser(
-            @RequestHeader(value = "X-Username", required = false) String currentUsername,
+            HttpServletRequest request,
             @PathVariable Long id) {
-        requireAdmin(currentUsername);
+        requireAdmin(request);
 
         SysUser existing = userMapper.selectById(id);
         if (existing != null && "admin".equals(existing.getUsername())) {
@@ -130,9 +144,9 @@ public class UserController {
 
     @DeleteMapping("/batch-delete")
     public Result<Void> batchDeleteUsers(
-            @RequestHeader(value = "X-Username", required = false) String currentUsername,
+            HttpServletRequest request,
             @RequestParam("ids") List<Long> ids) {
-        requireAdmin(currentUsername);
+        requireAdmin(request);
 
         if (ids == null || ids.isEmpty()) {
             return Result.error("请选择要删除的用户");
@@ -148,18 +162,18 @@ public class UserController {
         return Result.success(null);
     }
 
-    private void requireAdmin(String currentUsername) {
+    private void requireAdmin(HttpServletRequest request) {
+        String currentUsername = (String) request.getAttribute("currentUsername");
         if (currentUsername == null || currentUsername.isBlank()) {
-            throw new RuntimeException("请先登录");
+            throw new UnauthorizedException("请先登录");
         }
 
-        LambdaQueryWrapper<SysUser> wrapper = new LambdaQueryWrapper<>();
-        wrapper.and(query -> query.eq(SysUser::getUsername, currentUsername).or().eq(SysUser::getAccount, currentUsername));
-        SysUser user = userMapper.selectOne(wrapper);
-
-        if (user == null || !"admin".equals(user.getUsername())) {
-            throw new RuntimeException("无权进行此操作，仅限管理员");
+        Boolean isAdmin = (Boolean) request.getAttribute("isAdmin");
+        if (isAdmin != null && isAdmin) {
+            return;
         }
+
+        throw new ForbiddenException("无权进行此操作，仅限管理员");
     }
 
     private UserListVO toUserListVO(SysUser user) {

@@ -152,7 +152,9 @@ const handleCommand = (command: string) => {
   }
 
   if (command === 'logout') {
+    localStorage.removeItem('token')
     localStorage.removeItem('username')
+    localStorage.removeItem('isAdmin')
     ElMessage.success('已退出登录')
     router.push('/login')
   }

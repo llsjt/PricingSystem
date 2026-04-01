@@ -23,11 +23,11 @@ const service = axios.create({
 
 service.interceptors.request.use(
   (config) => {
-    const username = localStorage.getItem('username')
-    if (username) {
+    const token = localStorage.getItem('token')
+    if (token) {
       config.headers = {
         ...(config.headers || {}),
-        'X-Username': username
+        'Authorization': `Bearer ${token}`
       } as any
     }
     return config
@@ -42,7 +42,9 @@ service.interceptors.response.use(
       switch (error.response.status) {
         case 401:
           ElMessage.error('登录状态无效，请重新登录')
+          localStorage.removeItem('token')
           localStorage.removeItem('username')
+          localStorage.removeItem('isAdmin')
           window.location.href = '/login'
           break
         case 403:

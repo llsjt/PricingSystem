@@ -24,6 +24,10 @@ logging:
     com.example.pricing: DEBUG
     org.springframework: INFO
 
+jwt:
+  secret: "PricingSystem2024SecretKeyForHS256AlgorithmMustBeLongEnough"
+  expiration: 86400000  # 24h in ms
+
 agent:
   python:
     base-url: http://127.0.0.1:8000

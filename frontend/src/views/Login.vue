@@ -66,7 +66,9 @@ const handleLogin = async () => {
     try {
       const res: any = await login(loginForm)
       if (res.code === 200) {
+        localStorage.setItem('token', res.data.token)
         localStorage.setItem('username', res.data.username)
+        localStorage.setItem('isAdmin', String(res.data.isAdmin))
         ElMessage.success('登录成功')
         router.push('/')
       } else {
@@ -91,7 +93,9 @@ const handleLogin = async () => {
 }
 
 .login-card {
-  width: 400px;
+  width: 90%;
+  max-width: 400px;
+  min-width: 280px;
 }
 
 .header {
