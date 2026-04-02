@@ -119,14 +119,25 @@
           </div>
         </section>
       </el-tab-pane>
+
+      <el-tab-pane name="mock">
+        <template #label>
+          <span class="tab-label">
+            <el-icon><Download /></el-icon>
+            <span>模拟数据</span>
+          </span>
+        </template>
+        <MockExcelGeneratorPanel />
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Document, UploadFilled } from '@element-plus/icons-vue'
+import { Document, Download, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, type UploadProps } from 'element-plus'
+import MockExcelGeneratorPanel from '../components/MockExcelGeneratorPanel.vue'
 import ProductList from './ProductList.vue'
 import { downloadTemplate, type ImportDataType, type ImportResultVO } from '../api/product'
 import request from '../api/request'
