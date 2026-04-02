@@ -1,0 +1,32 @@
+# === Java Backend ===
+backend-java/target/
+backend-java/.idea/
+backend-java/*.iml
+backend-java/server.err.log
+backend-java/server.out.log
+
+# === Python Backend ===
+backend-python/.venv/
+backend-python/.idea/
+backend-python/__pycache__/
+backend-python/**/__pycache__/
+backend-python/*.pyc
+backend-python/.env
+backend-python/.claude/
+
+# === Frontend ===
+frontend/dist/
+frontend/node_modules/
+frontend/.idea/
+
+# === IDE ===
+.vscode/
+*.swp
+*.swo
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === Docs (optional) ===
+docs/

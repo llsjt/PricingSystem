@@ -1,1 +1,0 @@
-import{s as e}from"./request-5497dc1c.js";const r=t=>e.get("/products/list",{params:t}),o=t=>e.post("/products/add",t),a=t=>e.delete("/products/batch-delete",{params:{ids:t.join(",")}}),d=()=>e.get("/products/template",{responseType:"blob"});export{o as a,a as b,d,r as g};
