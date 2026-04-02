@@ -64,8 +64,5 @@ public interface ProductService {
      */
     Result<List<TrafficPromoDailyVO>> getTrafficPromoDaily(Long productId, Integer limit);
 
-    /**
-     * 为没有历史指标的商品生成模拟趋势数据。
-     */
-    void generateMockTrendData(Long productId);
+
 }

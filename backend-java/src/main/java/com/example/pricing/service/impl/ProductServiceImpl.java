@@ -107,7 +107,6 @@ public class ProductServiceImpl implements ProductService {
         product.setProfileStatus("COMPLETE");
         productMapper.insert(product);
 
-        seedRecentMetricsIfAbsent(product, safeMonthlySales(dto.getMonthlySales()), defaultDecimal(dto.getConversionRate()));
         return Result.success();
     }
 
@@ -213,9 +212,6 @@ public class ProductServiceImpl implements ProductService {
             return Result.error("商品不存在");
         }
 
-        if (countMetrics(id) == 0) {
-            generateMockTrendData(id);
-        }
 
         LocalDate endDate = LocalDate.now();
         LocalDate startDate = endDate.minusDays(Math.max(days, 1) - 1L);
@@ -345,18 +341,7 @@ public class ProductServiceImpl implements ProductService {
         return Result.success(rows);
     }
 
-    /**
-     * 为没有指标数据的商品生成模拟趋势数据，保证趋势页可直接展示。
-     */
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void generateMockTrendData(Long productId) {
-        Product product = productMapper.selectById(productId);
-        if (product == null || countMetrics(productId) > 0) {
-            return;
-        }
-        seedRecentMetrics(product, 300, new BigDecimal("0.0450"), 30);
-    }
+
 
     /**
      * 按店铺和标题查找商品，避免同店铺下手工重复创建同名商品。
@@ -404,57 +389,7 @@ public class ProductServiceImpl implements ProductService {
         pricingTaskMapper.delete(deleteTaskWrapper);
     }
 
-    /**
-     * 仅在商品没有历史指标时补种近期经营数据。
-     */
-    private void seedRecentMetricsIfAbsent(Product product, int monthlySales, BigDecimal conversionRate) {
-        if (countMetrics(product.getId()) > 0) {
-            return;
-        }
-        seedRecentMetrics(product, monthlySales, conversionRate, 30);
-    }
 
-    /**
-     * 为商品按天生成一段模拟指标，用于列表和趋势页演示。
-     */
-    private void seedRecentMetrics(Product product, int monthlySales, BigDecimal conversionRate, int days) {
-        int safeMonthlySales = Math.max(monthlySales, 30);
-        BigDecimal safeConversionRate = conversionRate.compareTo(BigDecimal.ZERO) > 0
-                ? conversionRate
-                : new BigDecimal("0.0400");
-        LocalDate today = LocalDate.now();
-        Random random = new Random(product.getId());
-        double baseline = safeMonthlySales / (double) days;
-
-        for (int offset = days - 1; offset >= 0; offset--) {
-            LocalDate date = today.minusDays(offset);
-            LambdaQueryWrapper<ProductDailyMetric> wrapper = new LambdaQueryWrapper<>();
-            wrapper.eq(ProductDailyMetric::getProductId, product.getId())
-                    .eq(ProductDailyMetric::getStatDate, date)
-                    .last("LIMIT 1");
-            if (statMapper.selectOne(wrapper) != null) {
-                continue;
-            }
-
-            int salesCount = Math.max(1, (int) Math.round(baseline + (offset % 7 - 3) * 0.35 + random.nextDouble() * 1.5));
-            int visitorCount = BigDecimal.valueOf(salesCount)
-                    .divide(safeConversionRate, 0, RoundingMode.UP)
-                    .intValue();
-
-            ProductDailyMetric stat = new ProductDailyMetric();
-            stat.setShopId(product.getShopId());
-            stat.setProductId(product.getId());
-            stat.setStatDate(date);
-            stat.setVisitorCount(visitorCount);
-            stat.setAddCartCount(Math.max(salesCount, (int) Math.round(visitorCount * 0.16)));
-            stat.setPayBuyerCount(Math.max(1, salesCount));
-            stat.setSalesCount(salesCount);
-            stat.setTurnover(product.getCurrentPrice().multiply(BigDecimal.valueOf(salesCount)).setScale(2, RoundingMode.HALF_UP));
-            stat.setRefundAmount(BigDecimal.ZERO);
-            stat.setConversionRate(safeConversionRate.setScale(4, RoundingMode.HALF_UP));
-            statMapper.insert(stat);
-        }
-    }
 
     /**
      * 汇总近 30 天销量和平均转化率，用于商品列表页展示。
@@ -578,16 +513,6 @@ public class ProductServiceImpl implements ProductService {
             return externalProductId.trim();
         }
         return "MANUAL-" + System.currentTimeMillis();
-    }
-
-    /**
-     * 将月销量参数兜底为合理默认值，避免后续生成趋势时为零。
-     */
-    private int safeMonthlySales(Integer monthlySales) {
-        if (monthlySales != null && monthlySales > 0) {
-            return monthlySales;
-        }
-        return 120;
     }
 
     /**
