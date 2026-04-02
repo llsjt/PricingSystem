@@ -8,7 +8,7 @@
 graduation_project/
   frontend/         # Vue3 + Element Plus 前端
   backend-java/     # Spring Boot 业务后端（商品、导入、任务查询）
-  backend-python/   # FastAPI 多 Agent 协作后端（新增）
+  backend-python/   # FastAPI 多 Agent 协作后端
   database/         # MySQL 建表脚本
 ```
 
