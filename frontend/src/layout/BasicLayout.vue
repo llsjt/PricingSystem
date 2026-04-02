@@ -34,6 +34,7 @@ const username = ref(localStorage.getItem('username') || 'User')
 const isSidebarCollapsed = ref(false)
 const mobileMenuVisible = ref(false)
 const isMobile = ref(false)
+const appSubtitle = 'Excel 导入与定价协作'
 const appName = '智能定价平台'
 
 const navItems: NavItem[] = [

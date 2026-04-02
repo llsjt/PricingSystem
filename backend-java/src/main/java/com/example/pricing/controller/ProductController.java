@@ -2,6 +2,7 @@ package com.example.pricing.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.pricing.common.Result;
+import com.example.pricing.dto.MockExcelExportDTO;
 import com.example.pricing.dto.ProductManualDTO;
 import com.example.pricing.service.ProductService;
 import com.example.pricing.vo.ImportResultVO;
@@ -58,6 +59,17 @@ public class ProductController {
             HttpServletResponse response
     ) {
         productService.downloadTemplate(dataType, response);
+    }
+
+    /**
+     * 下载模拟电商平台导出数据，压缩包内包含 4 个可直接导入系统的 Excel。
+     */
+    @PostMapping("/mock-export")
+    public void downloadMockExport(
+            @RequestBody(required = false) MockExcelExportDTO dto,
+            HttpServletResponse response
+    ) {
+        productService.downloadMockExcelBundle(dto, response);
     }
 
     /**
