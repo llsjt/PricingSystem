@@ -4,6 +4,9 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.example.pricing.entity.ProductSku;
 import org.apache.ibatis.annotations.Mapper;
 
+/**
+ * 商品 SKU Mapper，负责规格层级数据的读写。
+ */
 @Mapper
 public interface ProductSkuMapper extends BaseMapper<ProductSku> {
 }

@@ -1,9 +1,18 @@
 package com.example.pricing.entity;
 
-import com.baomidou.mybatisplus.annotation.*;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 定价任务实体，记录一次价格分析任务的输入商品、状态和建议区间。
+ */
 @Data
 @TableName("pricing_task")
 public class PricingTask {
@@ -23,16 +32,16 @@ public class PricingTask {
     private Long skuId;
 
     @TableField("current_price")
-    private java.math.BigDecimal currentPrice;
+    private BigDecimal currentPrice;
 
     @TableField("baseline_profit")
-    private java.math.BigDecimal baselineProfit;
+    private BigDecimal baselineProfit;
 
     @TableField("suggested_min_price")
-    private java.math.BigDecimal suggestedMinPrice;
+    private BigDecimal suggestedMinPrice;
 
     @TableField("suggested_max_price")
-    private java.math.BigDecimal suggestedMaxPrice;
+    private BigDecimal suggestedMaxPrice;
 
     @TableField("task_status")
     private String taskStatus;

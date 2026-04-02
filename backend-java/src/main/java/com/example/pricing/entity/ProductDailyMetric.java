@@ -6,10 +6,14 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+/**
+ * 商品日经营指标实体，记录访客、销量、成交额和转化率等日报数据。
+ */
 @Data
 @TableName("product_daily_metric")
 public class ProductDailyMetric {

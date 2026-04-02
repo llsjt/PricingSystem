@@ -9,6 +9,9 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
+/**
+ * 店铺实体，描述用户在不同电商平台下的店铺信息。
+ */
 @Data
 @TableName("shop")
 public class Shop {

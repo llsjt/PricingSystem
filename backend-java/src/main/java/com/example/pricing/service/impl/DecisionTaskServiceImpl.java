@@ -45,6 +45,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * 定价决策任务服务实现，负责任务创建、下发 Python 协作端、结果聚合和报告导出。
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -66,6 +69,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /**
+     * 基于单个商品创建任务，本质上是对多商品启动逻辑的单商品封装。
+     */
     @Override
     public Long createPricingTask(Long productId, String strategyGoal, String constraints) {
         if (productId == null) {
@@ -76,6 +82,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         return startTask(List.of(productId), goal, constraintText);
     }
 
+    /**
+     * 创建任务主记录并通知 Python 协作端开始执行决策分析。
+     */
     @Override
     public Long startTask(List<Long> productIds, String strategyGoal, String constraints) {
         if (productIds == null || productIds.isEmpty()) {
@@ -111,11 +120,17 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         return task.getId();
     }
 
+    /**
+     * 获取任务结果列表，供结果页展示。
+     */
     @Override
     public List<DecisionComparisonVO> getTaskResult(Long taskId) {
         return buildComparisonRows(taskId);
     }
 
+    /**
+     * 组装任务日志，补齐前端展示所需的兼容字段。
+     */
     @Override
     public List<DecisionLogVO> getTaskLogs(Long taskId) {
         LambdaQueryWrapper<AgentRunLog> wrapper = new LambdaQueryWrapper<>();
@@ -156,6 +171,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         }).toList();
     }
 
+    /**
+     * 分页查询历史任务，并拼出商品标题和最终执行策略。
+     */
     @Override
     public Page<DecisionTaskItemVO> getTasks(int page, int size, String status, String startTime, String endTime, String sortOrder) {
         Page<PricingTask> pageParam = new Page<>(Math.max(page, 1), size <= 0 ? 10 : size);
@@ -188,6 +206,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         return resultPage;
     }
 
+    /**
+     * 按时间范围统计任务总数及不同执行状态的数量。
+     */
     @Override
     public Map<String, Long> getTaskStats(String startTime, String endTime) {
         LambdaQueryWrapper<PricingTask> wrapper = new LambdaQueryWrapper<>();
@@ -208,11 +229,17 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         return Map.of("total", total, "completed", completed, "running", running, "failed", failed);
     }
 
+    /**
+     * 获取任务价格对比结果，当前直接复用结果构造逻辑。
+     */
     @Override
     public List<DecisionComparisonVO> getTaskComparison(Long taskId) {
         return buildComparisonRows(taskId);
     }
 
+    /**
+     * 查询任务详情，汇总任务、商品和结果三部分信息。
+     */
     @Override
     public PricingTaskDetailVO getTaskDetail(Long taskId) {
         PricingTask task = taskMapper.selectById(taskId);
@@ -240,6 +267,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         return vo;
     }
 
+    /**
+     * 将某条决策结果中的价格真正写回商品当前售价。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void applyDecision(Long resultId) {
@@ -259,6 +289,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         productMapper.updateById(product);
     }
 
+    /**
+     * 导出任务报告为 Excel，便于离线查看和汇报。
+     */
     @Override
     public void exportDecisionReport(Long taskId, HttpServletResponse response) throws IOException {
         List<DecisionComparisonVO> rows = buildComparisonRows(taskId);
@@ -269,6 +302,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         EasyExcel.write(response.getOutputStream(), DecisionComparisonVO.class).sheet("决策报告").doWrite(rows);
     }
 
+    /**
+     * 调用 Python 协作端的内部接口，把任务派发给多智能体工作流。
+     */
     private void dispatchToPython(Long taskId, Long productId, List<Long> productIds, String strategyGoal, String constraints) {
         String url = UriComponentsBuilder.fromHttpUrl(pythonBaseUrl)
                 .path(pythonDispatchPath)
@@ -303,6 +339,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         }
     }
 
+    /**
+     * 将任务实体转换为列表页摘要对象。
+     */
     private DecisionTaskItemVO toTaskItem(PricingTask task) {
         Product product = productMapper.selectById(task.getProductId());
         PricingResult result = getResultByTaskId(task.getId());
@@ -321,6 +360,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         return vo;
     }
 
+    /**
+     * 构造任务结果对比行，统一结果页和导出逻辑的数据来源。
+     */
     private List<DecisionComparisonVO> buildComparisonRows(Long taskId) {
         PricingTask task = taskMapper.selectById(taskId);
         if (task == null) {
@@ -348,6 +390,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         return List.of(vo);
     }
 
+    /**
+     * 判断建议价格是否已经应用到商品当前售价。
+     */
     private boolean isApplied(Product product, PricingResult result) {
         if (product == null || result == null || product.getCurrentPrice() == null || result.getFinalPrice() == null) {
             return false;
@@ -356,12 +401,18 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
                 .compareTo(result.getFinalPrice().setScale(2, RoundingMode.HALF_UP)) == 0;
     }
 
+    /**
+     * 查询任务对应的定价结果记录。
+     */
     private PricingResult getResultByTaskId(Long taskId) {
         LambdaQueryWrapper<PricingResult> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(PricingResult::getTaskId, taskId).last("LIMIT 1");
         return resultMapper.selectOne(wrapper);
     }
 
+    /**
+     * 解析查询条件中的时间文本，兼容完整时间和日期格式。
+     */
     private LocalDateTime parseDateTime(String text, boolean endOfDay) {
         if (text == null || text.isBlank()) {
             return null;
@@ -379,6 +430,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         }
     }
 
+    /**
+     * 根据展示顺序映射前端约定的 Agent 编码。
+     */
     private String resolveAgentCode(Integer displayOrder) {
         if (displayOrder == null) {
             return "UNKNOWN";
@@ -392,6 +446,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         };
     }
 
+    /**
+     * 解析日志中的 JSON 数组字段，失败时返回空集合。
+     */
     private List<Map<String, Object>> parseJsonArray(String json) {
         if (json == null || json.isBlank()) {
             return List.of();
@@ -404,6 +461,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         }
     }
 
+    /**
+     * 解析日志中的 JSON 对象字段，失败时返回空对象。
+     */
     private Map<String, Object> parseJsonObject(String json) {
         if (json == null || json.isBlank()) {
             return new LinkedHashMap<>();
@@ -416,6 +476,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         }
     }
 
+    /**
+     * 统一把金额字段规整为两位小数。
+     */
     private BigDecimal scaleMoney(BigDecimal value) {
         if (value == null) {
             return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);

@@ -26,6 +26,9 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
+/**
+ * 商品管理控制器，负责导入、手工新增、列表查询和商品趋势查看等接口。
+ */
 @RestController
 @RequestMapping("/api/products")
 @RequiredArgsConstructor
@@ -34,6 +37,9 @@ public class ProductController {
 
     private final ProductService productService;
 
+    /**
+     * 导入商品相关 Excel 数据，支持商品基础信息、SKU 和经营数据。
+     */
     @PostMapping("/import")
     public Result<ImportResultVO> importData(
             @RequestParam("file") MultipartFile file,
@@ -43,6 +49,9 @@ public class ProductController {
         return productService.importData(file, dataType, platform);
     }
 
+    /**
+     * 下载指定数据类型的导入模板，方便按标准格式整理 Excel。
+     */
     @GetMapping("/template")
     public void downloadTemplate(
             @RequestParam(value = "dataType", required = false) String dataType,
@@ -51,11 +60,17 @@ public class ProductController {
         productService.downloadTemplate(dataType, response);
     }
 
+    /**
+     * 手工新增单个商品，并为其补齐基础经营数据。
+     */
     @PostMapping("/add")
     public Result<Void> addProductManual(@RequestBody ProductManualDTO dto) {
         return productService.addProductManual(dto);
     }
 
+    /**
+     * 分页查询商品列表，可按关键字和平台筛选。
+     */
     @GetMapping("/list")
     public Result<Page<ProductListVO>> getProductList(
             @RequestParam(defaultValue = "1") int page,
@@ -67,11 +82,17 @@ public class ProductController {
         return productService.getProductList(page, size, keyword, dataSource, platform);
     }
 
+    /**
+     * 批量删除商品及其关联的经营、流量和定价记录。
+     */
     @DeleteMapping("/batch-delete")
     public Result<Void> batchDelete(@RequestParam("ids") List<Long> ids) {
         return productService.batchDelete(ids);
     }
 
+    /**
+     * 查询单个商品的趋势图数据和增长概览。
+     */
     @GetMapping("/{id}/trend")
     public Result<ProductTrendVO> getProductTrend(
             @PathVariable Long id,
@@ -80,6 +101,9 @@ public class ProductController {
         return productService.getProductTrend(id, days);
     }
 
+    /**
+     * 查询商品日维度经营指标，供表格或图表展示。
+     */
     @GetMapping("/{id}/daily-metrics")
     public Result<List<ProductDailyMetricVO>> getProductDailyMetrics(
             @PathVariable Long id,
@@ -88,11 +112,17 @@ public class ProductController {
         return productService.getProductDailyMetrics(id, limit);
     }
 
+    /**
+     * 查询商品下的 SKU 明细。
+     */
     @GetMapping("/{id}/skus")
     public Result<List<ProductSkuVO>> getProductSkus(@PathVariable Long id) {
         return productService.getProductSkus(id);
     }
 
+    /**
+     * 查询商品对应的流量推广日报数据。
+     */
     @GetMapping("/{id}/traffic-promo")
     public Result<List<TrafficPromoDailyVO>> getTrafficPromoDaily(
             @PathVariable Long id,

@@ -5,6 +5,9 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 决策任务列表视图对象，用于任务列表页展示摘要信息。
+ */
 @Data
 public class DecisionTaskItemVO {
     private Long id;

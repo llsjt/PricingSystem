@@ -5,6 +5,9 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 商品 SKU 视图对象，用于前端展示规格维度的价格和库存。
+ */
 @Data
 public class ProductSkuVO {
     private Long id;

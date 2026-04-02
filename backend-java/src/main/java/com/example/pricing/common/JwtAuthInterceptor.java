@@ -9,15 +9,21 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.io.IOException;
 
+/**
+ * JWT 认证拦截器，用于校验接口请求中的登录令牌并写入当前用户上下文。
+ */
 @Component
 @RequiredArgsConstructor
 public class JwtAuthInterceptor implements HandlerInterceptor {
 
     private final JwtUtil jwtUtil;
 
+    /**
+     * 在请求进入控制器前校验 Bearer Token，认证通过后写入用户信息。
+     */
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws IOException {
-        // 跳过 OPTIONS 预检请求
+        // 预检请求不参与认证校验，直接放行。
         if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
             return true;
         }
@@ -41,6 +47,9 @@ public class JwtAuthInterceptor implements HandlerInterceptor {
         }
     }
 
+    /**
+     * 统一输出认证失败响应，避免拦截器内直接抛出未处理异常。
+     */
     private void sendError(HttpServletResponse response, int status, String message) throws IOException {
         response.setStatus(status);
         response.setContentType("application/json;charset=UTF-8");

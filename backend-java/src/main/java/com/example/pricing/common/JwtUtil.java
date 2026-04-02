@@ -10,6 +10,9 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 
+/**
+ * JWT 工具类，负责生成、解析和读取登录令牌中的用户信息。
+ */
 @Component
 public class JwtUtil {
 
@@ -22,6 +25,9 @@ public class JwtUtil {
         this.expiration = expiration;
     }
 
+    /**
+     * 为指定用户生成带有角色信息的 JWT。
+     */
     public String generateToken(Long userId, String username, boolean isAdmin) {
         Date now = new Date();
         return Jwts.builder()
@@ -34,6 +40,9 @@ public class JwtUtil {
                 .compact();
     }
 
+    /**
+     * 解析并校验 JWT，返回其中的声明信息。
+     */
     public Claims parseToken(String token) {
         return Jwts.parser()
                 .verifyWith(key)
@@ -42,6 +51,9 @@ public class JwtUtil {
                 .getPayload();
     }
 
+    /**
+     * 从 JWT 中提取用户名，供需要快速读取主体信息的场景使用。
+     */
     public String getUsernameFromToken(String token) {
         return parseToken(token).getSubject();
     }

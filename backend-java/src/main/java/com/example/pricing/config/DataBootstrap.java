@@ -12,6 +12,9 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
+/**
+ * 系统启动后的基础数据初始化器，用于补齐管理员、默认店铺和密码迁移。
+ */
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -20,6 +23,9 @@ public class DataBootstrap {
     private final SysUserMapper userMapper;
     private final ShopMapper shopMapper;
 
+    /**
+     * 应用启动完成后执行初始化流程。
+     */
     @jakarta.annotation.PostConstruct
     public void initialize() {
         SysUser admin = ensureAdminUser();
@@ -27,6 +33,9 @@ public class DataBootstrap {
         migratePasswords();
     }
 
+    /**
+     * 确保系统中始终存在管理员账号，便于首次登录和系统管理。
+     */
     private SysUser ensureAdminUser() {
         LambdaQueryWrapper<SysUser> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(SysUser::getAccount, "admin");
@@ -46,6 +55,9 @@ public class DataBootstrap {
         return admin;
     }
 
+    /**
+     * 将库中历史明文密码迁移为 BCrypt 哈希，避免继续以不安全形式存储。
+     */
     private void migratePasswords() {
         List<SysUser> users = userMapper.selectList(null);
         int migrated = 0;
@@ -62,6 +74,9 @@ public class DataBootstrap {
         }
     }
 
+    /**
+     * 为管理员补齐默认店铺，保证导入、商品管理等功能可直接使用。
+     */
     private void ensureDefaultShop(Long userId) {
         LambdaQueryWrapper<Shop> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(Shop::getUserId, userId).last("LIMIT 1");

@@ -1,10 +1,18 @@
 package com.example.pricing.entity;
 
-import com.baomidou.mybatisplus.annotation.*;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 商品实体，保存商品基础档案、价格、库存和补充展示字段。
+ */
 @Data
 @TableName("product")
 public class Product {

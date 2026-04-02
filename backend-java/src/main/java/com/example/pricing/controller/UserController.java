@@ -12,12 +12,23 @@ import com.example.pricing.vo.UserListVO;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.mindrot.jbcrypt.BCrypt;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 用户管理控制器，处理登录、登出以及管理员的用户维护操作。
+ */
 @RestController
 @RequestMapping("/api/user")
 @RequiredArgsConstructor
@@ -26,6 +37,9 @@ public class UserController {
     private final SysUserMapper userMapper;
     private final JwtUtil jwtUtil;
 
+    /**
+     * 校验账号密码并签发 JWT，返回前端会话所需信息。
+     */
     @PostMapping("/login")
     public Result<Map<String, Object>> login(@RequestBody Map<String, String> body) {
         String username = body.get("username");
@@ -53,11 +67,17 @@ public class UserController {
         return Result.success(data);
     }
 
+    /**
+     * 退出登录接口，当前由前端自行删除令牌，因此后端只返回成功状态。
+     */
     @PostMapping("/logout")
     public Result<Void> logout() {
         return Result.success(null);
     }
 
+    /**
+     * 管理员分页查询系统用户列表。
+     */
     @GetMapping("/list")
     public Result<Page<UserListVO>> getUserList(
             HttpServletRequest request,
@@ -74,6 +94,9 @@ public class UserController {
         return Result.success(resultPage);
     }
 
+    /**
+     * 管理员新增用户，并在落库前完成密码加密。
+     */
     @PostMapping("/add")
     public Result<Void> addUser(
             HttpServletRequest request,
@@ -93,6 +116,9 @@ public class UserController {
         return Result.success(null);
     }
 
+    /**
+     * 管理员更新用户资料，可选修改用户名、密码、邮箱和状态。
+     */
     @PutMapping("/{id}")
     public Result<Void> updateUser(
             HttpServletRequest request,
@@ -127,6 +153,9 @@ public class UserController {
         return Result.success(null);
     }
 
+    /**
+     * 管理员删除单个用户，但保护内置管理员账号不被误删。
+     */
     @DeleteMapping("/{id:\\d+}")
     public Result<Void> deleteUser(
             HttpServletRequest request,
@@ -142,6 +171,9 @@ public class UserController {
         return Result.success(null);
     }
 
+    /**
+     * 管理员批量删除用户，同样禁止删除管理员账号。
+     */
     @DeleteMapping("/batch-delete")
     public Result<Void> batchDeleteUsers(
             HttpServletRequest request,
@@ -162,6 +194,9 @@ public class UserController {
         return Result.success(null);
     }
 
+    /**
+     * 校验当前请求是否由管理员发起，不满足条件时抛出权限异常。
+     */
     private void requireAdmin(HttpServletRequest request) {
         String currentUsername = (String) request.getAttribute("currentUsername");
         if (currentUsername == null || currentUsername.isBlank()) {
@@ -176,6 +211,9 @@ public class UserController {
         throw new ForbiddenException("无权进行此操作，仅限管理员");
     }
 
+    /**
+     * 将用户实体转换为列表页展示对象，避免前端接收到敏感字段。
+     */
     private UserListVO toUserListVO(SysUser user) {
         UserListVO vo = new UserListVO();
         vo.setId(user.getId());

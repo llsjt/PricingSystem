@@ -1,10 +1,18 @@
 package com.example.pricing.entity;
 
-import com.baomidou.mybatisplus.annotation.*;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 定价结果实体，保存最终建议价格、预计销量、预计利润等输出结果。
+ */
 @Data
 @TableName("pricing_result")
 public class PricingResult {

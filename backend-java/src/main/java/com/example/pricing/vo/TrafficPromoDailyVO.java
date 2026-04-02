@@ -6,6 +6,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+/**
+ * 流量推广日报视图对象，用于展示渠道投放效果。
+ */
 @Data
 public class TrafficPromoDailyVO {
     private Long id;

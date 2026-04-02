@@ -11,6 +11,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
+/**
+ * 流量推广日报实体，记录投放渠道、曝光点击和投入产出表现。
+ */
 @Data
 @TableName("traffic_promo_daily")
 public class TrafficPromoDaily {

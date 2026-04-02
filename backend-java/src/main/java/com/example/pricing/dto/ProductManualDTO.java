@@ -1,8 +1,12 @@
 package com.example.pricing.dto;
 
 import lombok.Data;
+
 import java.math.BigDecimal;
 
+/**
+ * 手工新增商品请求体，包含基础价格、库存和经营概览字段。
+ */
 @Data
 public class ProductManualDTO {
     private String externalProductId;

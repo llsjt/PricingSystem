@@ -49,6 +49,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
+/**
+ * 淘宝 Excel 导入服务，负责识别模板类型并把 Excel 行数据写入各业务表。
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -63,11 +66,17 @@ public class TaobaoExcelImportService {
     private final UploadBatchMapper batchMapper;
     private final ShopMapper shopMapper;
 
+    /**
+     * 兼容旧调用方式的导入入口，未指定平台时走默认店铺。
+     */
     @Transactional(rollbackFor = Exception.class)
     public ImportResultVO importExcel(MultipartFile file, String requestedTypeCode) {
         return importExcel(file, requestedTypeCode, null);
     }
 
+    /**
+     * 导入 Excel 文件，自动识别数据类型并逐行写入对应业务表。
+     */
     @Transactional(rollbackFor = Exception.class)
     public ImportResultVO importExcel(MultipartFile file, String requestedTypeCode, String platform) {
         validateFile(file);
@@ -149,6 +158,9 @@ public class TaobaoExcelImportService {
         return result;
     }
 
+    /**
+     * 按指定导入类型生成模板文件并输出给前端下载。
+     */
     public void downloadTemplate(String requestedTypeCode, HttpServletResponse response) {
         ImportType importType = resolveTemplateType(requestedTypeCode);
         try {
@@ -168,6 +180,9 @@ public class TaobaoExcelImportService {
         }
     }
 
+    /**
+     * 校验上传文件是否为空、格式是否合法以及大小是否超限。
+     */
     private void validateFile(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("文件不能为空");
@@ -181,6 +196,9 @@ public class TaobaoExcelImportService {
         }
     }
 
+    /**
+     * 解析 Excel 首个工作表，抽取规范化表头和逐行数据。
+     */
     private ParsedSheet parseSheet(MultipartFile file) {
         try (InputStream inputStream = file.getInputStream();
              Workbook workbook = WorkbookFactory.create(inputStream)) {
@@ -238,6 +256,9 @@ public class TaobaoExcelImportService {
         }
     }
 
+    /**
+     * 从工作表中识别表头所在行，兼容前面存在说明行的模板。
+     */
     private int findHeaderRowIndex(Sheet sheet, DataFormatter formatter, FormulaEvaluator evaluator) {
         for (int rowIndex = sheet.getFirstRowNum(); rowIndex <= sheet.getLastRowNum(); rowIndex++) {
             Row row = sheet.getRow(rowIndex);
@@ -260,6 +281,9 @@ public class TaobaoExcelImportService {
         return -1;
     }
 
+    /**
+     * 统一读取单元格文本，兼容公式、数字和字符串单元格。
+     */
     private String readCellValue(Cell cell, DataFormatter formatter, FormulaEvaluator evaluator) {
         if (cell == null) {
             return "";
@@ -267,6 +291,9 @@ public class TaobaoExcelImportService {
         return formatter.formatCellValue(cell, evaluator).trim();
     }
 
+    /**
+     * 根据用户指定类型或表头特征自动判断导入目标类型。
+     */
     private ImportType resolveImportType(String requestedTypeCode, Set<String> normalizedHeaders) {
         if (requestedTypeCode != null && !requestedTypeCode.isBlank() && !"AUTO".equalsIgnoreCase(requestedTypeCode)) {
             return ImportType.fromCode(requestedTypeCode);
@@ -288,6 +315,9 @@ public class TaobaoExcelImportService {
         return bestType;
     }
 
+    /**
+     * 解析模板下载类型，未指定时默认返回商品基础信息模板。
+     */
     private ImportType resolveTemplateType(String requestedTypeCode) {
         if (requestedTypeCode == null || requestedTypeCode.isBlank() || "AUTO".equalsIgnoreCase(requestedTypeCode)) {
             return ImportType.PRODUCT_BASE;
@@ -295,6 +325,9 @@ public class TaobaoExcelImportService {
         return ImportType.fromCode(requestedTypeCode);
     }
 
+    /**
+     * 为本次导入创建批次记录，用于跟踪执行状态和统计结果。
+     */
     private UploadBatch createBatch(Long shopId, String fileName, ImportType importType) {
         UploadBatch batch = new UploadBatch();
         batch.setShopId(shopId);
@@ -309,6 +342,9 @@ public class TaobaoExcelImportService {
         return batch;
     }
 
+    /**
+     * 导入商品基础信息行，不存在时创建商品，存在时更新商品档案。
+     */
     private LocalDate importProductBase(Long shopId, ParsedRow row) {
         String externalProductId = parseExternalProductId(row.getFirst("\u5546\u54c1ID", "\u5546\u54c1\u7f16\u53f7", "\u5b9d\u8d1dID", "Item ID", "item_id"));
         String title = row.getRequired("\u5546\u54c1\u6807\u9898", "\u5b9d\u8d1d\u6807\u9898", "\u5546\u54c1\u540d\u79f0", "\u6807\u9898");
@@ -333,6 +369,9 @@ public class TaobaoExcelImportService {
         return null;
     }
 
+    /**
+     * 导入商品 SKU 行，并自动补齐规格名、价格和库存默认值。
+     */
     private LocalDate importProductSku(Long shopId, ParsedRow row) {
         String externalProductId = parseExternalProductId(row.getFirst("\u5546\u54c1ID", "\u5546\u54c1\u7f16\u53f7", "\u5b9d\u8d1dID", "Item ID", "item_id"));
         String title = row.getFirst("\u5546\u54c1\u6807\u9898", "\u5b9d\u8d1d\u6807\u9898", "\u5546\u54c1\u540d\u79f0", "\u6807\u9898");
@@ -384,6 +423,9 @@ public class TaobaoExcelImportService {
         return null;
     }
 
+    /**
+     * 导入商品经营日报行，写入访客、销量、成交额和转化率等指标。
+     */
     private LocalDate importProductDailyMetric(Long shopId, Long batchId, ParsedRow row) {
         LocalDate statDate = parseDate(row.getRequired("\u7edf\u8ba1\u65e5\u671f", "\u65e5\u671f", "\u6570\u636e\u65e5\u671f"));
         String externalProductId = parseExternalProductId(row.getFirst("\u5546\u54c1ID", "\u5546\u54c1\u7f16\u53f7", "\u5b9d\u8d1dID", "Item ID", "item_id"));
@@ -428,6 +470,9 @@ public class TaobaoExcelImportService {
         return statDate;
     }
 
+    /**
+     * 导入流量推广日报行，写入渠道投放和 ROI 等数据。
+     */
     private LocalDate importTrafficPromoDaily(Long shopId, Long batchId, ParsedRow row) {
         LocalDate statDate = parseDate(row.getRequired("\u7edf\u8ba1\u65e5\u671f", "\u65e5\u671f", "\u6570\u636e\u65e5\u671f"));
         String externalProductId = parseExternalProductId(row.getFirst("\u5546\u54c1ID", "\u5546\u54c1\u7f16\u53f7", "\u5b9d\u8d1dID", "Item ID", "item_id"));
@@ -469,6 +514,9 @@ public class TaobaoExcelImportService {
         return statDate;
     }
 
+    /**
+     * 根据商品外部 ID 或标题查找商品，不存在时创建占位商品。
+     */
     private Product getOrCreateProduct(Long shopId, String externalProductId, String title) {
         Product product = findProduct(shopId, externalProductId, title);
         boolean changed = false;
@@ -510,6 +558,9 @@ public class TaobaoExcelImportService {
         return product;
     }
 
+    /**
+     * 优先按外部商品 ID 查找商品，找不到时回退到标题匹配。
+     */
     private Product findProduct(Long shopId, String externalProductId, String title) {
         if (externalProductId != null && !externalProductId.isBlank()) {
             LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
@@ -532,6 +583,9 @@ public class TaobaoExcelImportService {
         return null;
     }
 
+    /**
+     * 获取默认店铺 ID，未指定平台时作为导入落点。
+     */
     private Long resolveDefaultShopId() {
         LambdaQueryWrapper<Shop> wrapper = new LambdaQueryWrapper<>();
         wrapper.orderByAsc(Shop::getId).last("LIMIT 1");
@@ -542,6 +596,9 @@ public class TaobaoExcelImportService {
         return shop.getId();
     }
 
+    /**
+     * 根据平台名称解析店铺 ID，找不到时直接报错提示。
+     */
     private Long resolveShopId(String platform) {
         String normalizedPlatform = trimToNull(platform);
         if (normalizedPlatform == null) {
@@ -559,6 +616,9 @@ public class TaobaoExcelImportService {
         return shop.getId();
     }
 
+    /**
+     * 构造导入结果摘要，供前端快速展示本次导入情况。
+     */
     private String buildSummary(ImportType importType, int successCount, int failCount, boolean autoDetected) {
         StringBuilder builder = new StringBuilder();
         builder.append("已按“").append(importType.label).append("”处理，成功 ")
@@ -569,10 +629,16 @@ public class TaobaoExcelImportService {
         return builder.toString();
     }
 
+    /**
+     * 统一调用行解析器的字段标准化逻辑。
+     */
     private String normalize(String value) {
         return ParsedRow.normalizeStatic(value);
     }
 
+    /**
+     * 规范化 Excel 中的商品 ID，兼容数字、科学计数法和尾随 .0。
+     */
     private String parseExternalProductId(String value) {
         if (value == null || value.isBlank()) {
             return null;
@@ -591,6 +657,9 @@ public class TaobaoExcelImportService {
         }
     }
 
+    /**
+     * 当源数据缺少商品 ID 时生成占位 ID，保证商品可落库。
+     */
     private String resolveExternalProductId(String externalProductId, String title) {
         if (externalProductId != null && !externalProductId.isBlank()) {
             return externalProductId.trim();
@@ -601,6 +670,9 @@ public class TaobaoExcelImportService {
         return "PLACEHOLDER-" + System.currentTimeMillis();
     }
 
+    /**
+     * 当源数据缺少 SKU ID 时，基于商品和规格信息生成稳定占位 ID。
+     */
     private String resolveExternalSkuId(String externalSkuId, Product product, String skuName, String skuAttr) {
         String normalizedSkuId = parseExternalProductId(externalSkuId);
         if (normalizedSkuId != null && !normalizedSkuId.isBlank()) {
@@ -614,6 +686,9 @@ public class TaobaoExcelImportService {
         return baseId + "-SKU-" + Math.abs(marker.hashCode());
     }
 
+    /**
+     * 解析 SKU 售价，缺失时回退到商品售价或零值。
+     */
     private BigDecimal resolveSkuSalePrice(BigDecimal skuSalePrice, BigDecimal productSalePrice) {
         if (skuSalePrice != null) {
             return skuSalePrice.setScale(2, RoundingMode.HALF_UP);
@@ -624,6 +699,9 @@ public class TaobaoExcelImportService {
         return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     }
 
+    /**
+     * 解析 SKU 成本价，缺失时按商品成本或售价比例进行兜底。
+     */
     private BigDecimal resolveSkuCostPrice(BigDecimal skuCostPrice, BigDecimal productCostPrice, BigDecimal skuSalePrice) {
         if (skuCostPrice != null) {
             return skuCostPrice.setScale(2, RoundingMode.HALF_UP);
@@ -637,6 +715,9 @@ public class TaobaoExcelImportService {
         return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     }
 
+    /**
+     * 解析 SKU 库存，缺失时回退到商品库存或零值。
+     */
     private Integer resolveSkuStock(Integer skuStock, Integer productStock) {
         if (skuStock != null && skuStock >= 0) {
             return skuStock;
@@ -647,6 +728,9 @@ public class TaobaoExcelImportService {
         return 0;
     }
 
+    /**
+     * 将文本解析为整数，兼容带逗号和小数的输入。
+     */
     private Integer parseInteger(String value) {
         if (value == null || value.isBlank()) {
             return null;
@@ -659,6 +743,9 @@ public class TaobaoExcelImportService {
         }
     }
 
+    /**
+     * 将金额文本解析为两位小数，兼容常见货币符号和分隔符。
+     */
     private BigDecimal parseAmount(String value) {
         if (value == null || value.isBlank()) {
             return null;
@@ -675,6 +762,9 @@ public class TaobaoExcelImportService {
         }
     }
 
+    /**
+     * 将百分比或小数形式的比率统一解析为小数值。
+     */
     private BigDecimal parseRate(String value) {
         if (value == null || value.isBlank()) {
             return null;
@@ -691,6 +781,9 @@ public class TaobaoExcelImportService {
         }
     }
 
+    /**
+     * 解析多种格式的日期文本，也兼容 Excel 序列日期。
+     */
     private LocalDate parseDate(String value) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException("缺少日期字段");
@@ -735,10 +828,16 @@ public class TaobaoExcelImportService {
         throw new IllegalArgumentException("无法解析日期: " + value);
     }
 
+    /**
+     * 将整数空值统一转成零。
+     */
     private Integer defaultInt(Integer value) {
         return value == null ? 0 : value;
     }
 
+    /**
+     * 将金额空值统一转成两位小数的零值。
+     */
     private BigDecimal defaultMoney(BigDecimal value) {
         if (value == null) {
             return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
@@ -746,10 +845,16 @@ public class TaobaoExcelImportService {
         return value.setScale(2, RoundingMode.HALF_UP);
     }
 
+    /**
+     * 保留金额空值语义，同时规范非空金额的小数位。
+     */
     private BigDecimal nullableMoney(BigDecimal value) {
         return value == null ? null : value.setScale(2, RoundingMode.HALF_UP);
     }
 
+    /**
+     * 根据销量与访客数计算转化率。
+     */
     private BigDecimal calculateConversionRate(int salesCount, int visitorCount) {
         if (salesCount <= 0 || visitorCount <= 0) {
             return BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP);
@@ -758,6 +863,9 @@ public class TaobaoExcelImportService {
                 .divide(BigDecimal.valueOf(visitorCount), 4, RoundingMode.HALF_UP);
     }
 
+    /**
+     * 去除字符串首尾空格，空内容时返回 null。
+     */
     private String trimToNull(String value) {
         if (value == null || value.isBlank()) {
             return null;
@@ -765,10 +873,19 @@ public class TaobaoExcelImportService {
         return value.trim();
     }
 
+    /**
+     * Excel 解析结果，保存标准化表头和全部有效数据行。
+     */
     private record ParsedSheet(Set<String> headers, List<ParsedRow> rows) {
     }
 
+    /**
+     * 单行 Excel 数据结构，提供按别名读取字段的便捷方法。
+     */
     private record ParsedRow(int rowNumber, Map<String, String> values) {
+        /**
+         * 根据一组候选字段名按顺序取值，返回第一个非空结果。
+         */
         String getFirst(String... aliases) {
             for (String alias : aliases) {
                 String value = values.get(normalizeStatic(alias));
@@ -779,6 +896,9 @@ public class TaobaoExcelImportService {
             return null;
         }
 
+        /**
+         * 读取必填字段，缺失时直接抛出异常终止当前行导入。
+         */
         String getRequired(String... aliases) {
             String value = getFirst(aliases);
             if (value == null || value.isBlank()) {
@@ -787,6 +907,9 @@ public class TaobaoExcelImportService {
             return value;
         }
 
+        /**
+         * 统一标准化字段名，便于兼容不同模板中的表头写法。
+         */
         private static String normalizeStatic(String value) {
             if (value == null) {
                 return "";
@@ -806,6 +929,9 @@ public class TaobaoExcelImportService {
         }
     }
 
+    /**
+     * 导入类型枚举，定义模板结构、目标表和自动识别规则。
+     */
     private enum ImportType {
         PRODUCT_BASE(
                 "PRODUCT_BASE",
@@ -908,6 +1034,9 @@ public class TaobaoExcelImportService {
             this.detectGroups = detectGroups;
         }
 
+        /**
+         * 根据类型编码查找对应导入枚举。
+         */
         static ImportType fromCode(String code) {
             for (ImportType value : values()) {
                 if (value.code.equalsIgnoreCase(code)) {
@@ -917,6 +1046,9 @@ public class TaobaoExcelImportService {
             throw new IllegalArgumentException("不支持的导入类型: " + code);
         }
 
+        /**
+         * 依据表头命中情况计算当前导入类型的匹配分数。
+         */
         int detectScore(Set<String> headers) {
             int score = 0;
             for (List<String> group : detectGroups) {
@@ -930,10 +1062,16 @@ public class TaobaoExcelImportService {
             return score;
         }
 
+        /**
+         * 生成 EasyExcel 所需的模板表头结构。
+         */
         List<List<String>> templateHead() {
             return templateHeaders.stream().map(List::of).toList();
         }
 
+        /**
+         * 返回模板中的示例数据行。
+         */
         List<List<Object>> templateRows() {
             return sampleRows;
         }

@@ -7,6 +7,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 决策日志视图对象，用于展示多智能体分析过程和附带证据。
+ */
 @Data
 public class DecisionLogVO {
     private Long id;
@@ -15,7 +18,9 @@ public class DecisionLogVO {
     private Integer speakOrder;
     private String thoughtContent;
 
-    // Legacy compatibility fields for existing frontend consumption.
+    /**
+     * 兼容旧版前端字段命名，避免前后端联调时发生字段丢失。
+     */
     private String agentCode;
     private String agentName;
     private Integer runOrder;

@@ -1,9 +1,17 @@
 package com.example.pricing.entity;
 
-import com.baomidou.mybatisplus.annotation.*;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+
 import java.time.LocalDateTime;
 
+/**
+ * Agent 运行日志实体，对应多智能体在任务中的发言、证据和结论记录。
+ */
 @Data
 @TableName("agent_run_log")
 public class AgentRunLog {

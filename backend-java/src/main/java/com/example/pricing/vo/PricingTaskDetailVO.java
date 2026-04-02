@@ -6,7 +6,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * 定价任务详情（给前端卡片页使用）。
+ * 定价任务详情视图对象，用于展示单个任务的完整输出信息。
  */
 @Data
 public class PricingTaskDetailVO {

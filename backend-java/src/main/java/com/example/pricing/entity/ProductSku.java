@@ -10,6 +10,9 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 商品 SKU 实体，记录规格级别的价格、属性和库存信息。
+ */
 @Data
 @TableName("product_sku")
 public class ProductSku {

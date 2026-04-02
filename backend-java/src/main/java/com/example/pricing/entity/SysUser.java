@@ -1,9 +1,17 @@
 package com.example.pricing.entity;
 
-import com.baomidou.mybatisplus.annotation.*;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
+
 import java.time.LocalDateTime;
 
+/**
+ * 系统用户实体，保存后台登录账号的基础资料和状态。
+ */
 @Data
 @TableName("sys_user")
 public class SysUser {
