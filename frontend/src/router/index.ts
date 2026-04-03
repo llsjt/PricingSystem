@@ -1,7 +1,7 @@
-﻿import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router'
+import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import BasicLayout from '../layout/BasicLayout.vue'
-
-const APP_TITLE = '智能定价决策平台'
+import { APP_TITLE, getNavTitleByPath } from '../config/navigation'
+import { readAuthSession } from '../utils/authSession'
 
 const routes: Array<RouteRecordRaw> = [
   {
@@ -23,31 +23,31 @@ const routes: Array<RouteRecordRaw> = [
         path: 'import',
         name: 'DataImport',
         component: () => import('../views/DataImport.vue'),
-        meta: { title: '数据管理' }
+        meta: { title: getNavTitleByPath('/import') }
       },
       {
         path: 'lab',
         name: 'PricingLab',
         component: () => import('../views/PricingLab.vue'),
-        meta: { title: '智能定价' }
+        meta: { title: getNavTitleByPath('/lab') }
       },
       {
         path: 'archive',
         name: 'Archive',
         component: () => import('../views/Archive.vue'),
-        meta: { title: '决策档案' }
+        meta: { title: getNavTitleByPath('/archive') }
       },
       {
         path: 'profile',
         name: 'PersonalCenter',
         component: () => import('../views/PersonalCenter.vue'),
-        meta: { title: '个人中心' }
+        meta: { title: getNavTitleByPath('/profile') }
       },
       {
         path: 'user',
         name: 'UserManagement',
         component: () => import('../views/UserManagement.vue'),
-        meta: { title: '用户管理' }
+        meta: { title: getNavTitleByPath('/user') }
       }
     ]
   }
@@ -59,14 +59,14 @@ const router = createRouter({
 })
 
 router.beforeEach((to, _from, next) => {
-  const token = localStorage.getItem('token')
+  const session = readAuthSession()
 
-  if (to.path !== '/login' && !token) {
+  if (to.path !== '/login' && !session.token) {
     next('/login')
     return
   }
 
-  if (to.path === '/user' && localStorage.getItem('isAdmin') !== 'true') {
+  if (to.path === '/user' && !session.isAdmin) {
     next('/')
     return
   }

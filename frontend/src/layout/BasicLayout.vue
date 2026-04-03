@@ -1,25 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import {
-  ArrowDown,
-  Close,
-  DataLine,
-  Document,
-  Files,
-  Menu,
-  User,
-  UserFilled
-} from '@element-plus/icons-vue'
+import { ArrowDown, Close, Menu, UserFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-
-interface NavItem {
-  path: string
-  title: string
-  desc: string
-  icon: any
-  adminOnly?: boolean
-}
+import { APP_NAME, APP_NAV_ITEMS, APP_SUBTITLE } from '../config/navigation'
+import { useViewport } from '../composables/useViewport'
+import { useUserStore } from '../stores/user'
 
 interface OpenTab {
   path: string
@@ -29,53 +15,20 @@ interface OpenTab {
 
 const router = useRouter()
 const route = useRoute()
+const userStore = useUserStore()
+const { width } = useViewport()
 
-const username = ref(localStorage.getItem('username') || 'User')
+const appName = APP_NAME
+const appSubtitle = APP_SUBTITLE
+const username = computed(() => userStore.username || 'User')
 const isSidebarCollapsed = ref(false)
 const mobileMenuVisible = ref(false)
-const isMobile = ref(false)
-const appSubtitle = 'Excel 导入与定价协作'
-const appName = '智能定价平台'
-
-const navItems: NavItem[] = [
-  {
-    path: '/import',
-    title: '数据管理',
-    desc: '商品管理与批量导入',
-    icon: Document
-  },
-  {
-    path: '/lab',
-    title: '智能定价',
-    desc: '任务配置与结果分析',
-    icon: DataLine
-  },
-  {
-    path: '/archive',
-    title: '决策档案',
-    desc: '任务记录与复盘报表',
-    icon: Files
-  },
-  {
-    path: '/profile',
-    title: '个人中心',
-    desc: '查看个人信息与账号管理',
-    icon: UserFilled
-  },
-  {
-    path: '/user',
-    title: '用户管理',
-    desc: '账号维护与权限管理',
-    icon: User,
-    adminOnly: true
-  }
-]
-
-const isAdmin = computed(() => username.value === 'admin')
+const isMobile = computed(() => width.value <= 960)
+const navItems = APP_NAV_ITEMS
+const isAdmin = computed(() => userStore.isAdmin)
 const visibleNavItems = computed(() => navItems.filter((item) => !item.adminOnly || isAdmin.value))
 const currentNav = computed(() => visibleNavItems.value.find((item) => route.path.startsWith(item.path)))
-const pageTitle = computed(() => currentNav.value?.title || String(route.meta.title || '智能定价系统'))
-const pageDesc = computed(() => currentNav.value?.desc || '多 Agent 协同定价工作台')
+const pageTitle = computed(() => currentNav.value?.title || String(route.meta.title || 'App'))
 const openTabs = ref<OpenTab[]>([])
 const cacheNames = computed(() =>
   openTabs.value
@@ -83,11 +36,8 @@ const cacheNames = computed(() =>
     .filter((name): name is string => Boolean(name))
 )
 
-const updateViewportState = () => {
-  isMobile.value = window.innerWidth <= 960
-  if (isMobile.value) {
-    isSidebarCollapsed.value = false
-  }
+const syncUserState = () => {
+  userStore.syncFromSession()
 }
 
 const navigateTo = (path: string) => {
@@ -153,17 +103,27 @@ const handleCommand = (command: string) => {
   }
 
   if (command === 'logout') {
-    localStorage.removeItem('token')
-    localStorage.removeItem('username')
-    localStorage.removeItem('isAdmin')
-    ElMessage.success('已退出登录')
+    userStore.clearSession()
+    ElMessage.success('\u5df2\u9000\u51fa\u767b\u5f55')
     router.push('/login')
   }
 }
 
 watch(
+  isMobile,
+  (mobile) => {
+    if (mobile) {
+      isSidebarCollapsed.value = false
+      mobileMenuVisible.value = false
+    }
+  },
+  { immediate: true }
+)
+
+watch(
   () => route.path,
   () => {
+    syncUserState()
     if (isMobile.value) {
       mobileMenuVisible.value = false
     }
@@ -182,13 +142,13 @@ watch(
 )
 
 onMounted(() => {
-  updateViewportState()
-  window.addEventListener('resize', updateViewportState)
+  syncUserState()
+  window.addEventListener('auth-session-changed', syncUserState)
   ensureCurrentTab()
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', updateViewportState)
+  window.removeEventListener('auth-session-changed', syncUserState)
 })
 </script>
 

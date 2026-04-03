@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="page-shell profile-page">
     <section class="panel-card profile-card">
       <div class="profile-header">
@@ -27,20 +27,22 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { useUserStore } from '../stores/user'
 
 const router = useRouter()
-const username = ref(localStorage.getItem('username') || 'User')
-const loginTime = ref(localStorage.getItem('loginTime') || new Date().toLocaleString('zh-CN'))
+const userStore = useUserStore()
+userStore.syncFromSession()
 
-const isAdmin = computed(() => username.value === 'admin')
+const username = computed(() => userStore.username || 'User')
+const loginTime = computed(() => userStore.loginTime || new Date().toLocaleString('zh-CN'))
+const isAdmin = computed(() => userStore.isAdmin)
 const avatarText = computed(() => username.value.trim().slice(0, 1).toUpperCase() || 'U')
 
 const handleLogout = () => {
-  localStorage.removeItem('token')
-  localStorage.removeItem('username')
+  userStore.clearSession()
   ElMessage.success('已退出登录')
   router.push('/login')
 }

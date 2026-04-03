@@ -101,16 +101,22 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { addUser, batchDeleteUsers, deleteUser, getUserList, updateUser, type UserListItem } from '../api/user'
+import { addUser, batchDeleteUsers, deleteUser, getUserList, updateUser, type UserListItem, type UserPayload } from '../api/user'
+import { useViewport } from '../composables/useViewport'
+import { resolveRequestErrorMessage } from '../utils/error'
 
-const isMobile = ref(window.innerWidth <= 768)
-const onResize = () => { isMobile.value = window.innerWidth <= 768 }
-window.addEventListener('resize', onResize)
-onBeforeUnmount(() => window.removeEventListener('resize', onResize))
+interface UserFormModel {
+  username: string
+  password: string
+  email: string
+  status: number
+}
 
-const dialogWidth = computed(() => isMobile.value ? '90%' : '520px')
+const { isMobile } = useViewport()
+
+const dialogWidth = computed(() => (isMobile.value ? '90%' : '520px'))
 const paginationLayout = computed(() =>
   isMobile.value ? 'total, prev, next' : 'total, sizes, prev, pager, next, jumper'
 )
@@ -129,12 +135,14 @@ const queryParams = reactive({
   size: 10
 })
 
-const form = reactive({
+const createDefaultForm = (): UserFormModel => ({
   username: '',
   password: '',
   email: '',
   status: 1
 })
+
+const form = reactive(createDefaultForm())
 
 const rules: FormRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
@@ -153,10 +161,7 @@ const rules: FormRules = {
 }
 
 const resetForm = () => {
-  form.username = ''
-  form.password = ''
-  form.email = ''
-  form.status = 1
+  Object.assign(form, createDefaultForm())
   editingUserId.value = null
   isEditMode.value = false
 }
@@ -172,8 +177,8 @@ const fetchUsers = async () => {
       return
     }
     ElMessage.error(res.message || '获取用户列表失败')
-  } catch {
-    ElMessage.error('获取用户列表失败')
+  } catch (error) {
+    ElMessage.error(await resolveRequestErrorMessage(error, '获取用户列表失败'))
   } finally {
     loading.value = false
   }
@@ -200,6 +205,25 @@ const openEditDialog = (row: UserListItem) => {
   form.status = row.status ?? 1
 }
 
+const buildUpdatePayload = (): UserPayload => {
+  const payload: UserPayload = {
+    username: form.username,
+    email: form.email,
+    status: form.status
+  }
+  if (form.password) {
+    payload.password = form.password
+  }
+  return payload
+}
+
+const buildCreatePayload = (): UserPayload => ({
+  username: form.username,
+  password: form.password,
+  email: form.email,
+  status: form.status
+})
+
 const submitUser = async () => {
   if (!formRef.value) return
 
@@ -207,41 +231,20 @@ const submitUser = async () => {
     if (!valid) return
 
     try {
-      let res: any
-      if (isEditMode.value && editingUserId.value !== null) {
-        const payload: {
-          username: string
-          email: string
-          status: number
-          password?: string
-        } = {
-          username: form.username,
-          email: form.email,
-          status: form.status
-        }
-        if (form.password) {
-          payload.password = form.password
-        }
-        res = await updateUser(editingUserId.value, payload)
-      } else {
-        res = await addUser({
-          username: form.username,
-          password: form.password,
-          email: form.email,
-          status: form.status
-        })
-      }
+      const res: any = isEditMode.value && editingUserId.value !== null
+        ? await updateUser(editingUserId.value, buildUpdatePayload())
+        : await addUser(buildCreatePayload())
 
       if (res.code === 200) {
         ElMessage.success(isEditMode.value ? '用户已更新' : '用户已创建')
         dialogVisible.value = false
         resetForm()
-        fetchUsers()
+        await fetchUsers()
         return
       }
       ElMessage.error(res.message || '保存失败')
-    } catch {
-      ElMessage.error('保存失败')
+    } catch (error) {
+      ElMessage.error(await resolveRequestErrorMessage(error, '保存失败'))
     }
   })
 }
@@ -251,13 +254,25 @@ const handleDelete = async (row: UserListItem) => {
     const res: any = await deleteUser(row.id)
     if (res.code === 200) {
       ElMessage.success('用户已删除')
-      fetchUsers()
+      await fetchUsers()
       return
     }
     ElMessage.error(res.message || '删除失败')
-  } catch {
-    ElMessage.error('删除失败')
+  } catch (error) {
+    ElMessage.error(await resolveRequestErrorMessage(error, '删除失败'))
   }
+}
+
+const confirmBatchDelete = async () => {
+  await ElMessageBox.confirm(
+    '确定删除已选择的 ' + selectedIds.value.length + ' 个用户吗？此操作不可恢复。',
+    '批量删除确认',
+    {
+      type: 'warning',
+      confirmButtonText: '确认删除',
+      cancelButtonText: '取消'
+    }
+  )
 }
 
 const handleBatchDelete = async () => {
@@ -267,15 +282,7 @@ const handleBatchDelete = async () => {
   }
 
   try {
-    await ElMessageBox.confirm(
-      `确定删除已选择的 ${selectedIds.value.length} 个用户吗？此操作不可恢复。`,
-      '批量删除确认',
-      {
-        type: 'warning',
-        confirmButtonText: '确认删除',
-        cancelButtonText: '取消'
-      }
-    )
+    await confirmBatchDelete()
   } catch {
     return
   }
@@ -284,12 +291,12 @@ const handleBatchDelete = async () => {
     const res: any = await batchDeleteUsers(selectedIds.value)
     if (res.code === 200) {
       ElMessage.success('批量删除成功')
-      fetchUsers()
+      await fetchUsers()
       return
     }
     ElMessage.error(res.message || '批量删除失败')
-  } catch {
-    ElMessage.error('批量删除失败')
+  } catch (error) {
+    ElMessage.error(await resolveRequestErrorMessage(error, '批量删除失败'))
   }
 }
 
@@ -297,6 +304,7 @@ onMounted(() => {
   fetchUsers()
 })
 </script>
+
 
 <style scoped>
 .user-page {

@@ -116,21 +116,29 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
-import * as echarts from 'echarts'
+import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import request from '../api/request'
+import { useEChart } from '../composables/useEChart'
+import { useViewport } from '../composables/useViewport'
+import { resolveRequestErrorMessage } from '../utils/error'
+import {
+  formatCount,
+  formatCurrency as sharedFormatCurrency,
+  formatSignedCurrency,
+  formatSignedNumber,
+  formatSignedPercent
+} from '../utils/formatters'
 
 const visible = ref(false)
 const loading = ref(false)
 const days = ref(30)
 const product = ref<any>(null)
 const trendData = ref<any>(null)
-const chartRef = ref<HTMLElement | null>(null)
-const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1440)
-let chartInstance: echarts.ECharts | null = null
+const { width } = useViewport()
+const { chartRef, disposeChart, resizeChart, setChartOption } = useEChart()
 
-const drawerSize = computed(() => (viewportWidth.value < 900 ? '100%' : '60%'))
+const drawerSize = computed(() => (width.value < 900 ? '100%' : '60%'))
 
 const open = (row: any) => {
   product.value = row
@@ -141,53 +149,12 @@ const open = (row: any) => {
 
 defineExpose({ open })
 
-const formatNumber = (value: number | string, fractionDigits = 0) =>
-  Number(value || 0).toLocaleString('zh-CN', {
-    minimumFractionDigits: fractionDigits,
-    maximumFractionDigits: fractionDigits
-  })
-const formatQuantity = (value: number | string) => formatNumber(value, 0)
-const formatCurrency = (value: number | string) => `¥${formatNumber(value, 2)}`
-const formatSignedQuantity = (value: number | string) => {
-  const numeric = Number(value || 0)
-  return `${numeric >= 0 ? '+' : '-'}${formatNumber(Math.abs(numeric), 0)}`
-}
-const formatSignedCurrency = (value: number | string) => {
-  const numeric = Number(value || 0)
-  return `${numeric >= 0 ? '+' : '-'}¥${formatNumber(Math.abs(numeric), 2)}`
-}
-const formatSignedPercent = (value: number | string) => {
-  const numeric = Number(value || 0) * 100
-  return `${numeric >= 0 ? '+' : ''}${numeric.toFixed(2)}%`
-}
-
-const fetchTrendData = async () => {
-  if (!product.value) return
-  loading.value = true
-  try {
-    const res: any = await request.get(`/products/${product.value.id}/trend`, {
-      params: { days: days.value }
-    })
-    if (res.code === 200) {
-      trendData.value = res.data
-      await nextTick()
-      renderChart()
-      return
-    }
-    ElMessage.error(res.message || '获取趋势数据失败')
-  } catch {
-    ElMessage.error('获取趋势数据失败')
-  } finally {
-    loading.value = false
-  }
-}
+const formatQuantity = (value: number | string) => formatCount(value)
+const formatCurrency = (value: number | string) => sharedFormatCurrency(value)
+const formatSignedQuantity = (value: number | string) => formatSignedNumber(value)
 
 const renderChart = () => {
-  if (!chartRef.value || !trendData.value) return
-
-  if (chartInstance) {
-    chartInstance.dispose()
-  }
+  if (!trendData.value) return
 
   const visitors = Array.isArray(trendData.value.visitors) ? trendData.value.visitors : []
   const sales = Array.isArray(trendData.value.sales) ? trendData.value.sales : []
@@ -225,8 +192,7 @@ const renderChart = () => {
     })
   }
 
-  chartInstance = echarts.init(chartRef.value)
-  chartInstance.setOption({
+  setChartOption({
     color: ['#1f6feb', '#10b981', '#f59e0b'],
     tooltip: {
       trigger: 'axis'
@@ -254,7 +220,7 @@ const renderChart = () => {
         type: 'value',
         name: '转化率',
         axisLabel: {
-          formatter: (value: number) => `${(value * 100).toFixed(0)}%`
+          formatter: (value: number) => (value * 100).toFixed(0) + '%'
         }
       }
     ],
@@ -273,26 +239,39 @@ const renderChart = () => {
   })
 }
 
-const handleResize = () => {
-  viewportWidth.value = window.innerWidth
-  if (chartInstance) {
-    chartInstance.resize()
+const fetchTrendData = async () => {
+  if (!product.value) return
+  loading.value = true
+  try {
+    const res: any = await request.get('/products/' + product.value.id + '/trend', {
+      params: { days: days.value }
+    })
+    if (res.code === 200) {
+      trendData.value = res.data
+      await nextTick()
+      renderChart()
+      return
+    }
+    ElMessage.error(res.message || '获取趋势数据失败')
+  } catch (error) {
+    ElMessage.error(await resolveRequestErrorMessage(error, '获取趋势数据失败'))
+  } finally {
+    loading.value = false
   }
 }
 
-if (typeof window !== 'undefined') {
-  window.addEventListener('resize', handleResize)
-}
+watch(width, () => {
+  resizeChart()
+})
 
-onBeforeUnmount(() => {
-  if (typeof window !== 'undefined') {
-    window.removeEventListener('resize', handleResize)
-  }
-  if (chartInstance) {
-    chartInstance.dispose()
-  }
+watch(visible, (nextVisible) => {
+  if (nextVisible) return
+  trendData.value = null
+  product.value = null
+  disposeChart()
 })
 </script>
+
 
 <style scoped>
 .trend-shell {

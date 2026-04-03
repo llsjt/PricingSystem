@@ -35,11 +35,14 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { login } from '../api/user'
+import { useUserStore } from '../stores/user'
+import { resolveRequestErrorMessage } from '../utils/error'
 
 const router = useRouter()
-const loginFormRef = ref()
+const userStore = useUserStore()
+const loginFormRef = ref<FormInstance>()
 const loading = ref(false)
 
 const loginForm = reactive({
@@ -47,7 +50,7 @@ const loginForm = reactive({
   password: ''
 })
 
-const rules = {
+const rules: FormRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
 }
@@ -66,16 +69,18 @@ const handleLogin = async () => {
     try {
       const res: any = await login(loginForm)
       if (res.code === 200) {
-        localStorage.setItem('token', res.data.token)
-        localStorage.setItem('username', res.data.username)
-        localStorage.setItem('isAdmin', String(res.data.isAdmin))
+        userStore.applySession({
+          token: res.data.token,
+          username: res.data.username,
+          isAdmin: Boolean(res.data.isAdmin)
+        })
         ElMessage.success('登录成功')
         router.push('/')
       } else {
         ElMessage.error(res.message || '登录失败')
       }
-    } catch {
-      ElMessage.error('登录失败')
+    } catch (error) {
+      ElMessage.error(await resolveRequestErrorMessage(error, '登录失败'))
     } finally {
       loading.value = false
     }

@@ -288,6 +288,8 @@ import {
   type PricingWsMessage
 } from '../api/decision'
 import { getProductList } from '../api/product'
+import { createApplyDecisionConfirmMessage, formatEvidenceValue, getSuggestionLines } from '../utils/decisionDisplay'
+import { formatCurrency as sharedFormatCurrency, formatSignedCurrency as sharedFormatSignedCurrency } from '../utils/formatters'
 
 interface ApiResponse<T> {
   code: number
@@ -919,178 +921,12 @@ const toNumber = (value: unknown): number | null => {
   return Number.isFinite(numeric) ? numeric : null
 }
 
-const textValueMap: Record<string, string> = {
-  MAX_PROFIT: '利润优先',
-  CLEARANCE: '清仓促销',
-  MARKET_SHARE: '市场份额优先',
-  AUTO_EXECUTE: '自动执行',
-  MANUAL_REVIEW: '人工审核',
-  LOW: '低风险',
-  MEDIUM: '中风险',
-  HIGH: '高风险',
-  SUCCESS: '成功',
-  RUNNING: '执行中',
-  COMPLETED: '已完成',
-  FAILED: '失败',
-  PENDING: '待执行'
-}
-
-const toNaturalChinese = (value: unknown): string => {
-  const text = String(value ?? '').trim()
-  if (!text) return '-'
-  const upper = text.toUpperCase()
-  return textValueMap[upper] || text
-}
-
 const formatCurrency = (value?: number | null) => {
-  if (value == null || Number.isNaN(Number(value))) return '-'
-  return `¥${Number(value).toFixed(2)}`
-}
-
-const formatBoolean = (value: boolean) => {
-  return value ? '是' : '否'
-}
-
-const formatPrimitive = (key: string, value: unknown): string => {
-  if (value == null) return '-'
-  if (typeof value === 'boolean') return formatBoolean(value)
-
-  const numeric = toNumber(value)
-  if (numeric != null) {
-    const lowered = key.toLowerCase()
-    if (lowered.includes('price') || lowered.includes('profit') || lowered.includes('amount')) {
-      return formatCurrency(numeric)
-    }
-    if (lowered.includes('rate')) {
-      return `${(numeric * 100).toFixed(2)}%`
-    }
-    return String(numeric)
-  }
-
-  return toNaturalChinese(value)
-}
-
-const formatObjectLine = (value: Record<string, unknown>): string => {
-  if ('competitorName' in value) {
-    const name = String(value.competitorName || '竞品')
-    const platform = String(value.sourcePlatform || '')
-    const shopType = String(value.shopType || '')
-    const header = `${name}${platform ? `（${platform}${shopType ? `/${shopType}` : ''}）` : ''}`
-
-    const parts: string[] = [header]
-    if (value.price != null) parts.push(`价格${formatPrimitive('price', value.price)}`)
-    if (value.originalPrice != null) parts.push(`原价${formatPrimitive('originalPrice', value.originalPrice)}`)
-    if (value.salesVolumeHint != null) parts.push(`销量提示：${toNaturalChinese(value.salesVolumeHint)}`)
-    if (value.promotionTag != null) parts.push(`促销：${toNaturalChinese(value.promotionTag)}`)
-    return parts.join('，')
-  }
-
-  const keyMap: Record<string, string> = {
-    competitorName: '竞品',
-    sourcePlatform: '平台',
-    shopType: '店铺类型',
-    promotionTag: '促销信息',
-    salesVolumeHint: '销量提示',
-    marketScore: '市场评分',
-    riskLevel: '风险等级'
-  }
-
-  return Object.entries(value)
-    .filter(([, v]) => v !== null && v !== undefined)
-    .map(([k, v]) => `${keyMap[k] || k}：${formatPrimitive(k, v)}`)
-    .join('，')
-}
-
-const formatEvidenceValue = (label: unknown, value: unknown): string => {
-  if (value == null) return '-'
-
-  if (Array.isArray(value)) {
-    if (value.length === 0) return '暂无数据'
-    const lines = value.map((item) => {
-      if (item && typeof item === 'object') {
-        return formatObjectLine(item as Record<string, unknown>)
-      }
-      return toNaturalChinese(item)
-    })
-    const joined = lines.join('；')
-    if (String(label || '').includes('竞品摘要')) {
-      return `共 ${value.length} 条：${joined}`
-    }
-    return joined
-  }
-
-  if (value && typeof value === 'object') {
-    return formatObjectLine(value as Record<string, unknown>)
-  }
-
-  return toNaturalChinese(value)
-}
-
-const getSuggestionLines = (code: PricingAgentCode, suggestion?: Record<string, unknown>) => {
-  if (!suggestion || Object.keys(suggestion).length === 0) {
-    return ['暂无建议内容']
-  }
-
-  const lines: string[] = []
-
-  const priceRange = suggestion.priceRange
-  if (priceRange && typeof priceRange === 'object') {
-    const range = priceRange as Record<string, unknown>
-    const min = toNumber(range.min)
-    const max = toNumber(range.max)
-    if (min != null && max != null) {
-      lines.push(`建议价格区间：${formatCurrency(min)} ~ ${formatCurrency(max)}`)
-    }
-  }
-
-  if (code === 'DATA_ANALYSIS') {
-    const recommendedPrice = toNumber(suggestion.recommendedPrice)
-    if (recommendedPrice != null) lines.push(`建议定价：${formatCurrency(recommendedPrice)}`)
-    const expectedSales = toNumber(suggestion.expectedSales)
-    if (expectedSales != null) lines.push(`预期销量：${expectedSales}`)
-    const expectedProfit = toNumber(suggestion.expectedProfit)
-    if (expectedProfit != null) lines.push(`预期利润：${formatCurrency(expectedProfit)}`)
-    const expectedProfitRate = toNumber(suggestion.expectedProfitRate)
-    if (expectedProfitRate != null) lines.push(`预期利润率：${(expectedProfitRate * 100).toFixed(2)}%`)
-  }
-
-  if (code === 'MARKET_INTEL') {
-    const recommendedPrice = toNumber(suggestion.recommendedPrice)
-    if (recommendedPrice != null) lines.push(`建议定价：${formatCurrency(recommendedPrice)}`)
-    const marketScore = toNumber(suggestion.marketScore)
-    if (marketScore != null) lines.push(`市场接受度评分：${marketScore.toFixed(1)}`)
-  }
-
-  if (code === 'RISK_CONTROL') {
-    const recommendedPrice = toNumber(suggestion.recommendedPrice)
-    if (recommendedPrice != null) lines.push(`风控建议价：${formatCurrency(recommendedPrice)}`)
-    if (typeof suggestion.pass === 'boolean') lines.push(`是否自动通过：${formatBoolean(suggestion.pass)}`)
-    if (suggestion.riskLevel != null) lines.push(`风险等级：${toNaturalChinese(suggestion.riskLevel)}`)
-    if (suggestion.action != null) {
-      lines.push(`建议动作：${toNaturalChinese(suggestion.action)}`)
-    }
-  }
-
-  if (code === 'MANAGER_COORDINATOR') {
-    const finalPrice = toNumber(suggestion.finalPrice)
-    if (finalPrice != null) lines.push(`最终建议价：${formatCurrency(finalPrice)}`)
-    const expectedSales = toNumber(suggestion.expectedSales)
-    if (expectedSales != null) lines.push(`预期销量：${expectedSales}`)
-    const expectedProfit = toNumber(suggestion.expectedProfit)
-    if (expectedProfit != null) lines.push(`预期利润：${formatCurrency(expectedProfit)}`)
-    if (suggestion.strategy != null) lines.push(`执行策略：${toNaturalChinese(suggestion.strategy)}`)
-  }
-
-  if (suggestion.summary != null) {
-    lines.push(`建议说明：${toNaturalChinese(suggestion.summary)}`)
-  }
-
-  return lines.length > 0 ? lines : ['暂无建议内容']
+  return sharedFormatCurrency(value, { fallbackText: '-' })
 }
 
 const formatSignedCurrency = (value?: number | string | null) => {
-  const numeric = Number(value || 0)
-  return `${numeric >= 0 ? '+' : '-'}¥${Math.abs(numeric).toFixed(2)}`
+  return sharedFormatSignedCurrency(value, { fallbackText: '-' })
 }
 
 const applyPrice = async (row: DecisionComparisonItem) => {
@@ -1102,7 +938,7 @@ const applyPrice = async (row: DecisionComparisonItem) => {
 
   try {
     await ElMessageBox.confirm(
-      `确认将商品“${row.productTitle}”的售价更新为 ${formatCurrency(row.suggestedPrice as number)} 吗？`,
+      createApplyDecisionConfirmMessage(row.productTitle, row.suggestedPrice as number),
       '应用价格建议',
       {
         type: 'warning',

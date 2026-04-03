@@ -1,5 +1,6 @@
 import axios from 'axios'
 import request from './request'
+import { getAuthToken } from '../utils/authSession'
 
 export type ImportDataType = 'AUTO' | 'PRODUCT_BASE' | 'PRODUCT_SKU' | 'PRODUCT_DAILY_METRIC' | 'TRAFFIC_PROMO_DAILY'
 
@@ -125,7 +126,7 @@ export const downloadTemplate = (dataType: Exclude<ImportDataType, 'AUTO'>) => {
 }
 
 export const downloadMockExcelBundle = (data: MockExcelExportDTO) => {
-  const token = localStorage.getItem('token')
+  const token = getAuthToken()
   return axios.post('/api/products/mock-export', data, {
     responseType: 'blob',
     timeout: 60000,

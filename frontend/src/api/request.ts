@@ -1,5 +1,6 @@
 import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
+import { clearAuthSession, getAuthToken } from '../utils/authSession'
 
 export interface ApiResponse<T = any> {
   code: number
@@ -23,11 +24,11 @@ const service = axios.create({
 
 service.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token')
+    const token = getAuthToken()
     if (token) {
       config.headers = {
         ...(config.headers || {}),
-        'Authorization': `Bearer ${token}`
+        Authorization: `Bearer ${token}`
       } as any
     }
     return config
@@ -42,9 +43,7 @@ service.interceptors.response.use(
       switch (error.response.status) {
         case 401:
           ElMessage.error('登录状态无效，请重新登录')
-          localStorage.removeItem('token')
-          localStorage.removeItem('username')
-          localStorage.removeItem('isAdmin')
+          clearAuthSession()
           window.location.href = '/login'
           break
         case 403:

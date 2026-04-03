@@ -111,6 +111,7 @@ import { computed, reactive, ref } from 'vue'
 import { Download } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { downloadMockExcelBundle, type MockExcelExportDTO } from '../api/product'
+import { resolveRequestErrorMessage } from '../utils/error'
 
 type GeneratorForm = Required<MockExcelExportDTO>
 
@@ -167,20 +168,6 @@ const resolveFileName = (contentDisposition?: string) => {
   return `mock_excel_bundle_${Date.now()}.zip`
 }
 
-const resolveErrorMessage = async (error: any) => {
-  const raw = error?.response?.data
-  if (raw instanceof Blob) {
-    try {
-      const text = await raw.text()
-      const parsed = JSON.parse(text)
-      return parsed?.message || parsed?.error || '下载失败'
-    } catch {
-      return '下载失败'
-    }
-  }
-  return error?.response?.data?.message || error?.message || '下载失败'
-}
-
 const handleDownload = async () => {
   if (countError.value) {
     ElMessage.warning(countError.value)
@@ -210,7 +197,7 @@ const handleDownload = async () => {
     window.URL.revokeObjectURL(url)
     ElMessage.success('模拟 Excel 已开始下载')
   } catch (error: any) {
-    ElMessage.error(await resolveErrorMessage(error))
+    ElMessage.error(await resolveRequestErrorMessage(error, '下载失败'))
   } finally {
     downloading.value = false
   }

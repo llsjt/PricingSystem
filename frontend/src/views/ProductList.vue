@@ -463,7 +463,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import {
   addProductManual,
   batchDeleteProducts,
@@ -478,6 +478,23 @@ import {
 } from '../api/product'
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
 import ProductTrendDrawer from '../components/ProductTrendDrawer.vue'
+import { useViewport } from '../composables/useViewport'
+import { resolveRequestErrorMessage } from '../utils/error'
+import { formatCount, formatCurrency as sharedFormatCurrency, formatPercent as sharedFormatPercent } from '../utils/formatters'
+
+interface ProductFormModel {
+  externalProductId: string
+  productName: string
+  categoryName: string
+  costPrice: number
+  salePrice: number
+  stock: number
+  monthlySales: number
+  conversionRate: number
+  status: string
+}
+
+const { width } = useViewport()
 
 const loading = ref(false)
 const tableData = ref<ProductListVO[]>([])
@@ -494,7 +511,6 @@ const trafficPromos = ref<TrafficPromoDailyVO[]>([])
 const formRef = ref<FormInstance>()
 const tableRef = ref<any>(null)
 const trendDrawerRef = ref<InstanceType<typeof ProductTrendDrawer>>()
-const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1440)
 
 const queryParams = reactive({
   page: 1,
@@ -507,7 +523,7 @@ const filters = reactive({
   platform: 'ALL'
 })
 
-const form = reactive({
+const createDefaultForm = (): ProductFormModel => ({
   externalProductId: '',
   productName: '',
   categoryName: '',
@@ -519,36 +535,37 @@ const form = reactive({
   status: 'ON_SALE'
 })
 
+const form = reactive(createDefaultForm())
+
 const rules = {
   productName: [{ required: true, message: '请输入商品名称', trigger: 'blur' }],
   costPrice: [{ required: true, message: '请输入成本价', trigger: 'blur' }],
   salePrice: [{ required: true, message: '请输入当前售价', trigger: 'blur' }]
 }
 
-const isMobile = computed(() => viewportWidth.value <= 768)
-const isVeryNarrowDesktop = computed(() => viewportWidth.value <= 1024)
+const isMobile = computed(() => width.value <= 768)
+const isVeryNarrowDesktop = computed(() => width.value <= 1024)
 
 const platformOptions = computed(() => {
   const defaults = ['淘宝', '天猫', '京东', '拼多多', '抖音']
-  const values = new Set<string>(defaults)
+  const values = new Set(defaults)
   tableData.value.forEach((row) => {
     if (row.platform) values.add(row.platform)
   })
   return Array.from(values)
 })
 
-const displayData = computed(() => {
-  return tableData.value.filter((row) => {
+const displayData = computed(() =>
+  tableData.value.filter((row) => {
     if (filters.status !== 'ALL' && row.status !== filters.status) {
       return false
     }
     return true
   })
-})
+)
 
-const formatCurrency = (value?: number | null) => `¥${Number(value || 0).toFixed(2)}`
-const formatPercent = (value?: number | null) => `${(Number(value || 0) * 100).toFixed(2)}%`
-const formatCount = (value?: number | null) => Number(value || 0).toLocaleString('zh-CN')
+const formatCurrency = (value?: number | null) => sharedFormatCurrency(value)
+const formatPercent = (value?: number | null) => sharedFormatPercent(value)
 const formatStatusText = (status?: string) => (status === 'ON_SALE' ? '销售中' : status || '-')
 const average = (sum: number, count: number) => (count > 0 ? sum / count : 0)
 const calcRate = (numerator?: number | null, denominator?: number | null) => {
@@ -558,6 +575,7 @@ const calcRate = (numerator?: number | null, denominator?: number | null) => {
 }
 const calcGrossProfit = (salePrice?: number | null, costPrice?: number | null) =>
   Number(salePrice || 0) - Number(costPrice || 0)
+
 const dailySummary = computed(() => {
   const rows = dailyMetrics.value
   const totalVisitors = rows.reduce((sum, row) => sum + Number(row.visitorCount || 0), 0)
@@ -636,15 +654,7 @@ watch(
 )
 
 const resetForm = () => {
-  form.externalProductId = ''
-  form.productName = ''
-  form.categoryName = ''
-  form.costPrice = 0
-  form.salePrice = 0
-  form.stock = 0
-  form.monthlySales = 120
-  form.conversionRate = 0.04
-  form.status = 'ON_SALE'
+  Object.assign(form, createDefaultForm())
 }
 
 const handleSearch = async () => {
@@ -663,8 +673,8 @@ const handleSearch = async () => {
       return
     }
     ElMessage.error(res?.message || '加载商品失败')
-  } catch {
-    ElMessage.error('网络异常，无法加载商品')
+  } catch (error) {
+    ElMessage.error(await resolveRequestErrorMessage(error, '加载商品失败'))
   } finally {
     loading.value = false
   }
@@ -681,6 +691,18 @@ const handleSelectionChange = (selection: ProductListVO[]) => {
   selectedIds.value = selection.map((item) => item.id)
 }
 
+const confirmBatchDelete = async () => {
+  await ElMessageBox.confirm(
+    '确定删除已选择的 ' + selectedIds.value.length + ' 个商品吗？此操作不可恢复。',
+    '批量删除确认',
+    {
+      confirmButtonText: '确认删除',
+      cancelButtonText: '取消',
+      type: 'warning'
+    }
+  )
+}
+
 const handleBatchDelete = async () => {
   if (selectedIds.value.length === 0) {
     ElMessage.warning('请先选择要删除的商品')
@@ -688,16 +710,7 @@ const handleBatchDelete = async () => {
   }
 
   try {
-    await ElMessageBox.confirm(
-      `确定删除已选择的 ${selectedIds.value.length} 个商品吗？此操作不可恢复。`,
-      '批量删除确认',
-      {
-        confirmButtonText: '确认删除',
-        cancelButtonText: '取消',
-        type: 'warning'
-      }
-    )
-
+    await confirmBatchDelete()
     loading.value = true
     const res: any = await batchDeleteProducts(selectedIds.value)
     if (res?.code === 200) {
@@ -706,9 +719,9 @@ const handleBatchDelete = async () => {
       return
     }
     ElMessage.error(res?.message || '批量删除失败')
-  } catch (error: any) {
+  } catch (error) {
     if (error !== 'cancel') {
-      ElMessage.error('批量删除失败')
+      ElMessage.error(await resolveRequestErrorMessage(error, '批量删除失败'))
     }
   } finally {
     loading.value = false
@@ -735,8 +748,8 @@ const submitProduct = async () => {
         return
       }
       ElMessage.error(res?.message || '商品新增失败')
-    } catch {
-      ElMessage.error('提交失败，请稍后重试')
+    } catch (error) {
+      ElMessage.error(await resolveRequestErrorMessage(error, '提交失败，请稍后重试'))
     }
   })
 }
@@ -757,8 +770,8 @@ const loadDetailData = async (productId: number) => {
     dailyMetrics.value = dailyRes?.code === 200 ? dailyRes.data || [] : []
     skus.value = skuRes?.code === 200 ? skuRes.data || [] : []
     trafficPromos.value = trafficRes?.code === 200 ? trafficRes.data || [] : []
-  } catch {
-    ElMessage.error('加载商品明细数据失败')
+  } catch (error) {
+    ElMessage.error(await resolveRequestErrorMessage(error, '加载商品明细数据失败'))
     dailyMetrics.value = []
     skus.value = []
     trafficPromos.value = []
@@ -774,23 +787,9 @@ const openDetailDrawer = async (row: ProductListVO) => {
   await loadDetailData(row.id)
 }
 
-const handleResize = () => {
-  viewportWidth.value = window.innerWidth
-}
-
-onMounted(() => {
-  if (typeof window !== 'undefined') {
-    window.addEventListener('resize', handleResize)
-  }
-  handleSearch()
-})
-
-onBeforeUnmount(() => {
-  if (typeof window !== 'undefined') {
-    window.removeEventListener('resize', handleResize)
-  }
-})
+handleSearch()
 </script>
+
 
 <style scoped>
 .product-card {

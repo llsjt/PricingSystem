@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="page-shell data-page">
     <el-tabs v-model="activeTab" class="data-tabs">
       <el-tab-pane name="products">
@@ -23,15 +23,15 @@
           <div class="section-head">
             <div class="section-title">
               <h2>Excel 批量导入</h2>
-              <p>支持导入 4 类电商平台 Excel 模板：商品基础信息、商品SKU、商品经营日报、流量推广日报。</p>
-              <p>当前导入模式为自动识别 Excel（根据表头自动匹配模板类型）。</p>
+              <p>支持导入 4 类电商平台 Excel 模板：商品基础信息、商品 SKU、商品经营日报、流量推广日报。</p>
+              <p>当前导入模式为自动识别 Excel，会根据表头自动匹配模板类型。</p>
             </div>
           </div>
 
           <div class="template-brief">
             <span>可导入模板：</span>
             <el-tag size="small" effect="plain">商品基础信息</el-tag>
-            <el-tag size="small" effect="plain">商品SKU</el-tag>
+            <el-tag size="small" effect="plain">商品 SKU</el-tag>
             <el-tag size="small" effect="plain">商品经营日报</el-tag>
             <el-tag size="small" effect="plain">流量推广日报</el-tag>
           </div>
@@ -64,7 +64,9 @@
                 <div class="upload-desc">
                   {{
                     selectedPlatform
-                      ? `当前平台：${selectedPlatform}；${autoDetect ? '系统会根据表头自动识别导入类型' : `当前将按“${selectedTypeInfo.title}”解析`}`
+                      ? (autoDetect
+                        ? `当前平台：${selectedPlatform}，系统会根据表头自动识别导入类型`
+                        : `当前平台：${selectedPlatform}，当前将按“${selectedTypeInfo.title}”解析`)
                       : '请先选择电商平台，再上传 Excel'
                   }}
                 </div>
@@ -141,6 +143,7 @@ import MockExcelGeneratorPanel from '../components/MockExcelGeneratorPanel.vue'
 import ProductList from './ProductList.vue'
 import { downloadTemplate, type ImportDataType, type ImportResultVO } from '../api/product'
 import request from '../api/request'
+import { resolveRequestErrorMessage } from '../utils/error'
 
 interface ImportTypeOption {
   code: Exclude<ImportDataType, 'AUTO'>
@@ -153,31 +156,31 @@ interface ImportTypeOption {
 const importTypes: ImportTypeOption[] = [
   {
     code: 'PRODUCT_BASE',
-    title: '商品基础信息',
+    title: '\u5546\u54c1\u57fa\u7840\u4fe1\u606f',
     table: 'product',
-    description: '同步电商平台商品主档，写入商品 ID、标题、类目、售价、成本价、库存和状态。',
-    fields: ['商品ID', '商品标题', '商品类目', '当前售价', '库存']
+    description: '\u7528\u4e8e\u5bfc\u5165\u5546\u54c1\u4e3b\u6863\u4fe1\u606f\u3002\u5546\u54c1 ID \u9700\u8981\u4e0e\u5176\u4ed6\u6a21\u677f\u4fdd\u6301\u4e00\u81f4\uff0c\u4fbf\u4e8e\u8de8\u8868\u5173\u8054\u3002',
+    fields: ['\u5546\u54c1ID', '\u5546\u54c1\u6807\u9898', '\u5546\u54c1\u7c7b\u76ee', '\u5f53\u524d\u552e\u4ef7', '\u5e93\u5b58']
   },
   {
     code: 'PRODUCT_SKU',
-    title: '商品SKU',
+    title: '\u5546\u54c1SKU',
     table: 'product_sku',
-    description: '导入商品 SKU 明细，按商品维度写入 SKU 编号、规格属性、价格和库存。',
-    fields: ['商品ID', 'SKU ID', 'SKU属性', 'SKU售价', 'SKU库存']
+    description: '\u7528\u4e8e\u5bfc\u5165 SKU \u660e\u7ec6\u3002\u6bcf\u6761\u8bb0\u5f55\u9700\u8981\u5305\u542b SKU ID\uff0c\u5e76\u901a\u8fc7\u5546\u54c1 ID \u5173\u8054\u5230\u5bf9\u5e94\u5546\u54c1\u3002',
+    fields: ['\u5546\u54c1ID', 'SKU ID', 'SKU\u540d\u79f0', 'SKU\u552e\u4ef7', 'SKU\u5e93\u5b58']
   },
   {
     code: 'PRODUCT_DAILY_METRIC',
-    title: '商品经营日报',
+    title: '\u5546\u54c1\u65e5\u6307\u6807',
     table: 'product_daily_metric',
-    description: '导入商品维度的日经营指标，沉淀访客、加购、支付件数、支付金额和转化率。',
-    fields: ['统计日期', '商品ID', '访客数', '支付件数', '支付金额']
+    description: '\u7528\u4e8e\u5bfc\u5165\u5546\u54c1\u6bcf\u65e5\u7ecf\u8425\u6307\u6807\uff0c\u9002\u5408\u6a21\u62df\u5e73\u53f0\u5bfc\u51fa\u7684\u65e5\u62a5\u6570\u636e\u3002',
+    fields: ['\u7edf\u8ba1\u65e5\u671f', '\u5546\u54c1ID', '\u8bbf\u5ba2\u6570', '\u6210\u4ea4\u91d1\u989d', '\u652f\u4ed8\u4ef6\u6570']
   },
   {
     code: 'TRAFFIC_PROMO_DAILY',
-    title: '流量推广日报',
+    title: '\u6d41\u91cf\u4e0e\u63a8\u5e7f\u65e5\u6307\u6807',
     table: 'traffic_promo_daily',
-    description: '导入渠道曝光、点击、花费、支付金额、ROI 等推广数据。',
-    fields: ['统计日期', '流量来源', '展现量', '点击量', '花费']
+    description: '\u7528\u4e8e\u5bfc\u5165\u6d41\u91cf\u6765\u6e90\u4e0e\u63a8\u5e7f\u6548\u679c\u6570\u636e\uff0c\u652f\u6301\u66dd\u5149\u3001\u70b9\u51fb\u3001\u82b1\u8d39\u3001ROI \u7b49\u6307\u6807\u3002',
+    fields: ['\u7edf\u8ba1\u65e5\u671f', '\u6d41\u91cf\u6765\u6e90', '\u66dd\u5149\u91cf', '\u70b9\u51fb\u91cf', 'ROI']
   }
 ]
 
@@ -185,17 +188,12 @@ const activeTab = ref('products')
 const autoDetect = ref(true)
 const selectedType = ref<Exclude<ImportDataType, 'AUTO'>>('PRODUCT_BASE')
 const selectedPlatform = ref('')
-const platformOptions = ['淘宝', '天猫', '京东', '拼多多', '抖音']
+const platformOptions = ['\u6dd8\u5b9d', '\u5929\u732b', '\u4eac\u4e1c', '\u62fc\u591a\u591a', '\u6296\u5e97']
 const importResult = ref<ImportResultVO | null>(null)
 const productListRef = ref<any>(null)
 
-const selectedTypeInfo = computed(() => {
-  return importTypes.find((item) => item.code === selectedType.value) || importTypes[0]
-})
-
-const requestType = computed<ImportDataType>(() => {
-  return autoDetect.value ? 'AUTO' : selectedType.value
-})
+const selectedTypeInfo = computed(() => importTypes.find((item) => item.code === selectedType.value) || importTypes[0])
+const requestType = computed<ImportDataType>(() => (autoDetect.value ? 'AUTO' : selectedType.value))
 
 const importAlertType = computed(() => {
   if (!importResult.value) return 'info'
@@ -206,38 +204,35 @@ const importAlertType = computed(() => {
 
 const importAlertTitle = computed(() => {
   if (!importResult.value) return ''
-  if (importResult.value.uploadStatus === 'SUCCESS') return '导入成功'
-  if (importResult.value.uploadStatus === 'PARTIAL_SUCCESS') return '部分导入成功'
-  return '导入失败'
+  if (importResult.value.uploadStatus === 'SUCCESS') return '\u5bfc\u5165\u6210\u529f'
+  if (importResult.value.uploadStatus === 'PARTIAL_SUCCESS') return '\u90e8\u5206\u5bfc\u5165\u6210\u529f'
+  return '\u5bfc\u5165\u5931\u8d25'
 })
 
-const resolveErrorMessage = (error: any) => {
-  return error?.response?.data?.message || error?.message || '网络异常'
-}
-
-const createUploadError = (message: string) => {
-  return Object.assign(new Error(message), {
-    name: 'UploadAjaxError',
-    status: 500,
-    method: 'POST',
-    url: '/products/import'
-  })
-}
+const createUploadError = (message: string) => Object.assign(new Error(message), {
+  name: 'UploadAjaxError',
+  status: 500,
+  method: 'POST',
+  url: '/products/import'
+})
 
 const beforeUpload: UploadProps['beforeUpload'] = (rawFile) => {
   if (!selectedPlatform.value) {
-    ElMessage.warning('请先选择电商平台')
+    ElMessage.warning('\u8bf7\u5148\u9009\u62e9\u7535\u5546\u5e73\u53f0')
     return false
   }
+
   const name = rawFile.name.toLowerCase()
   if (!name.endsWith('.xlsx') && !name.endsWith('.xls')) {
-    ElMessage.error('请上传 Excel 文件（.xls / .xlsx）')
+    ElMessage.error('\u8bf7\u4e0a\u4f20 Excel \u6587\u4ef6\uff08.xls / .xlsx\uff09')
     return false
   }
+
   if (rawFile.size / 1024 / 1024 > 10) {
-    ElMessage.error('文件大小不能超过 10MB')
+    ElMessage.error('\u6587\u4ef6\u5927\u5c0f\u4e0d\u80fd\u8d85\u8fc7 10MB')
     return false
   }
+
   return true
 }
 
@@ -253,20 +248,20 @@ const handleCustomUpload: UploadProps['httpRequest'] = async (options) => {
 
     if (response.code === 200) {
       importResult.value = response.data
-      ElMessage.success('导入完成')
+      ElMessage.success('\u5bfc\u5165\u6210\u529f')
       productListRef.value?.refreshList?.()
       options.onSuccess?.(response.data)
       return
     }
 
     importResult.value = null
-    const message = response.message || '导入失败'
+    const message = response.message || '\u5bfc\u5165\u5931\u8d25'
     ElMessage.error(message)
     options.onError?.(createUploadError(message))
-  } catch (error: any) {
+  } catch (error) {
     importResult.value = null
-    const message = resolveErrorMessage(error)
-    ElMessage.error(`上传失败：${message}`)
+    const message = await resolveRequestErrorMessage(error)
+    ElMessage.error(`\u5bfc\u5165\u5931\u8d25\uff1a${message}`)
     options.onError?.(createUploadError(message))
   }
 }
@@ -281,21 +276,23 @@ const handleDownloadTemplate = async (type: Exclude<ImportDataType, 'AUTO'> = se
     const link = document.createElement('a')
     const current = importTypes.find((item) => item.code === type)
     link.href = url
-    link.download = `${current?.title || '电商平台导入'}模板.xlsx`
+    link.download = `${current?.title || '\u5bfc\u5165\u6a21\u677f'}\u6a21\u677f.xlsx`
     link.click()
     window.URL.revokeObjectURL(url)
-    ElMessage.success('模板下载成功')
-  } catch (error: any) {
-    ElMessage.error(`模板下载失败：${resolveErrorMessage(error)}`)
+    ElMessage.success('\u6a21\u677f\u4e0b\u8f7d\u6210\u529f')
+  } catch (error) {
+    const message = await resolveRequestErrorMessage(error)
+    ElMessage.error(`\u6a21\u677f\u4e0b\u8f7d\u5931\u8d25\uff1a${message}`)
   }
 }
 
 const formatDateRange = (start?: string, end?: string) => {
-  if (!start && !end) return '无日期字段'
+  if (!start && !end) return '\u672a\u63d0\u4f9b'
   if (start && end) return `${start} ~ ${end}`
   return start || end || '-'
 }
 </script>
+
 
 <style scoped>
 .data-page {
@@ -504,3 +501,4 @@ const formatDateRange = (start?: string, end?: string) => {
   }
 }
 </style>
+
