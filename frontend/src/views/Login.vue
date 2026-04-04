@@ -38,10 +38,12 @@ import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { login } from '../api/user'
 import { useUserStore } from '../stores/user'
+import { useShopStore } from '../stores/shop'
 import { resolveRequestErrorMessage } from '../utils/error'
 
 const router = useRouter()
 const userStore = useUserStore()
+const shopStore = useShopStore()
 const loginFormRef = ref<FormInstance>()
 const loading = ref(false)
 
@@ -69,6 +71,7 @@ const handleLogin = async () => {
     try {
       const res: any = await login(loginForm)
       if (res.code === 200) {
+        shopStore.resetState()
         userStore.applySession({
           token: res.data.token,
           username: res.data.username,

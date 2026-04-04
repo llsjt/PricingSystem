@@ -39,7 +39,9 @@ const cacheNames = computed(() =>
 )
 
 const shopStore = useShopStore()
-const showShopGuard = computed(() => shopStore.loaded && shopStore.shops.length === 0 && route.path !== '/login')
+const showShopGuard = computed(
+  () => shopStore.loadSucceeded && !shopStore.loading && shopStore.shops.length === 0 && route.path !== '/login'
+)
 const shopForm = ref<ShopCreateDTO>({ shopName: '', platform: '', sellerNick: '' })
 const shopFormLoading = ref(false)
 
@@ -57,7 +59,7 @@ const handleCreateFirstShop = async () => {
     const res: any = await createShop(shopForm.value)
     if (res.code === 200) {
       ElMessage.success('店铺创建成功')
-      await shopStore.fetchShops()
+      await shopStore.fetchShops(true)
     } else {
       ElMessage.error(res.message || '创建失败')
     }
@@ -135,6 +137,7 @@ const handleCommand = (command: string) => {
   }
 
   if (command === 'logout') {
+    shopStore.resetState()
     userStore.clearSession()
     ElMessage.success('\u5df2\u9000\u51fa\u767b\u5f55')
     router.push('/login')
@@ -173,9 +176,19 @@ watch(
   { deep: true }
 )
 
+watch(
+  () => shopStore.loadError,
+  (message) => {
+    if (!message || route.path === '/login') {
+      return
+    }
+    ElMessage.error(message)
+  }
+)
+
 onMounted(() => {
   syncUserState()
-  shopStore.fetchShops()
+  void shopStore.fetchShops()
   window.addEventListener('auth-session-changed', syncUserState)
   ensureCurrentTab()
 })

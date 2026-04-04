@@ -63,13 +63,15 @@
           <div class="import-layout">
             <div class="import-main">
               <el-upload
+                ref="uploadRef"
                 class="upload-box"
                 drag
                 :http-request="handleCustomUpload"
                 :before-upload="beforeUpload"
                 :show-file-list="false"
                 accept=".xlsx,.xls"
-                :limit="1"
+                multiple
+                :disabled="batchProcessing || preparingUploads > 0"
               >
                 <el-icon class="upload-icon"><UploadFilled /></el-icon>
                 <div class="upload-title">上传电商平台导出的 Excel</div>
@@ -82,53 +84,92 @@
                       : '请先选择电商平台，再上传 Excel'
                   }}
                 </div>
-                <div class="upload-hint">支持 `.xlsx` 和 `.xls`，单文件不超过 10MB</div>
+                <div class="upload-hint">
+                  支持一次选择多个 `.xlsx` 和 `.xls`，系统会自动按模板类型排序并逐个导入
+                </div>
               </el-upload>
             </div>
           </div>
 
           <el-alert
-            v-if="importResult"
-            :title="importAlertTitle"
-            :type="importAlertType"
-            :description="importResult.summary"
+            v-if="hasBatchResults"
+            :title="batchAlertTitle"
+            :type="batchAlertType"
+            :description="batchAlertDescription"
             show-icon
             class="upload-feedback"
           />
 
-          <div v-if="importResult" class="result-card">
+          <div v-if="hasBatchResults" class="result-card">
             <div class="result-grid">
               <div class="result-item">
-                <span>导入类型</span>
-                <strong>{{ importResult.dataTypeLabel }}</strong>
+                <span>批次文件数</span>
+                <strong>{{ batchSummary.totalFiles }}</strong>
               </div>
               <div class="result-item">
-                <span>目标表</span>
-                <strong>{{ importResult.targetTable }}</strong>
+                <span>成功文件</span>
+                <strong>{{ batchSummary.successFiles }}</strong>
               </div>
               <div class="result-item">
-                <span>总行数</span>
-                <strong>{{ importResult.rowCount }}</strong>
+                <span>失败文件</span>
+                <strong>{{ batchSummary.failedFiles }}</strong>
               </div>
               <div class="result-item">
-                <span>成功 / 失败</span>
-                <strong>{{ importResult.successCount }} / {{ importResult.failCount }}</strong>
+                <span>累计总行数</span>
+                <strong>{{ batchSummary.totalRows }}</strong>
               </div>
               <div class="result-item">
-                <span>时间范围</span>
-                <strong>{{ formatDateRange(importResult.startDate, importResult.endDate) }}</strong>
+                <span>累计成功 / 失败行</span>
+                <strong>{{ batchSummary.successRows }} / {{ batchSummary.failedRows }}</strong>
               </div>
               <div class="result-item">
-                <span>识别方式</span>
-                <strong>{{ importResult.autoDetected ? '表头自动识别' : '手动指定类型' }}</strong>
+                <span>部分成功文件</span>
+                <strong>{{ batchSummary.partialFiles }}</strong>
               </div>
             </div>
 
-            <div v-if="importResult.errors?.length" class="error-box">
-              <strong>部分失败明细</strong>
-              <ul>
-                <li v-for="item in importResult.errors" :key="item">{{ item }}</li>
-              </ul>
+            <div class="file-result-list">
+              <article v-for="item in sortedBatchFiles" :key="item.uid" class="file-result-card">
+                <div class="file-result-head">
+                  <div class="file-result-title">
+                    <strong>{{ item.fileName }}</strong>
+                    <span>{{ resolveFileTypeLabel(item) }}</span>
+                  </div>
+                  <el-tag size="small" :type="resolveFileStatusTagType(item)">{{ resolveFileStatusText(item) }}</el-tag>
+                </div>
+
+                <div class="result-grid file-result-grid">
+                  <div class="result-item">
+                    <span>识别类型</span>
+                    <strong>{{ resolveFileTypeLabel(item) }}</strong>
+                  </div>
+                  <div class="result-item">
+                    <span>目标表</span>
+                    <strong>{{ resolveFileTargetTable(item) }}</strong>
+                  </div>
+                  <div class="result-item">
+                    <span>总行数</span>
+                    <strong>{{ item.result?.rowCount ?? '-' }}</strong>
+                  </div>
+                  <div class="result-item">
+                    <span>成功 / 失败</span>
+                    <strong>{{ item.result ? `${item.result.successCount} / ${item.result.failCount}` : '-' }}</strong>
+                  </div>
+                  <div class="result-item">
+                    <span>时间范围</span>
+                    <strong>{{ item.result ? formatDateRange(item.result.startDate, item.result.endDate) : '-' }}</strong>
+                  </div>
+                  <div class="result-item">
+                    <span>识别方式</span>
+                    <strong>{{ resolveFileDetectMode(item) }}</strong>
+                  </div>
+                </div>
+
+                <div v-if="resolveFileErrorText(item)" class="error-box compact-error-box">
+                  <strong>错误摘要</strong>
+                  <p>{{ resolveFileErrorText(item) }}</p>
+                </div>
+              </article>
             </div>
           </div>
         </section>
@@ -150,13 +191,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { Document, Download, UploadFilled } from '@element-plus/icons-vue'
-import { ElMessage, type UploadProps } from 'element-plus'
+import { ElMessage, type UploadInstance, type UploadProps, type UploadRequestOptions } from 'element-plus'
 import MockExcelGeneratorPanel from '../components/MockExcelGeneratorPanel.vue'
 import ProductList from './ProductList.vue'
 import { downloadTemplate, type ImportDataType, type ImportResultVO } from '../api/product'
 import request from '../api/request'
 import { resolveRequestErrorMessage } from '../utils/error'
 import { useShopStore } from '../stores/shop'
+import {
+  detectImportTypeFromFile,
+  getImportDetectionRule,
+  type SupportedImportType
+} from '../utils/importDetection'
 
 interface ImportTypeOption {
   code: Exclude<ImportDataType, 'AUTO'>
@@ -197,6 +243,25 @@ const importTypes: ImportTypeOption[] = [
   }
 ]
 
+type FileImportStatus = 'detecting' | 'pending' | 'uploading' | 'success' | 'partial' | 'failed'
+
+interface ImportBatchFileItem {
+  uid: string
+  fileName: string
+  status: FileImportStatus
+  sequence: number
+  detectedType: SupportedImportType | null
+  detectError?: string
+  result?: ImportResultVO
+  errorMessage?: string
+  processingOrder?: number
+}
+
+interface QueuedUploadItem {
+  fileItem: ImportBatchFileItem
+  options: UploadRequestOptions
+}
+
 const shopStore = useShopStore()
 const activeTab = ref('products')
 const autoDetect = ref(true)
@@ -204,8 +269,16 @@ const selectedType = ref<Exclude<ImportDataType, 'AUTO'>>('PRODUCT_BASE')
 const selectedPlatform = ref('')
 const selectedShopId = ref<number | null>(null)
 const platformOptions = ['\u6dd8\u5b9d', '\u5929\u732b', '\u4eac\u4e1c', '\u62fc\u591a\u591a', '\u6296\u5e97']
-const importResult = ref<ImportResultVO | null>(null)
 const productListRef = ref<any>(null)
+const uploadRef = ref<UploadInstance>()
+const importBatchFiles = ref<ImportBatchFileItem[]>([])
+const queuedUploads = ref<QueuedUploadItem[]>([])
+const batchProcessing = ref(false)
+const preparingUploads = ref(0)
+const currentUploadIndex = ref(-1)
+const uploadSequence = ref(0)
+const processingSequence = ref(0)
+let queueTimer: number | undefined
 
 const filteredShops = computed(() => {
   if (!selectedPlatform.value) return shopStore.shops
@@ -218,19 +291,68 @@ onMounted(() => {
 
 const selectedTypeInfo = computed(() => importTypes.find((item) => item.code === selectedType.value) || importTypes[0])
 const requestType = computed<ImportDataType>(() => (autoDetect.value ? 'AUTO' : selectedType.value))
+const hasBatchResults = computed(() => importBatchFiles.value.length > 0)
+const completedFileStatuses: FileImportStatus[] = ['success', 'partial', 'failed']
+const sortedBatchFiles = computed(() =>
+  [...importBatchFiles.value].sort((left, right) => {
+    const leftOrder = left.processingOrder ?? Number.MAX_SAFE_INTEGER
+    const rightOrder = right.processingOrder ?? Number.MAX_SAFE_INTEGER
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder
+    }
+    return left.sequence - right.sequence
+  })
+)
+const batchSummary = computed(() => {
+  const successFiles = importBatchFiles.value.filter((item) => item.status === 'success').length
+  const partialFiles = importBatchFiles.value.filter((item) => item.status === 'partial').length
+  const failedFiles = importBatchFiles.value.filter((item) => item.status === 'failed').length
+  const totalRows = importBatchFiles.value.reduce((sum, item) => sum + (item.result?.rowCount ?? 0), 0)
+  const successRows = importBatchFiles.value.reduce((sum, item) => sum + (item.result?.successCount ?? 0), 0)
+  const failedRows = importBatchFiles.value.reduce((sum, item) => sum + (item.result?.failCount ?? 0), 0)
 
-const importAlertType = computed(() => {
-  if (!importResult.value) return 'info'
-  if (importResult.value.uploadStatus === 'SUCCESS') return 'success'
-  if (importResult.value.uploadStatus === 'PARTIAL_SUCCESS') return 'warning'
+  return {
+    totalFiles: importBatchFiles.value.length,
+    successFiles,
+    partialFiles,
+    failedFiles,
+    totalRows,
+    successRows,
+    failedRows
+  }
+})
+const batchAlertType = computed(() => {
+  if (!hasBatchResults.value) return 'info'
+  if (batchProcessing.value || preparingUploads.value > 0) return 'info'
+  if (batchSummary.value.failedFiles === 0) return 'success'
+  if (batchSummary.value.successFiles + batchSummary.value.partialFiles > 0) return 'warning'
   return 'error'
 })
+const batchAlertTitle = computed(() => {
+  if (!hasBatchResults.value) return ''
+  if (batchProcessing.value || preparingUploads.value > 0) return '\u6b63\u5728\u5904\u7406\u5bfc\u5165\u6279\u6b21'
+  if (batchSummary.value.failedFiles === 0) return '\u6279\u91cf\u5bfc\u5165\u6210\u529f'
+  if (batchSummary.value.successFiles + batchSummary.value.partialFiles > 0) return '\u6279\u91cf\u5bfc\u5165\u5df2\u5b8c\u6210\uff0c\u4f46\u90e8\u5206\u6587\u4ef6\u5931\u8d25'
+  return '\u6279\u91cf\u5bfc\u5165\u5931\u8d25'
+})
+const batchAlertDescription = computed(() => {
+  if (!hasBatchResults.value) return ''
 
-const importAlertTitle = computed(() => {
-  if (!importResult.value) return ''
-  if (importResult.value.uploadStatus === 'SUCCESS') return '\u5bfc\u5165\u6210\u529f'
-  if (importResult.value.uploadStatus === 'PARTIAL_SUCCESS') return '\u90e8\u5206\u5bfc\u5165\u6210\u529f'
-  return '\u5bfc\u5165\u5931\u8d25'
+  if (batchProcessing.value || preparingUploads.value > 0) {
+    const completedFiles = importBatchFiles.value.filter((item) => completedFileStatuses.includes(item.status)).length
+    const currentFileIndex = currentUploadIndex.value >= 0 ? currentUploadIndex.value + 1 : completedFiles + 1
+    return `\u5df2\u6536\u5230 ${batchSummary.value.totalFiles} \u4e2a\u6587\u4ef6\uff0c\u5f53\u524d\u6b63\u5728\u5904\u7406\u7b2c ${Math.min(currentFileIndex, Math.max(batchSummary.value.totalFiles, 1))} \u4e2a\u6587\u4ef6\u3002\u5355\u4e2a\u6587\u4ef6\u5bfc\u5165\u5931\u8d25\u65f6\uff0c\u7cfb\u7edf\u4f1a\u81ea\u52a8\u7ee7\u7eed\u5904\u7406\u540e\u7eed\u6587\u4ef6\u3002`
+  }
+
+  if (batchSummary.value.failedFiles === 0) {
+    return `\u5171\u5904\u7406 ${batchSummary.value.totalFiles} \u4e2a\u6587\u4ef6\uff0c\u6210\u529f ${batchSummary.value.successFiles + batchSummary.value.partialFiles} \u4e2a\uff0c\u7d2f\u8ba1\u5bfc\u5165 ${batchSummary.value.successRows} \u884c\u6709\u6548\u6570\u636e\u3002`
+  }
+
+  if (batchSummary.value.successFiles + batchSummary.value.partialFiles > 0) {
+    return `\u5171\u5904\u7406 ${batchSummary.value.totalFiles} \u4e2a\u6587\u4ef6\uff0c\u6210\u529f ${batchSummary.value.successFiles} \u4e2a\uff0c\u90e8\u5206\u6210\u529f ${batchSummary.value.partialFiles} \u4e2a\uff0c\u5931\u8d25 ${batchSummary.value.failedFiles} \u4e2a\u3002`
+  }
+
+  return `\u5171\u5904\u7406 ${batchSummary.value.totalFiles} \u4e2a\u6587\u4ef6\uff0c\u5168\u90e8\u5bfc\u5165\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5 Excel \u8868\u5934\u548c\u76ee\u6807\u5e97\u94fa\u914d\u7f6e\u540e\u91cd\u8bd5\u3002`
 })
 
 const createUploadError = (message: string) => Object.assign(new Error(message), {
@@ -264,7 +386,64 @@ const beforeUpload: UploadProps['beforeUpload'] = (rawFile) => {
   return true
 }
 
+const compareImportTypeOrder = (left: SupportedImportType | null, right: SupportedImportType | null) => {
+  const leftRule = getImportDetectionRule(left)
+  const rightRule = getImportDetectionRule(right)
+  const leftOrder = leftRule?.order ?? Number.MAX_SAFE_INTEGER
+  const rightOrder = rightRule?.order ?? Number.MAX_SAFE_INTEGER
+  return leftOrder - rightOrder
+}
+
+const scheduleQueueProcessing = () => {
+  if (queueTimer) {
+    window.clearTimeout(queueTimer)
+  }
+  queueTimer = window.setTimeout(() => {
+    queueTimer = undefined
+    void processUploadQueue()
+  }, 0)
+}
+
+const resolveLocalErrorMessage = (error: unknown) => {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+  return '\u65e0\u6cd5\u9884\u8bc6\u522b Excel \u7c7b\u578b'
+}
+
+const isImportResponseSuccessful = (result?: ImportResultVO) =>
+  result?.uploadStatus === 'SUCCESS' || result?.uploadStatus === 'PARTIAL_SUCCESS'
+
 const handleCustomUpload: UploadProps['httpRequest'] = async (options) => {
+  const sequence = uploadSequence.value++
+  const fileItem: ImportBatchFileItem = {
+    uid: `${Date.now()}-${sequence}`,
+    fileName: options.file.name,
+    status: 'detecting',
+    sequence,
+    detectedType: null
+  }
+
+  importBatchFiles.value.push(fileItem)
+  preparingUploads.value += 1
+
+  try {
+    fileItem.detectedType = await detectImportTypeFromFile(options.file)
+  } catch (error) {
+    fileItem.detectError = resolveLocalErrorMessage(error)
+  } finally {
+    fileItem.status = 'pending'
+    queuedUploads.value.push({
+      fileItem,
+      options: options as UploadRequestOptions
+    })
+    preparingUploads.value = Math.max(0, preparingUploads.value - 1)
+    scheduleQueueProcessing()
+  }
+}
+
+const importSingleFile = async (queuedItem: QueuedUploadItem) => {
+  const { fileItem, options } = queuedItem
   const formData = new FormData()
   formData.append('file', options.file)
 
@@ -274,23 +453,90 @@ const handleCustomUpload: UploadProps['httpRequest'] = async (options) => {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
 
-    if (response.code === 200) {
-      importResult.value = response.data
-      ElMessage.success('\u5bfc\u5165\u6210\u529f')
-      productListRef.value?.refreshList?.()
-      options.onSuccess?.(response.data)
+    if (response.code !== 200) {
+      const message = response.message || '\u5bfc\u5165\u5931\u8d25'
+      fileItem.errorMessage = message
+      fileItem.status = 'failed'
+      options.onError?.(createUploadError(message))
       return
     }
 
-    importResult.value = null
-    const message = response.message || '\u5bfc\u5165\u5931\u8d25'
-    ElMessage.error(message)
-    options.onError?.(createUploadError(message))
+    const result = response.data as ImportResultVO
+    fileItem.result = result
+    if (result.uploadStatus === 'SUCCESS') {
+      fileItem.status = 'success'
+    } else if (result.uploadStatus === 'PARTIAL_SUCCESS') {
+      fileItem.status = 'partial'
+    } else {
+      fileItem.status = 'failed'
+    }
+    options.onSuccess?.(result)
   } catch (error) {
-    importResult.value = null
     const message = await resolveRequestErrorMessage(error)
-    ElMessage.error(`\u5bfc\u5165\u5931\u8d25\uff1a${message}`)
+    fileItem.errorMessage = message
+    fileItem.status = 'failed'
     options.onError?.(createUploadError(message))
+  }
+}
+
+const processUploadQueue = async () => {
+  if (batchProcessing.value) {
+    return
+  }
+  if (preparingUploads.value > 0) {
+    scheduleQueueProcessing()
+    return
+  }
+  if (!queuedUploads.value.length) {
+    uploadRef.value?.clearFiles()
+    return
+  }
+
+  batchProcessing.value = true
+  const processedInCurrentRound: ImportBatchFileItem[] = []
+
+  try {
+    queuedUploads.value.sort((left, right) => {
+      const typeCompare = compareImportTypeOrder(left.fileItem.detectedType, right.fileItem.detectedType)
+      if (typeCompare !== 0) {
+        return typeCompare
+      }
+      return left.fileItem.sequence - right.fileItem.sequence
+    })
+
+    while (queuedUploads.value.length) {
+      const currentItem = queuedUploads.value.shift()
+      if (!currentItem) {
+        break
+      }
+
+      currentItem.fileItem.processingOrder = processingSequence.value++
+      currentItem.fileItem.status = 'uploading'
+      currentUploadIndex.value = processedInCurrentRound.length
+      await importSingleFile(currentItem)
+      processedInCurrentRound.push(currentItem.fileItem)
+    }
+  } finally {
+    batchProcessing.value = false
+    currentUploadIndex.value = -1
+    uploadRef.value?.clearFiles()
+
+    const successfulFiles = processedInCurrentRound.filter((item) => isImportResponseSuccessful(item.result))
+    if (successfulFiles.length > 0) {
+      productListRef.value?.refreshList?.()
+    }
+
+    if (processedInCurrentRound.length > 0) {
+      const successCount = successfulFiles.length
+      const failedCount = processedInCurrentRound.length - successCount
+      ElMessage({
+        type: failedCount === 0 ? 'success' : successCount > 0 ? 'warning' : 'error',
+        message:
+          failedCount === 0
+            ? `\u5df2\u5b8c\u6210 ${processedInCurrentRound.length} \u4e2a Excel \u6587\u4ef6\u5bfc\u5165`
+            : `\u5df2\u5b8c\u6210 ${processedInCurrentRound.length} \u4e2a Excel \u6587\u4ef6\u5bfc\u5165\uff0c\u6210\u529f ${successCount} \u4e2a\uff0c\u5931\u8d25 ${failedCount} \u4e2a`
+      })
+    }
   }
 }
 
@@ -318,6 +564,64 @@ const formatDateRange = (start?: string, end?: string) => {
   if (!start && !end) return '\u672a\u63d0\u4f9b'
   if (start && end) return `${start} ~ ${end}`
   return start || end || '-'
+}
+
+const resolveFileTypeLabel = (item: ImportBatchFileItem) => {
+  if (item.result?.dataTypeLabel) {
+    return item.result.dataTypeLabel
+  }
+  const rule = getImportDetectionRule(item.detectedType)
+  return rule?.label || '\u672a\u8bc6\u522b'
+}
+
+const resolveFileTargetTable = (item: ImportBatchFileItem) => {
+  if (item.result?.targetTable) {
+    return item.result.targetTable
+  }
+  const rule = getImportDetectionRule(item.detectedType)
+  return rule?.targetTable || '-'
+}
+
+const resolveFileStatusText = (item: ImportBatchFileItem) => {
+  if (item.status === 'detecting') return '\u9884\u8bc6\u522b\u4e2d'
+  if (item.status === 'pending') return '\u961f\u5217\u4e2d'
+  if (item.status === 'uploading') return '\u5bfc\u5165\u4e2d'
+  if (item.status === 'success') return '\u5bfc\u5165\u6210\u529f'
+  if (item.status === 'partial') return '\u90e8\u5206\u6210\u529f'
+  return '\u5bfc\u5165\u5931\u8d25'
+}
+
+const resolveFileStatusTagType = (item: ImportBatchFileItem) => {
+  if (item.status === 'success') return 'success'
+  if (item.status === 'partial') return 'warning'
+  if (item.status === 'failed') return 'danger'
+  return 'info'
+}
+
+const resolveFileDetectMode = (item: ImportBatchFileItem) => {
+  if (item.result) {
+    return item.result.autoDetected ? '\u8868\u5934\u81ea\u52a8\u8bc6\u522b' : '\u7528\u6237\u6307\u5b9a\u7c7b\u578b'
+  }
+  if (item.detectedType) {
+    return '\u524d\u7aef\u9884\u5206\u7c7b'
+  }
+  if (item.detectError) {
+    return '\u9884\u8bc6\u522b\u5931\u8d25'
+  }
+  return '\u5f85\u8bc6\u522b'
+}
+
+const resolveFileErrorText = (item: ImportBatchFileItem) => {
+  if (item.errorMessage) {
+    return item.errorMessage
+  }
+  if (item.result?.errors?.length) {
+    return item.result.errors.join('\uff1b')
+  }
+  if (item.detectError) {
+    return item.detectError
+  }
+  return ''
 }
 </script>
 
@@ -458,6 +762,46 @@ const formatDateRange = (start?: string, end?: string) => {
   border: 1px solid rgba(37, 99, 235, 0.12);
 }
 
+.file-result-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.file-result-card {
+  padding: 16px;
+  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.file-result-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.file-result-title {
+  display: grid;
+  gap: 4px;
+}
+
+.file-result-title strong {
+  color: #24324a;
+  font-size: 15px;
+}
+
+.file-result-title span {
+  color: #6b778a;
+  font-size: 13px;
+}
+
+.file-result-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .result-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -497,6 +841,16 @@ const formatDateRange = (start?: string, end?: string) => {
   color: #b42318;
 }
 
+.compact-error-box {
+  margin-top: 12px;
+}
+
+.compact-error-box p {
+  margin: 0;
+  color: #7c2d12;
+  line-height: 1.7;
+}
+
 .error-box ul {
   margin: 0;
   padding-left: 18px;
@@ -527,6 +881,10 @@ const formatDateRange = (start?: string, end?: string) => {
   .result-grid {
     grid-template-columns: 1fr;
   }
+
+  .file-result-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 </style>
-

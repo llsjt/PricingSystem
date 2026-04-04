@@ -70,10 +70,10 @@ const platformOptions = ['淘宝', '天猫', '京东', '拼多多', '抖音']
 
 const form = ref<ShopCreateDTO>({ shopName: '', platform: '', sellerNick: '' })
 
-const fetchList = async () => {
+const fetchList = async (force = false) => {
   loading.value = true
   try {
-    await shopStore.fetchShops()
+    await shopStore.fetchShops(force)
     shops.value = shopStore.shops
   } finally {
     loading.value = false
@@ -124,7 +124,7 @@ const handleSubmit = async () => {
       }
     }
     dialogVisible.value = false
-    await fetchList()
+    await fetchList(true)
   } catch (error) {
     const message = await resolveRequestErrorMessage(error)
     ElMessage.error(message)
@@ -143,7 +143,7 @@ const handleDelete = async (row: Shop) => {
     const res: any = await deleteShop(row.id)
     if (res.code === 200) {
       ElMessage.success('删除成功')
-      await fetchList()
+      await fetchList(true)
     } else {
       ElMessage.error(res.message || '删除失败')
     }

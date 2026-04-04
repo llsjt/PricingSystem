@@ -31,9 +31,12 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '../stores/user'
+import { useShopStore } from '../stores/shop'
 
 const router = useRouter()
 const userStore = useUserStore()
+const shopStore = useShopStore()
+
 userStore.syncFromSession()
 
 const username = computed(() => userStore.username || 'User')
@@ -42,6 +45,7 @@ const isAdmin = computed(() => userStore.isAdmin)
 const avatarText = computed(() => username.value.trim().slice(0, 1).toUpperCase() || 'U')
 
 const handleLogout = () => {
+  shopStore.resetState()
   userStore.clearSession()
   ElMessage.success('已退出登录')
   router.push('/login')
