@@ -109,7 +109,7 @@ export interface MockExcelExportDTO {
   seed?: number
 }
 
-export const getProductList = (params: { page: number; size: number; keyword?: string; platform?: string }) => {
+export const getProductList = (params: { page: number; size: number; keyword?: string; platform?: string; shopId?: number }) => {
   return request.get('/products/list', { params })
 }
 

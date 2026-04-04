@@ -34,7 +34,7 @@ public interface ProductService {
     /**
      * 分页查询商品列表（按用户过滤）。
      */
-    Result<Page<ProductListVO>> getProductList(int page, int size, String keyword, String dataSource, String platform, Long userId);
+    Result<Page<ProductListVO>> getProductList(int page, int size, String keyword, String dataSource, String platform, Long shopId, Long userId);
 
     /**
      * 下载导入模板。

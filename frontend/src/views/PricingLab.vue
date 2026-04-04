@@ -25,13 +25,37 @@
         </div>
 
         <el-form :model="taskConfig" label-position="top" class="config-form">
+          <el-form-item label="平台">
+            <el-select
+              v-model="taskConfig.platform"
+              clearable
+              placeholder="请选择平台"
+              @change="handlePlatformChange"
+            >
+              <el-option v-for="platform in platformOptions" :key="platform" :label="platform" :value="platform" />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item label="店铺">
+            <el-select
+              v-model="taskConfig.shopId"
+              clearable
+              placeholder="请选择店铺"
+              :disabled="!taskConfig.platform"
+              @change="handleShopChange"
+            >
+              <el-option v-for="shop in availableShops" :key="shop.id" :label="shop.shopName" :value="shop.id" />
+            </el-select>
+          </el-form-item>
+
           <el-form-item label="选择商品">
             <el-select
               v-model="taskConfig.productId"
               filterable
               remote
               reserve-keyword
-              placeholder="输入商品名称搜索"
+              :disabled="!canSearchProducts"
+              :placeholder="productSelectPlaceholder"
               :remote-method="searchProducts"
               :loading="searchLoading"
             >
@@ -46,9 +70,17 @@
 
           <el-form-item label="策略目标">
             <el-radio-group v-model="taskConfig.strategyGoal" class="goal-group">
-              <el-radio label="MAX_PROFIT" border>利润优先</el-radio>
-              <el-radio label="CLEARANCE" border>清仓促销</el-radio>
-              <el-radio label="MARKET_SHARE" border>市场份额优先</el-radio>
+              <el-tooltip
+                v-for="option in strategyGoalOptions"
+                :key="option.label"
+                :content="option.description"
+                effect="light"
+                placement="top"
+              >
+                <span class="goal-tooltip-trigger">
+                  <el-radio :label="option.label" border>{{ option.name }}</el-radio>
+                </span>
+              </el-tooltip>
             </el-radio-group>
           </el-form-item>
 
@@ -76,24 +108,11 @@
         </div>
 
         <div class="summary-card">
+          <div class="summary-line">平台：{{ taskConfig.platform || '尚未选择' }}</div>
+          <div class="summary-line">店铺：{{ selectedShopName || '尚未选择' }}</div>
           <div class="summary-line">商品：{{ selectedProductName || '尚未选择' }}</div>
           <div class="summary-line">目标：{{ strategyGoalText }}</div>
           <div class="summary-line">约束：{{ taskConfig.constraints || '未设置' }}</div>
-        </div>
-
-        <div class="tips-list">
-          <article class="tip-item">
-            <strong>利润优先</strong>
-            <span>优先拉升单件收益，但仍会受风控底线约束。</span>
-          </article>
-          <article class="tip-item">
-            <strong>清仓促销</strong>
-            <span>优先提升销量，价格会更接近市场下沿。</span>
-          </article>
-          <article class="tip-item">
-            <strong>市场份额优先</strong>
-            <span>在可控利润范围内争取更高市场接受度。</span>
-          </article>
         </div>
       </section>
     </div>
@@ -288,6 +307,8 @@ import {
   type PricingWsMessage
 } from '../api/decision'
 import { getProductList } from '../api/product'
+import type { Shop } from '../api/shop'
+import { useShopStore } from '../stores/shop'
 import { createApplyDecisionConfirmMessage, formatEvidenceValue, getSuggestionLines } from '../utils/decisionDisplay'
 import { formatCurrency as sharedFormatCurrency, formatSignedCurrency as sharedFormatSignedCurrency } from '../utils/formatters'
 
@@ -306,6 +327,14 @@ interface AgentOrderItem {
   code: PricingAgentCode
   name: string
   order: number
+}
+
+type StrategyGoalCode = '' | 'MAX_PROFIT' | 'CLEARANCE' | 'MARKET_SHARE'
+
+interface StrategyGoalOption {
+  label: Exclude<StrategyGoalCode, ''>
+  name: string
+  description: string
 }
 
 interface EvidenceItem {
@@ -342,9 +371,19 @@ const agentOrder: AgentOrderItem[] = [
   { code: 'MANAGER_COORDINATOR', name: '经理协调Agent', order: 4 }
 ]
 
+const strategyGoalOptions: StrategyGoalOption[] = [
+  { label: 'MAX_PROFIT', name: '利润优先', description: '优先拉升单件收益，但仍会受风控底线约束。' },
+  { label: 'CLEARANCE', name: '清仓促销', description: '优先提升销量，价格会更接近市场下沿。' },
+  { label: 'MARKET_SHARE', name: '市场份额优先', description: '在可控利润范围内争取更高市场接受度。' }
+]
+
+const shopStore = useShopStore()
+
 const taskConfig = reactive({
+  platform: '',
+  shopId: undefined as number | undefined,
   productId: undefined as number | undefined,
-  strategyGoal: 'MAX_PROFIT',
+  strategyGoal: '' as StrategyGoalCode,
   constraints: ''
 })
 
@@ -365,6 +404,29 @@ const activeStep = ref(0)
 const archiveReportSummary = ref('')
 const comparisonData = ref<DecisionComparisonItem[]>([])
 const applyingResultIds = ref<number[]>([])
+
+const platformOptions = computed(() => {
+  return Array.from(
+    new Set(
+      shopStore.shops
+        .map((shop) => String(shop.platform || '').trim())
+        .filter((platform) => platform.length > 0)
+    )
+  )
+})
+
+const availableShops = computed((): Shop[] => {
+  if (!taskConfig.platform) return []
+  return shopStore.shops.filter((shop) => shop.platform === taskConfig.platform)
+})
+
+const canSearchProducts = computed(() => Boolean(taskConfig.platform && taskConfig.shopId))
+
+const productSelectPlaceholder = computed(() => {
+  if (!taskConfig.platform) return '请先选择平台'
+  if (!taskConfig.shopId) return '请先选择店铺'
+  return '输入商品名称搜索'
+})
 
 let latestProductLoadToken = 0
 let wsClient: WebSocket | null = null
@@ -495,12 +557,11 @@ const statusText = computed(() => {
 })
 
 const strategyGoalText = computed(() => {
-  const mapping: Record<string, string> = {
-    MAX_PROFIT: '利润优先',
-    CLEARANCE: '清仓促销',
-    MARKET_SHARE: '市场份额优先'
-  }
-  return mapping[taskConfig.strategyGoal] || taskConfig.strategyGoal
+  return strategyGoalOptions.find((option) => option.label === taskConfig.strategyGoal)?.name || '尚未选择'
+})
+
+const selectedShopName = computed(() => {
+  return shopStore.shops.find((shop) => shop.id === taskConfig.shopId)?.shopName || ''
 })
 
 const selectedProductName = computed(() => {
@@ -531,12 +592,71 @@ const decisionProgress = computed(() => {
   return 0
 })
 
+const resetProductSelection = () => {
+  latestProductLoadToken += 1
+  taskConfig.productId = undefined
+  productOptions.value = []
+  searchLoading.value = false
+}
+
+const applyShopAutoSelection = async () => {
+  resetProductSelection()
+  if (!taskConfig.platform) {
+    taskConfig.shopId = undefined
+    return
+  }
+
+  const shops = availableShops.value
+  if (shops.length === 1) {
+    taskConfig.shopId = shops[0].id
+    await loadProducts()
+    return
+  }
+
+  taskConfig.shopId = undefined
+}
+
+const handlePlatformChange = async () => {
+  await applyShopAutoSelection()
+}
+
+const handleShopChange = async () => {
+  resetProductSelection()
+  if (taskConfig.shopId) {
+    await loadProducts()
+  }
+}
+
+const initializeShopFilters = async () => {
+  const loaded = await shopStore.fetchShops()
+  if (!loaded) return
+
+  const platforms = platformOptions.value
+  if (platforms.length === 1) {
+    taskConfig.platform = platforms[0]
+    await applyShopAutoSelection()
+  } else {
+    taskConfig.platform = ''
+    taskConfig.shopId = undefined
+    resetProductSelection()
+  }
+}
+
 const searchProducts = (query: string) => {
+  if (!canSearchProducts.value) {
+    resetProductSelection()
+    return
+  }
   loadProducts(query)
 }
 
 const loadProducts = async (query = '') => {
   const loadToken = ++latestProductLoadToken
+  if (!canSearchProducts.value) {
+    productOptions.value = []
+    searchLoading.value = false
+    return
+  }
   searchLoading.value = true
   try {
     const pageSize = 100
@@ -545,7 +665,13 @@ const loadProducts = async (query = '') => {
     let pages = 1
 
     while (page <= pages) {
-      const res = (await getProductList({ page, size: pageSize, keyword: query })) as ApiResponse<{
+      const res = (await getProductList({
+        page,
+        size: pageSize,
+        keyword: query,
+        platform: taskConfig.platform || undefined,
+        shopId: taskConfig.shopId
+      })) as ApiResponse<{
         records: Array<{ id: number; productName: string }>
         pages: number
       }>
@@ -829,8 +955,23 @@ const startWebSocket = (taskId: number) => {
 }
 
 const startTask = async () => {
+  if (!taskConfig.platform) {
+    ElMessage.warning('请选择平台')
+    return
+  }
+
+  if (!taskConfig.shopId) {
+    ElMessage.warning('请选择店铺')
+    return
+  }
+
   if (!taskConfig.productId) {
     ElMessage.warning('请选择一个商品')
+    return
+  }
+
+  if (!taskConfig.strategyGoal) {
+    ElMessage.warning('请选择策略目标')
     return
   }
 
@@ -967,8 +1108,8 @@ const applyPrice = async (row: DecisionComparisonItem) => {
   }
 }
 
-onMounted(() => {
-  loadProducts()
+onMounted(async () => {
+  await initializeShopFilters()
 })
 
 onBeforeUnmount(() => {
@@ -1005,6 +1146,10 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.goal-tooltip-trigger {
+  display: inline-flex;
+}
+
 .goal-group :deep(.el-radio) {
   margin-right: 0;
 }
@@ -1033,21 +1178,6 @@ onBeforeUnmount(() => {
   margin-top: 10px;
   color: var(--text-2);
   line-height: 1.7;
-}
-
-.tips-list {
-  margin-top: 14px;
-  display: grid;
-  gap: 12px;
-}
-
-.tip-item {
-  display: grid;
-  gap: 6px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--line-soft);
-  background: var(--surface-2);
 }
 
 .decision-layout {

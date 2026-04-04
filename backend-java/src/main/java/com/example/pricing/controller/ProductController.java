@@ -93,9 +93,10 @@ public class ProductController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String dataSource,
             @RequestParam(required = false) String platform,
+            @RequestParam(required = false) Long shopId,
             HttpServletRequest request
     ) {
-        return productService.getProductList(page, size, keyword, dataSource, platform, getCurrentUserId(request));
+        return productService.getProductList(page, size, keyword, dataSource, platform, shopId, getCurrentUserId(request));
     }
 
     /**

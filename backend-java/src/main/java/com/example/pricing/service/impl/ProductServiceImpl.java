@@ -148,7 +148,7 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
-    public Result<Page<ProductListVO>> getProductList(int page, int size, String keyword, String dataSource, String platform, Long userId) {
+    public Result<Page<ProductListVO>> getProductList(int page, int size, String keyword, String dataSource, String platform, Long shopId, Long userId) {
         int safePage = Math.max(page, 1);
         int safeSize = size <= 0 || size > 100 ? 10 : size;
 
@@ -163,6 +163,13 @@ public class ProductServiceImpl implements ProductService {
 
         // 按用户店铺过滤
         wrapper.in(Product::getShopId, userShopIds);
+
+        if (shopId != null) {
+            if (!userShopIds.contains(shopId)) {
+                return Result.error("无权访问此店铺");
+            }
+            wrapper.eq(Product::getShopId, shopId);
+        }
 
         if (keyword != null && !keyword.isBlank()) {
             String trimmedKeyword = keyword.trim();

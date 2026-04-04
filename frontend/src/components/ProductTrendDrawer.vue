@@ -283,6 +283,22 @@ watch(visible, (nextVisible) => {
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
+.trend-metric-card {
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(249, 252, 255, 0.98));
+  border: 1px solid var(--border-soft);
+  box-shadow: var(--shadow-card);
+}
+
+.trend-metric-card::before {
+  display: none;
+}
+
+.trend-metric-card:hover {
+  border-color: rgba(31, 111, 235, 0.16);
+  box-shadow: 0 12px 28px rgba(20, 44, 72, 0.1);
+}
+
 .trend-metric-card .metric-label {
   font-size: 17px;
   font-weight: 700;
