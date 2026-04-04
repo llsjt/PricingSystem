@@ -6,6 +6,7 @@ import com.example.pricing.service.DecisionTaskService;
 import com.example.pricing.vo.DecisionComparisonVO;
 import com.example.pricing.vo.DecisionLogVO;
 import com.example.pricing.vo.DecisionTaskItemVO;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,7 +40,7 @@ public class DecisionController {
      * 启动一次定价决策任务，并将任务下发给后端分析流程。
      */
     @PostMapping("/start")
-    public Result<Long> startDecisionTask(@RequestBody Map<String, Object> body) {
+    public Result<Long> startDecisionTask(@RequestBody Map<String, Object> body, HttpServletRequest request) {
         try {
             List<Long> productIds = parseProductIds(body.get("productIds"));
             String strategyGoal = String.valueOf(body.getOrDefault("strategyGoal", "")).trim();
@@ -50,7 +51,7 @@ public class DecisionController {
             if (strategyGoal.isBlank()) {
                 return Result.error("请选择策略目标");
             }
-            return Result.success(decisionTaskService.startTask(productIds, strategyGoal, constraints));
+            return Result.success(decisionTaskService.startTask(productIds, strategyGoal, constraints, getCurrentUserId(request)));
         } catch (Exception e) {
             log.error("启动定价任务失败", e);
             return Result.error(e.getMessage());
@@ -61,16 +62,16 @@ public class DecisionController {
      * 查询指定任务的最终决策结果。
      */
     @GetMapping("/result/{taskId}")
-    public Result<List<DecisionComparisonVO>> getTaskResult(@PathVariable Long taskId) {
-        return Result.success(decisionTaskService.getTaskResult(taskId));
+    public Result<List<DecisionComparisonVO>> getTaskResult(@PathVariable Long taskId, HttpServletRequest request) {
+        return Result.success(decisionTaskService.getTaskResult(taskId, getCurrentUserId(request)));
     }
 
     /**
      * 查询指定任务的多智能体执行日志。
      */
     @GetMapping("/logs/{taskId}")
-    public Result<List<DecisionLogVO>> getTaskLogs(@PathVariable Long taskId) {
-        return Result.success(decisionTaskService.getTaskLogs(taskId));
+    public Result<List<DecisionLogVO>> getTaskLogs(@PathVariable Long taskId, HttpServletRequest request) {
+        return Result.success(decisionTaskService.getTaskLogs(taskId, getCurrentUserId(request)));
     }
 
     /**
@@ -83,9 +84,10 @@ public class DecisionController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String startTime,
             @RequestParam(required = false) String endTime,
-            @RequestParam(defaultValue = "desc") String sortOrder
+            @RequestParam(defaultValue = "desc") String sortOrder,
+            HttpServletRequest request
     ) {
-        return Result.success(decisionTaskService.getTasks(page, size, status, startTime, endTime, sortOrder));
+        return Result.success(decisionTaskService.getTasks(page, size, status, startTime, endTime, sortOrder, getCurrentUserId(request)));
     }
 
     /**
@@ -94,26 +96,27 @@ public class DecisionController {
     @GetMapping("/tasks/stats")
     public Result<Map<String, Long>> getTaskStats(
             @RequestParam(required = false) String startTime,
-            @RequestParam(required = false) String endTime
+            @RequestParam(required = false) String endTime,
+            HttpServletRequest request
     ) {
-        return Result.success(decisionTaskService.getTaskStats(startTime, endTime));
+        return Result.success(decisionTaskService.getTaskStats(startTime, endTime, getCurrentUserId(request)));
     }
 
     /**
      * 获取任务的价格对比结果，供对比页面直接展示。
      */
     @GetMapping("/comparison/{taskId}")
-    public Result<List<DecisionComparisonVO>> getComparison(@PathVariable Long taskId) {
-        return Result.success(decisionTaskService.getTaskComparison(taskId));
+    public Result<List<DecisionComparisonVO>> getComparison(@PathVariable Long taskId, HttpServletRequest request) {
+        return Result.success(decisionTaskService.getTaskComparison(taskId, getCurrentUserId(request)));
     }
 
     /**
      * 将某条定价结果应用回商品当前售价。
      */
     @PostMapping("/apply/{resultId}")
-    public Result<Void> applyDecision(@PathVariable Long resultId) {
+    public Result<Void> applyDecision(@PathVariable Long resultId, HttpServletRequest request) {
         try {
-            decisionTaskService.applyDecision(resultId);
+            decisionTaskService.applyDecision(resultId, getCurrentUserId(request));
             return Result.success();
         } catch (Exception e) {
             log.error("应用价格建议失败", e);
@@ -125,8 +128,8 @@ public class DecisionController {
      * 导出指定任务的决策报告 Excel。
      */
     @GetMapping("/export/{taskId}")
-    public void exportDecisionReport(@PathVariable Long taskId, HttpServletResponse response) throws IOException {
-        decisionTaskService.exportDecisionReport(taskId, response);
+    public void exportDecisionReport(@PathVariable Long taskId, HttpServletResponse response, HttpServletRequest request) throws IOException {
+        decisionTaskService.exportDecisionReport(taskId, response, getCurrentUserId(request));
     }
 
     /**
@@ -147,5 +150,13 @@ public class DecisionController {
             }
         }
         return productIds;
+    }
+
+    private Long getCurrentUserId(HttpServletRequest request) {
+        Long userId = (Long) request.getAttribute("currentUserId");
+        if (userId == null) {
+            throw new IllegalStateException("请先登录");
+        }
+        return userId;
     }
 }

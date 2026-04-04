@@ -32,6 +32,21 @@ export interface ProductDailyMetricVO {
   createdAt?: string
 }
 
+export interface ProductDailyMetricSummaryVO {
+  days: number
+  totalVisitors: number
+  totalTurnover: number
+  avgConversionRate: number
+}
+
+export interface ProductDailyMetricPageVO {
+  page: number
+  size: number
+  total: number
+  records: ProductDailyMetricVO[]
+  summary: ProductDailyMetricSummaryVO
+}
+
 export interface ProductSkuVO {
   id: number
   externalSkuId?: string
@@ -98,7 +113,7 @@ export const getProductList = (params: { page: number; size: number; keyword?: s
   return request.get('/products/list', { params })
 }
 
-export const getProductDailyMetrics = (id: number, params?: { limit?: number }) => {
+export const getProductDailyMetrics = (id: number, params?: { page?: number; size?: number }) => {
   return request.get(`/products/${id}/daily-metrics`, { params })
 }
 

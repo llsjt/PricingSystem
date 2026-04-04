@@ -6,6 +6,8 @@ import { ElMessage } from 'element-plus'
 import { APP_NAME, APP_NAV_ITEMS, APP_SUBTITLE } from '../config/navigation'
 import { useViewport } from '../composables/useViewport'
 import { useUserStore } from '../stores/user'
+import { useShopStore } from '../stores/shop'
+import { createShop, type ShopCreateDTO } from '../api/shop'
 
 interface OpenTab {
   path: string
@@ -35,6 +37,36 @@ const cacheNames = computed(() =>
     .map((tab) => tab.name)
     .filter((name): name is string => Boolean(name))
 )
+
+const shopStore = useShopStore()
+const showShopGuard = computed(() => shopStore.loaded && shopStore.shops.length === 0 && route.path !== '/login')
+const shopForm = ref<ShopCreateDTO>({ shopName: '', platform: '', sellerNick: '' })
+const shopFormLoading = ref(false)
+
+const handleCreateFirstShop = async () => {
+  if (!shopForm.value.shopName.trim()) {
+    ElMessage.warning('请输入店铺名称')
+    return
+  }
+  if (!shopForm.value.platform) {
+    ElMessage.warning('请选择电商平台')
+    return
+  }
+  shopFormLoading.value = true
+  try {
+    const res: any = await createShop(shopForm.value)
+    if (res.code === 200) {
+      ElMessage.success('店铺创建成功')
+      await shopStore.fetchShops()
+    } else {
+      ElMessage.error(res.message || '创建失败')
+    }
+  } catch {
+    ElMessage.error('创建店铺失败')
+  } finally {
+    shopFormLoading.value = false
+  }
+}
 
 const syncUserState = () => {
   userStore.syncFromSession()
@@ -143,6 +175,7 @@ watch(
 
 onMounted(() => {
   syncUserState()
+  shopStore.fetchShops()
   window.addEventListener('auth-session-changed', syncUserState)
   ensureCurrentTab()
 })
@@ -280,6 +313,32 @@ onBeforeUnmount(() => {
         </div>
       </main>
     </div>
+
+    <el-dialog
+      v-model="showShopGuard"
+      title="欢迎！请先创建您的第一个店铺"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+      :show-close="false"
+      width="480px"
+    >
+      <el-form :model="shopForm" label-width="80px">
+        <el-form-item label="店铺名称" required>
+          <el-input v-model="shopForm.shopName" placeholder="如：我的淘宝店" />
+        </el-form-item>
+        <el-form-item label="电商平台" required>
+          <el-select v-model="shopForm.platform" placeholder="请选择" style="width: 100%">
+            <el-option v-for="p in ['淘宝', '天猫', '京东', '拼多多', '抖音']" :key="p" :label="p" :value="p" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="卖家昵称">
+          <el-input v-model="shopForm.sellerNick" placeholder="选填" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button type="primary" :loading="shopFormLoading" @click="handleCreateFirstShop">创建店铺</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 

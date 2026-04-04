@@ -38,6 +38,12 @@ const routes: Array<RouteRecordRaw> = [
         meta: { title: getNavTitleByPath('/archive') }
       },
       {
+        path: 'shops',
+        name: 'ShopManagement',
+        component: () => import('../views/ShopManagement.vue'),
+        meta: { title: getNavTitleByPath('/shops') }
+      },
+      {
         path: 'profile',
         name: 'PersonalCenter',
         component: () => import('../views/PersonalCenter.vue'),

@@ -22,7 +22,9 @@ import com.example.pricing.mapper.ProductSkuMapper;
 import com.example.pricing.mapper.ShopMapper;
 import com.example.pricing.mapper.TrafficPromoDailyMapper;
 import com.example.pricing.service.ProductService;
+import com.example.pricing.service.ShopService;
 import com.example.pricing.vo.ImportResultVO;
+import com.example.pricing.vo.ProductDailyMetricPageVO;
 import com.example.pricing.vo.ProductDailyMetricVO;
 import com.example.pricing.vo.ProductListVO;
 import com.example.pricing.vo.ProductSkuVO;
@@ -43,7 +45,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -63,19 +65,50 @@ public class ProductServiceImpl implements ProductService {
     private final PricingResultMapper pricingResultMapper;
     private final AgentRunLogMapper agentRunLogMapper;
     private final ShopMapper shopMapper;
+    private final ShopService shopService;
     private final TaobaoExcelImportService taobaoExcelImportService;
     private final MockExcelExportService mockExcelExportService;
 
-    /**
-     * 导入商品数据，并将平台与数据类型参数转交给 Excel 导入服务处理。
-     */
+    // ===== 数据隔离辅助方法 =====
+
+    private List<Long> getUserShopIds(Long userId) {
+        return shopService.getShopIdsByUser(userId);
+    }
+
+    private void verifyProductOwnership(Product product, Long userId) {
+        if (product == null) {
+            throw new IllegalArgumentException("商品不存在");
+        }
+        List<Long> shopIds = getUserShopIds(userId);
+        if (!shopIds.contains(product.getShopId())) {
+            throw new IllegalArgumentException("无权访问此商品");
+        }
+    }
+
+    private Long resolveDefaultShopId(Long userId) {
+        LambdaQueryWrapper<Shop> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Shop::getUserId, userId).orderByAsc(Shop::getId).last("LIMIT 1");
+        Shop shop = shopMapper.selectOne(wrapper);
+        if (shop == null) {
+            throw new IllegalStateException("请先创建店铺");
+        }
+        return shop.getId();
+    }
+
+    // ===== 业务方法 =====
+
     @Override
-    public Result<ImportResultVO> importData(MultipartFile file, String dataType, String platform) {
+    public Result<ImportResultVO> importData(MultipartFile file, String dataType, String platform, Long shopId, Long userId) {
         try {
-            if (platform == null || platform.isBlank()) {
-                return Result.error("请先选择电商平台");
+            if (shopId == null) {
+                return Result.error("请选择目标店铺");
             }
-            return Result.success(taobaoExcelImportService.importExcel(file, dataType, platform));
+            // 校验店铺归属
+            List<Long> userShopIds = getUserShopIds(userId);
+            if (!userShopIds.contains(shopId)) {
+                return Result.error("无权操作此店铺");
+            }
+            return Result.success(taobaoExcelImportService.importExcel(file, dataType, platform, shopId));
         } catch (Exception e) {
             log.error("Import excel failed", e);
             return Result.error(e.getMessage());
@@ -87,13 +120,10 @@ public class ProductServiceImpl implements ProductService {
         mockExcelExportService.downloadBundle(dto, response);
     }
 
-    /**
-     * 手工新增商品，并在没有历史数据时为商品补一段近期经营指标。
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Result<Void> addProductManual(ProductManualDTO dto) {
-        Long shopId = resolveDefaultShopId();
+    public Result<Void> addProductManual(ProductManualDTO dto, Long userId) {
+        Long shopId = resolveDefaultShopId(userId);
         if (dto.getProductName() == null || dto.getProductName().isBlank()) {
             return Result.error("商品名称不能为空");
         }
@@ -117,16 +147,23 @@ public class ProductServiceImpl implements ProductService {
         return Result.success();
     }
 
-    /**
-     * 分页查询商品列表，并补充近 30 天销量、转化率与店铺平台信息。
-     */
     @Override
-    public Result<Page<ProductListVO>> getProductList(int page, int size, String keyword, String dataSource, String platform) {
+    public Result<Page<ProductListVO>> getProductList(int page, int size, String keyword, String dataSource, String platform, Long userId) {
         int safePage = Math.max(page, 1);
         int safeSize = size <= 0 || size > 100 ? 10 : size;
 
+        // 获取当前用户的店铺列表
+        List<Long> userShopIds = getUserShopIds(userId);
+        if (userShopIds.isEmpty()) {
+            return Result.success(emptyPage(safePage, safeSize));
+        }
+
         Page<Product> pageParam = new Page<>(safePage, safeSize);
         LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
+
+        // 按用户店铺过滤
+        wrapper.in(Product::getShopId, userShopIds);
+
         if (keyword != null && !keyword.isBlank()) {
             String trimmedKeyword = keyword.trim();
             Long numericKeyword = parseLongOrNull(trimmedKeyword);
@@ -140,12 +177,12 @@ public class ProductServiceImpl implements ProductService {
         }
         if (platform != null && !platform.isBlank()) {
             LambdaQueryWrapper<Shop> shopWrapper = new LambdaQueryWrapper<>();
-            shopWrapper.eq(Shop::getPlatform, platform.trim());
-            List<Long> shopIds = shopMapper.selectList(shopWrapper).stream().map(Shop::getId).toList();
-            if (shopIds.isEmpty()) {
+            shopWrapper.eq(Shop::getPlatform, platform.trim()).eq(Shop::getUserId, userId);
+            List<Long> platformShopIds = shopMapper.selectList(shopWrapper).stream().map(Shop::getId).toList();
+            if (platformShopIds.isEmpty()) {
                 return Result.success(emptyPage(safePage, safeSize));
             }
-            wrapper.in(Product::getShopId, shopIds);
+            wrapper.in(Product::getShopId, platformShopIds);
         }
         wrapper.orderByDesc(Product::getUpdatedAt, Product::getId);
 
@@ -177,25 +214,28 @@ public class ProductServiceImpl implements ProductService {
         return Result.success(resultPage);
     }
 
-    /**
-     * 下载导入模板，实际模板内容由 Excel 导入服务生成。
-     */
     @Override
     public void downloadTemplate(String dataType, HttpServletResponse response) {
         taobaoExcelImportService.downloadTemplate(dataType, response);
     }
 
-    /**
-     * 批量删除商品，并同步清理指标、流量和定价任务等关联数据。
-     */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Result<Void> batchDelete(List<Long> ids) {
+    public Result<Void> batchDelete(List<Long> ids, Long userId) {
         if (ids == null || ids.isEmpty()) {
             return Result.error("请选择要删除的商品");
         }
 
         try {
+            // 校验所有商品属于当前用户
+            List<Long> userShopIds = getUserShopIds(userId);
+            List<Product> products = productMapper.selectBatchIds(ids);
+            for (Product product : products) {
+                if (!userShopIds.contains(product.getShopId())) {
+                    return Result.error("包含无权操作的商品");
+                }
+            }
+
             LambdaQueryWrapper<ProductDailyMetric> statWrapper = new LambdaQueryWrapper<>();
             statWrapper.in(ProductDailyMetric::getProductId, ids);
             statMapper.delete(statWrapper);
@@ -209,16 +249,13 @@ public class ProductServiceImpl implements ProductService {
         }
     }
 
-    /**
-     * 生成商品趋势分析结果，包含图表序列、利润测算和环比增长。
-     */
     @Override
-    public Result<ProductTrendVO> getProductTrend(Long id, int days) {
+    public Result<ProductTrendVO> getProductTrend(Long id, int days, Long userId) {
         Product product = productMapper.selectById(id);
         if (product == null) {
             return Result.error("商品不存在");
         }
-
+        verifyProductOwnership(product, userId);
 
         LocalDate endDate = LocalDate.now();
         LocalDate startDate = endDate.minusDays(Math.max(days, 1) - 1L);
@@ -293,33 +330,46 @@ public class ProductServiceImpl implements ProductService {
         return Result.success(vo);
     }
 
-    /**
-     * 查询商品日经营指标明细，并转换成前端需要的展示对象。
-     */
     @Override
-    public Result<List<ProductDailyMetricVO>> getProductDailyMetrics(Long productId, Integer limit) {
-        if (productMapper.selectById(productId) == null) {
+    public Result<ProductDailyMetricPageVO> getProductDailyMetrics(Long productId, Integer page, Integer size, Long userId) {
+        Product product = productMapper.selectById(productId);
+        if (product == null) {
             return Result.error("商品不存在");
         }
-        int safeLimit = normalizeLimit(limit, 90, 365);
-        LambdaQueryWrapper<ProductDailyMetric> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(ProductDailyMetric::getProductId, productId)
-                .orderByDesc(ProductDailyMetric::getStatDate, ProductDailyMetric::getId)
-                .last("LIMIT " + safeLimit);
-        List<ProductDailyMetricVO> rows = statMapper.selectList(wrapper).stream()
+        verifyProductOwnership(product, userId);
+
+        int safePage = page == null || page <= 0 ? 1 : page;
+        int safeSize = normalizeLimit(size, 10, 50);
+
+        LambdaQueryWrapper<ProductDailyMetric> summaryWrapper = new LambdaQueryWrapper<>();
+        summaryWrapper.eq(ProductDailyMetric::getProductId, productId)
+                .orderByDesc(ProductDailyMetric::getStatDate, ProductDailyMetric::getId);
+        List<ProductDailyMetric> allRows = statMapper.selectList(summaryWrapper);
+
+        LambdaQueryWrapper<ProductDailyMetric> pageWrapper = new LambdaQueryWrapper<>();
+        pageWrapper.eq(ProductDailyMetric::getProductId, productId)
+                .orderByDesc(ProductDailyMetric::getStatDate, ProductDailyMetric::getId);
+        Page<ProductDailyMetric> resultPage = statMapper.selectPage(new Page<>(safePage, safeSize), pageWrapper);
+        List<ProductDailyMetricVO> rows = resultPage.getRecords().stream()
                 .map(this::toDailyMetricVO)
                 .collect(Collectors.toList());
-        return Result.success(rows);
+        ProductDailyMetricPageVO payload = new ProductDailyMetricPageVO();
+        payload.setPage(resultPage.getCurrent());
+        payload.setSize(resultPage.getSize());
+        payload.setTotal(resultPage.getTotal());
+        payload.setRecords(rows);
+        payload.setSummary(buildDailyMetricSummary(allRows));
+        return Result.success(payload);
     }
 
-    /**
-     * 查询商品 SKU 列表。
-     */
     @Override
-    public Result<List<ProductSkuVO>> getProductSkus(Long productId) {
-        if (productMapper.selectById(productId) == null) {
+    public Result<List<ProductSkuVO>> getProductSkus(Long productId, Long userId) {
+        Product product = productMapper.selectById(productId);
+        if (product == null) {
             return Result.error("商品不存在");
         }
+        verifyProductOwnership(product, userId);
+
         LambdaQueryWrapper<ProductSku> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(ProductSku::getProductId, productId)
                 .orderByDesc(ProductSku::getUpdatedAt, ProductSku::getId);
@@ -329,14 +379,14 @@ public class ProductServiceImpl implements ProductService {
         return Result.success(rows);
     }
 
-    /**
-     * 查询商品流量推广日报。
-     */
     @Override
-    public Result<List<TrafficPromoDailyVO>> getTrafficPromoDaily(Long productId, Integer limit) {
-        if (productMapper.selectById(productId) == null) {
+    public Result<List<TrafficPromoDailyVO>> getTrafficPromoDaily(Long productId, Integer limit, Long userId) {
+        Product product = productMapper.selectById(productId);
+        if (product == null) {
             return Result.error("商品不存在");
         }
+        verifyProductOwnership(product, userId);
+
         int safeLimit = normalizeLimit(limit, 90, 365);
         LambdaQueryWrapper<TrafficPromoDaily> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(TrafficPromoDaily::getProductId, productId)
@@ -348,11 +398,8 @@ public class ProductServiceImpl implements ProductService {
         return Result.success(rows);
     }
 
+    // ===== 私有辅助方法 =====
 
-
-    /**
-     * 按店铺和标题查找商品，避免同店铺下手工重复创建同名商品。
-     */
     private Product findProductByTitle(Long shopId, String title) {
         LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(Product::getShopId, shopId)
@@ -361,18 +408,12 @@ public class ProductServiceImpl implements ProductService {
         return productMapper.selectOne(wrapper);
     }
 
-    /**
-     * 删除商品对应的流量推广数据。
-     */
     private void deleteTrafficMetrics(List<Long> productIds) {
         LambdaQueryWrapper<TrafficPromoDaily> trafficWrapper = new LambdaQueryWrapper<>();
         trafficWrapper.in(TrafficPromoDaily::getProductId, productIds);
         trafficPromoDailyMapper.delete(trafficWrapper);
     }
 
-    /**
-     * 删除商品关联的定价任务、结果和 Agent 日志。
-     */
     private void deletePricingArtifacts(List<Long> productIds) {
         LambdaQueryWrapper<PricingTask> taskWrapper = new LambdaQueryWrapper<>();
         taskWrapper.in(PricingTask::getProductId, productIds);
@@ -396,11 +437,6 @@ public class ProductServiceImpl implements ProductService {
         pricingTaskMapper.delete(deleteTaskWrapper);
     }
 
-
-
-    /**
-     * 汇总近 30 天销量和平均转化率，用于商品列表页展示。
-     */
     private ProductMetricSummary loadMetricSummary(Long productId) {
         List<ProductDailyMetric> stats = listMetrics(productId, LocalDate.now().minusDays(29), LocalDate.now());
         int monthlySales = sumSales(stats);
@@ -421,9 +457,6 @@ public class ProductServiceImpl implements ProductService {
         return new ProductMetricSummary(monthlySales, conversionRate);
     }
 
-    /**
-     * 按时间区间查询商品日指标。
-     */
     private List<ProductDailyMetric> listMetrics(Long productId, LocalDate startDate, LocalDate endDate) {
         LambdaQueryWrapper<ProductDailyMetric> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(ProductDailyMetric::getProductId, productId)
@@ -433,9 +466,6 @@ public class ProductServiceImpl implements ProductService {
         return statMapper.selectList(wrapper);
     }
 
-    /**
-     * 查询商品在指定日期的单条指标记录。
-     */
     private ProductDailyMetric findMetricByDate(Long productId, LocalDate statDate) {
         LambdaQueryWrapper<ProductDailyMetric> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(ProductDailyMetric::getProductId, productId)
@@ -444,18 +474,6 @@ public class ProductServiceImpl implements ProductService {
         return statMapper.selectOne(wrapper);
     }
 
-    /**
-     * 统计商品已有的指标记录数。
-     */
-    private long countMetrics(Long productId) {
-        LambdaQueryWrapper<ProductDailyMetric> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(ProductDailyMetric::getProductId, productId);
-        return statMapper.selectCount(wrapper);
-    }
-
-    /**
-     * 汇总一组日指标中的销量。
-     */
     private int sumSales(List<ProductDailyMetric> stats) {
         int total = 0;
         for (ProductDailyMetric stat : stats) {
@@ -464,9 +482,6 @@ public class ProductServiceImpl implements ProductService {
         return total;
     }
 
-    /**
-     * 汇总一组日指标中的利润。
-     */
     private BigDecimal sumProfit(List<ProductDailyMetric> stats, BigDecimal costPrice) {
         BigDecimal total = BigDecimal.ZERO;
         for (ProductDailyMetric stat : stats) {
@@ -475,9 +490,6 @@ public class ProductServiceImpl implements ProductService {
         return total;
     }
 
-    /**
-     * 根据成交额、销量和成本价估算单日利润。
-     */
     private BigDecimal calculateProfit(ProductDailyMetric stat, BigDecimal costPrice) {
         if (stat == null) {
             return BigDecimal.ZERO;
@@ -487,9 +499,6 @@ public class ProductServiceImpl implements ProductService {
         return turnover.subtract(cost).setScale(2, RoundingMode.HALF_UP);
     }
 
-    /**
-     * 计算环比增长率，前值为空或为零时按零处理。
-     */
     private Double calculateGrowthRate(BigDecimal current, BigDecimal previous) {
         if (previous == null || previous.compareTo(BigDecimal.ZERO) == 0) {
             return 0.0;
@@ -499,22 +508,6 @@ public class ProductServiceImpl implements ProductService {
                 .doubleValue();
     }
 
-    /**
-     * 获取默认店铺 ID，供手工新增商品和导入兜底使用。
-     */
-    private Long resolveDefaultShopId() {
-        LambdaQueryWrapper<Shop> wrapper = new LambdaQueryWrapper<>();
-        wrapper.orderByAsc(Shop::getId).last("LIMIT 1");
-        Shop shop = shopMapper.selectOne(wrapper);
-        if (shop == null) {
-            throw new IllegalStateException("未初始化默认店铺");
-        }
-        return shop.getId();
-    }
-
-    /**
-     * 当外部商品 ID 缺失时，为手工新增商品生成内部占位 ID。
-     */
     private String resolveExternalProductId(String externalProductId) {
         if (externalProductId != null && !externalProductId.isBlank()) {
             return externalProductId.trim();
@@ -522,9 +515,6 @@ public class ProductServiceImpl implements ProductService {
         return "MANUAL-" + System.currentTimeMillis();
     }
 
-    /**
-     * 根据销量和访客数计算转化率。
-     */
     private BigDecimal calculateConversionRate(int salesCount, int visitorCount) {
         if (visitorCount <= 0 || salesCount <= 0) {
             return BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP);
@@ -533,25 +523,16 @@ public class ProductServiceImpl implements ProductService {
                 .divide(BigDecimal.valueOf(visitorCount), 4, RoundingMode.HALF_UP);
     }
 
-    /**
-     * 将金额字段规范为两位小数，空值按零处理。
-     */
     private BigDecimal defaultDecimal(BigDecimal value) {
         return value == null
                 ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
                 : value.setScale(2, RoundingMode.HALF_UP);
     }
 
-    /**
-     * 将整数空值统一转成零。
-     */
     private Integer defaultInteger(Integer value) {
         return value == null ? 0 : value;
     }
 
-    /**
-     * 去除空白字符串，空内容时返回 null。
-     */
     private String trimToNull(String value) {
         if (value == null || value.isBlank()) {
             return null;
@@ -559,9 +540,6 @@ public class ProductServiceImpl implements ProductService {
         return value.trim();
     }
 
-    /**
-     * 构造空分页对象，用于平台筛选无数据时快速返回。
-     */
     private Page<ProductListVO> emptyPage(int current, int size) {
         Page<ProductListVO> page = new Page<>();
         page.setCurrent(current);
@@ -571,9 +549,6 @@ public class ProductServiceImpl implements ProductService {
         return page;
     }
 
-    /**
-     * 加载商品所属店铺的平台映射，用于列表页展示平台名称。
-     */
     private Map<Long, String> loadShopPlatformMap(List<Product> products) {
         if (products == null || products.isEmpty()) {
             return Collections.emptyMap();
@@ -594,9 +569,6 @@ public class ProductServiceImpl implements ProductService {
         return result;
     }
 
-    /**
-     * 规范化查询条数上限，避免前端传入过大值。
-     */
     private int normalizeLimit(Integer limit, int defaultValue, int maxValue) {
         if (limit == null || limit <= 0) {
             return defaultValue;
@@ -604,9 +576,33 @@ public class ProductServiceImpl implements ProductService {
         return Math.min(limit, maxValue);
     }
 
-    /**
-     * 将日经营指标实体转换为前端展示对象。
-     */
+    private ProductDailyMetricPageVO.Summary buildDailyMetricSummary(List<ProductDailyMetric> rows) {
+        ProductDailyMetricPageVO.Summary summary = new ProductDailyMetricPageVO.Summary();
+        summary.setDays(rows.size());
+        summary.setTotalVisitors(rows.stream()
+                .map(ProductDailyMetric::getVisitorCount)
+                .filter(Objects::nonNull)
+                .mapToLong(Integer::longValue)
+                .sum());
+
+        BigDecimal totalTurnover = rows.stream()
+                .map(ProductDailyMetric::getTurnover)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        summary.setTotalTurnover(totalTurnover);
+
+        if (!rows.isEmpty()) {
+            BigDecimal avgConversionRate = rows.stream()
+                    .map(ProductDailyMetric::getConversionRate)
+                    .filter(Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add)
+                    .divide(BigDecimal.valueOf(rows.size()), 4, RoundingMode.HALF_UP);
+            summary.setAvgConversionRate(avgConversionRate);
+        }
+
+        return summary;
+    }
+
     private ProductDailyMetricVO toDailyMetricVO(ProductDailyMetric row) {
         ProductDailyMetricVO vo = new ProductDailyMetricVO();
         vo.setId(row.getId());
@@ -622,9 +618,6 @@ public class ProductServiceImpl implements ProductService {
         return vo;
     }
 
-    /**
-     * 将 SKU 实体转换为前端展示对象。
-     */
     private ProductSkuVO toProductSkuVO(ProductSku row) {
         ProductSkuVO vo = new ProductSkuVO();
         vo.setId(row.getId());
@@ -638,9 +631,6 @@ public class ProductServiceImpl implements ProductService {
         return vo;
     }
 
-    /**
-     * 将流量推广日报实体转换为前端展示对象。
-     */
     private TrafficPromoDailyVO toTrafficPromoVO(TrafficPromoDaily row) {
         TrafficPromoDailyVO vo = new TrafficPromoDailyVO();
         vo.setId(row.getId());
@@ -656,9 +646,6 @@ public class ProductServiceImpl implements ProductService {
         return vo;
     }
 
-    /**
-     * 尝试把关键字解析成 Long，便于支持按商品 ID 搜索。
-     */
     private Long parseLongOrNull(String value) {
         try {
             return Long.parseLong(value);
@@ -667,9 +654,6 @@ public class ProductServiceImpl implements ProductService {
         }
     }
 
-    /**
-     * 商品列表页需要的销量与转化率摘要结构。
-     */
     private record ProductMetricSummary(Integer monthlySales, BigDecimal conversionRate) {
     }
 }

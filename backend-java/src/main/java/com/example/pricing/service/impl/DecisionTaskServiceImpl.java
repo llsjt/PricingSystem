@@ -12,6 +12,7 @@ import com.example.pricing.mapper.PricingResultMapper;
 import com.example.pricing.mapper.PricingTaskMapper;
 import com.example.pricing.mapper.ProductMapper;
 import com.example.pricing.service.DecisionTaskService;
+import com.example.pricing.service.ShopService;
 import com.example.pricing.vo.DecisionComparisonVO;
 import com.example.pricing.vo.DecisionLogVO;
 import com.example.pricing.vo.DecisionTaskItemVO;
@@ -57,6 +58,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     private final PricingResultMapper resultMapper;
     private final AgentRunLogMapper logMapper;
     private final ProductMapper productMapper;
+    private final ShopService shopService;
 
     @Value("${agent.python.base-url:http://localhost:8000}")
     private String pythonBaseUrl;
@@ -73,28 +75,32 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
      * 基于单个商品创建任务，本质上是对多商品启动逻辑的单商品封装。
      */
     @Override
-    public Long createPricingTask(Long productId, String strategyGoal, String constraints) {
+    public Long createPricingTask(Long productId, String strategyGoal, String constraints, Long userId) {
         if (productId == null) {
             throw new IllegalArgumentException("productId不能为空");
         }
         String goal = (strategyGoal == null || strategyGoal.isBlank()) ? "MAX_PROFIT" : strategyGoal.trim();
         String constraintText = constraints == null ? "" : constraints.trim();
-        return startTask(List.of(productId), goal, constraintText);
+        return startTask(List.of(productId), goal, constraintText, userId);
     }
 
     /**
      * 创建任务主记录并通知 Python 协作端开始执行决策分析。
      */
     @Override
-    public Long startTask(List<Long> productIds, String strategyGoal, String constraints) {
+    public Long startTask(List<Long> productIds, String strategyGoal, String constraints, Long userId) {
         if (productIds == null || productIds.isEmpty()) {
             throw new IllegalArgumentException("至少选择一个商品");
         }
 
+        List<Long> userShopIds = getUserShopIds(userId);
         Long productId = productIds.get(0);
         Product product = productMapper.selectById(productId);
         if (product == null) {
             throw new IllegalArgumentException("商品不存在");
+        }
+        if (!userShopIds.contains(product.getShopId())) {
+            throw new IllegalArgumentException("无权操作此商品");
         }
 
         PricingTask task = new PricingTask();
@@ -124,7 +130,8 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
      * 获取任务结果列表，供结果页展示。
      */
     @Override
-    public List<DecisionComparisonVO> getTaskResult(Long taskId) {
+    public List<DecisionComparisonVO> getTaskResult(Long taskId, Long userId) {
+        verifyTaskOwnership(taskId, userId);
         return buildComparisonRows(taskId);
     }
 
@@ -132,7 +139,8 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
      * 组装任务日志，补齐前端展示所需的兼容字段。
      */
     @Override
-    public List<DecisionLogVO> getTaskLogs(Long taskId) {
+    public List<DecisionLogVO> getTaskLogs(Long taskId, Long userId) {
+        verifyTaskOwnership(taskId, userId);
         LambdaQueryWrapper<AgentRunLog> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(AgentRunLog::getTaskId, taskId)
                 .orderByAsc(AgentRunLog::getDisplayOrder, AgentRunLog::getSpeakOrder, AgentRunLog::getId);
@@ -175,9 +183,11 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
      * 分页查询历史任务，并拼出商品标题和最终执行策略。
      */
     @Override
-    public Page<DecisionTaskItemVO> getTasks(int page, int size, String status, String startTime, String endTime, String sortOrder) {
+    public Page<DecisionTaskItemVO> getTasks(int page, int size, String status, String startTime, String endTime, String sortOrder, Long userId) {
+        List<Long> userShopIds = getUserShopIds(userId);
         Page<PricingTask> pageParam = new Page<>(Math.max(page, 1), size <= 0 ? 10 : size);
         LambdaQueryWrapper<PricingTask> wrapper = new LambdaQueryWrapper<>();
+        wrapper.in(PricingTask::getShopId, userShopIds);
         if (status != null && !status.isBlank()) {
             wrapper.eq(PricingTask::getTaskStatus, status);
         }
@@ -210,8 +220,10 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
      * 按时间范围统计任务总数及不同执行状态的数量。
      */
     @Override
-    public Map<String, Long> getTaskStats(String startTime, String endTime) {
+    public Map<String, Long> getTaskStats(String startTime, String endTime, Long userId) {
+        List<Long> userShopIds = getUserShopIds(userId);
         LambdaQueryWrapper<PricingTask> wrapper = new LambdaQueryWrapper<>();
+        wrapper.in(PricingTask::getShopId, userShopIds);
         LocalDateTime start = parseDateTime(startTime, false);
         LocalDateTime end = parseDateTime(endTime, true);
         if (start != null) {
@@ -233,7 +245,8 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
      * 获取任务价格对比结果，当前直接复用结果构造逻辑。
      */
     @Override
-    public List<DecisionComparisonVO> getTaskComparison(Long taskId) {
+    public List<DecisionComparisonVO> getTaskComparison(Long taskId, Long userId) {
+        verifyTaskOwnership(taskId, userId);
         return buildComparisonRows(taskId);
     }
 
@@ -241,11 +254,12 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
      * 查询任务详情，汇总任务、商品和结果三部分信息。
      */
     @Override
-    public PricingTaskDetailVO getTaskDetail(Long taskId) {
+    public PricingTaskDetailVO getTaskDetail(Long taskId, Long userId) {
         PricingTask task = taskMapper.selectById(taskId);
         if (task == null) {
             throw new IllegalArgumentException("任务不存在");
         }
+        verifyTaskOwnership(task, userId);
         Product product = productMapper.selectById(task.getProductId());
         PricingResult result = getResultByTaskId(taskId);
 
@@ -272,7 +286,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void applyDecision(Long resultId) {
+    public void applyDecision(Long resultId, Long userId) {
         PricingResult result = resultMapper.selectById(resultId);
         if (result == null) {
             throw new IllegalArgumentException("结果不存在");
@@ -281,6 +295,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         if (task == null) {
             throw new IllegalArgumentException("任务不存在");
         }
+        verifyTaskOwnership(task, userId);
         Product product = productMapper.selectById(task.getProductId());
         if (product == null) {
             throw new IllegalArgumentException("商品不存在");
@@ -293,13 +308,37 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
      * 导出任务报告为 Excel，便于离线查看和汇报。
      */
     @Override
-    public void exportDecisionReport(Long taskId, HttpServletResponse response) throws IOException {
+    public void exportDecisionReport(Long taskId, HttpServletResponse response, Long userId) throws IOException {
+        verifyTaskOwnership(taskId, userId);
         List<DecisionComparisonVO> rows = buildComparisonRows(taskId);
         response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         response.setCharacterEncoding("utf-8");
         String fileName = URLEncoder.encode("DecisionReport_" + taskId, "UTF-8").replaceAll("\\+", "%20");
         response.setHeader("Content-disposition", "attachment;filename*=utf-8''" + fileName + ".xlsx");
         EasyExcel.write(response.getOutputStream(), DecisionComparisonVO.class).sheet("决策报告").doWrite(rows);
+    }
+
+    private List<Long> getUserShopIds(Long userId) {
+        List<Long> shopIds = shopService.getShopIdsByUser(userId);
+        if (shopIds.isEmpty()) {
+            throw new IllegalStateException("您还没有店铺，请先创建店铺");
+        }
+        return shopIds;
+    }
+
+    private void verifyTaskOwnership(Long taskId, Long userId) {
+        PricingTask task = taskMapper.selectById(taskId);
+        if (task == null) {
+            throw new IllegalArgumentException("任务不存在");
+        }
+        verifyTaskOwnership(task, userId);
+    }
+
+    private void verifyTaskOwnership(PricingTask task, Long userId) {
+        List<Long> shopIds = getUserShopIds(userId);
+        if (!shopIds.contains(task.getShopId())) {
+            throw new IllegalArgumentException("无权操作此任务");
+        }
     }
 
     /**

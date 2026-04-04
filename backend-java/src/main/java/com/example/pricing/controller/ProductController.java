@@ -6,11 +6,13 @@ import com.example.pricing.dto.MockExcelExportDTO;
 import com.example.pricing.dto.ProductManualDTO;
 import com.example.pricing.service.ProductService;
 import com.example.pricing.vo.ImportResultVO;
+import com.example.pricing.vo.ProductDailyMetricPageVO;
 import com.example.pricing.vo.ProductDailyMetricVO;
 import com.example.pricing.vo.ProductListVO;
 import com.example.pricing.vo.ProductSkuVO;
 import com.example.pricing.vo.ProductTrendVO;
 import com.example.pricing.vo.TrafficPromoDailyVO;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -18,7 +20,6 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -39,15 +40,17 @@ public class ProductController {
     private final ProductService productService;
 
     /**
-     * 导入商品相关 Excel 数据，支持商品基础信息、SKU 和经营数据。
+     * 导入商品相关 Excel 数据，需指定目标店铺。
      */
     @PostMapping("/import")
     public Result<ImportResultVO> importData(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "dataType", required = false) String dataType,
-            @RequestParam(value = "platform", required = false) String platform
+            @RequestParam(value = "platform", required = false) String platform,
+            @RequestParam("shopId") Long shopId,
+            HttpServletRequest request
     ) {
-        return productService.importData(file, dataType, platform);
+        return productService.importData(file, dataType, platform, shopId, getCurrentUserId(request));
     }
 
     /**
@@ -76,8 +79,8 @@ public class ProductController {
      * 手工新增单个商品，并为其补齐基础经营数据。
      */
     @PostMapping("/add")
-    public Result<Void> addProductManual(@RequestBody ProductManualDTO dto) {
-        return productService.addProductManual(dto);
+    public Result<Void> addProductManual(@RequestBody ProductManualDTO dto, HttpServletRequest request) {
+        return productService.addProductManual(dto, getCurrentUserId(request));
     }
 
     /**
@@ -89,17 +92,18 @@ public class ProductController {
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String dataSource,
-            @RequestParam(required = false) String platform
+            @RequestParam(required = false) String platform,
+            HttpServletRequest request
     ) {
-        return productService.getProductList(page, size, keyword, dataSource, platform);
+        return productService.getProductList(page, size, keyword, dataSource, platform, getCurrentUserId(request));
     }
 
     /**
      * 批量删除商品及其关联的经营、流量和定价记录。
      */
     @DeleteMapping("/batch-delete")
-    public Result<Void> batchDelete(@RequestParam("ids") List<Long> ids) {
-        return productService.batchDelete(ids);
+    public Result<Void> batchDelete(@RequestParam("ids") List<Long> ids, HttpServletRequest request) {
+        return productService.batchDelete(ids, getCurrentUserId(request));
     }
 
     /**
@@ -108,28 +112,31 @@ public class ProductController {
     @GetMapping("/{id}/trend")
     public Result<ProductTrendVO> getProductTrend(
             @PathVariable Long id,
-            @RequestParam(defaultValue = "30") int days
+            @RequestParam(defaultValue = "30") int days,
+            HttpServletRequest request
     ) {
-        return productService.getProductTrend(id, days);
+        return productService.getProductTrend(id, days, getCurrentUserId(request));
     }
 
     /**
      * 查询商品日维度经营指标，供表格或图表展示。
      */
     @GetMapping("/{id}/daily-metrics")
-    public Result<List<ProductDailyMetricVO>> getProductDailyMetrics(
+    public Result<ProductDailyMetricPageVO> getProductDailyMetrics(
             @PathVariable Long id,
-            @RequestParam(defaultValue = "90") Integer limit
+            @RequestParam(defaultValue = "1") Integer page,
+            @RequestParam(defaultValue = "10") Integer size,
+            HttpServletRequest request
     ) {
-        return productService.getProductDailyMetrics(id, limit);
+        return productService.getProductDailyMetrics(id, page, size, getCurrentUserId(request));
     }
 
     /**
      * 查询商品下的 SKU 明细。
      */
     @GetMapping("/{id}/skus")
-    public Result<List<ProductSkuVO>> getProductSkus(@PathVariable Long id) {
-        return productService.getProductSkus(id);
+    public Result<List<ProductSkuVO>> getProductSkus(@PathVariable Long id, HttpServletRequest request) {
+        return productService.getProductSkus(id, getCurrentUserId(request));
     }
 
     /**
@@ -138,8 +145,17 @@ public class ProductController {
     @GetMapping("/{id}/traffic-promo")
     public Result<List<TrafficPromoDailyVO>> getTrafficPromoDaily(
             @PathVariable Long id,
-            @RequestParam(defaultValue = "90") Integer limit
+            @RequestParam(defaultValue = "90") Integer limit,
+            HttpServletRequest request
     ) {
-        return productService.getTrafficPromoDaily(id, limit);
+        return productService.getTrafficPromoDaily(id, limit, getCurrentUserId(request));
+    }
+
+    private Long getCurrentUserId(HttpServletRequest request) {
+        Long userId = (Long) request.getAttribute("currentUserId");
+        if (userId == null) {
+            throw new IllegalStateException("请先登录");
+        }
+        return userId;
     }
 }

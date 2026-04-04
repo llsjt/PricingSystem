@@ -48,6 +48,18 @@
             </el-select>
           </div>
 
+          <div class="platform-picker">
+            <span class="picker-label">目标店铺</span>
+            <el-select v-model="selectedShopId" placeholder="请选择导入的目标店铺" class="platform-select" clearable>
+              <el-option
+                v-for="shop in filteredShops"
+                :key="shop.id"
+                :label="`${shop.shopName}（${shop.platform}）`"
+                :value="shop.id"
+              />
+            </el-select>
+          </div>
+
           <div class="import-layout">
             <div class="import-main">
               <el-upload
@@ -136,7 +148,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { Document, Download, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, type UploadProps } from 'element-plus'
 import MockExcelGeneratorPanel from '../components/MockExcelGeneratorPanel.vue'
@@ -144,6 +156,7 @@ import ProductList from './ProductList.vue'
 import { downloadTemplate, type ImportDataType, type ImportResultVO } from '../api/product'
 import request from '../api/request'
 import { resolveRequestErrorMessage } from '../utils/error'
+import { useShopStore } from '../stores/shop'
 
 interface ImportTypeOption {
   code: Exclude<ImportDataType, 'AUTO'>
@@ -184,13 +197,24 @@ const importTypes: ImportTypeOption[] = [
   }
 ]
 
+const shopStore = useShopStore()
 const activeTab = ref('products')
 const autoDetect = ref(true)
 const selectedType = ref<Exclude<ImportDataType, 'AUTO'>>('PRODUCT_BASE')
 const selectedPlatform = ref('')
+const selectedShopId = ref<number | null>(null)
 const platformOptions = ['\u6dd8\u5b9d', '\u5929\u732b', '\u4eac\u4e1c', '\u62fc\u591a\u591a', '\u6296\u5e97']
 const importResult = ref<ImportResultVO | null>(null)
 const productListRef = ref<any>(null)
+
+const filteredShops = computed(() => {
+  if (!selectedPlatform.value) return shopStore.shops
+  return shopStore.shops.filter((s) => s.platform === selectedPlatform.value)
+})
+
+onMounted(() => {
+  shopStore.fetchShops()
+})
 
 const selectedTypeInfo = computed(() => importTypes.find((item) => item.code === selectedType.value) || importTypes[0])
 const requestType = computed<ImportDataType>(() => (autoDetect.value ? 'AUTO' : selectedType.value))
@@ -221,6 +245,10 @@ const beforeUpload: UploadProps['beforeUpload'] = (rawFile) => {
     ElMessage.warning('\u8bf7\u5148\u9009\u62e9\u7535\u5546\u5e73\u53f0')
     return false
   }
+  if (!selectedShopId.value) {
+    ElMessage.warning('\u8bf7\u5148\u9009\u62e9\u76ee\u6807\u5e97\u94fa')
+    return false
+  }
 
   const name = rawFile.name.toLowerCase()
   if (!name.endsWith('.xlsx') && !name.endsWith('.xls')) {
@@ -242,7 +270,7 @@ const handleCustomUpload: UploadProps['httpRequest'] = async (options) => {
 
   try {
     const response: any = await request.post('/products/import', formData, {
-      params: { dataType: requestType.value, platform: selectedPlatform.value },
+      params: { dataType: requestType.value, platform: selectedPlatform.value, shopId: selectedShopId.value },
       headers: { 'Content-Type': 'multipart/form-data' }
     })
 

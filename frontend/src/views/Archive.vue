@@ -370,7 +370,20 @@ const {
 }
 
 .archive-hero .metric-card {
-  padding: 14px 16px;
+  padding: 18px 20px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(249, 252, 255, 0.98));
+  box-shadow: none;
+}
+
+.archive-hero .metric-card::before {
+  display: none;
+}
+
+.archive-hero .metric-card:hover {
+  border-color: var(--border-soft);
+  box-shadow: none;
 }
 
 .archive-hero .metric-value {

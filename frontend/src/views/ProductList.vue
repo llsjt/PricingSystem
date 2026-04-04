@@ -7,7 +7,6 @@
           <p>支持按平台筛选，并在详情中完整查看商品日指标、SKU 与流量推广数据。</p>
         </div>
         <div class="toolbar-actions">
-          <el-button @click="handleSearch">刷新</el-button>
           <el-button type="success" @click="openAddDialog">新增商品</el-button>
           <el-button type="danger" :disabled="selectedIds.length === 0" @click="handleBatchDelete">
             批量删除
@@ -28,11 +27,11 @@
         </el-select>
         <el-select v-model="filters.status" class="toolbar-select" placeholder="状态筛选">
           <el-option label="全部状态" value="ALL" />
-          <el-option label="销售中" value="ON_SALE" />
+          <el-option label="出售中" value="ON_SALE" />
           <el-option label="下架" value="OFF_SHELF" />
-          <el-option label="未知" value="UNKNOWN" />
         </el-select>
         <el-button type="primary" @click="handleSearch">搜索</el-button>
+        <el-button @click="resetFilters">重置</el-button>
       </div>
 
       <div class="selected-bar" v-if="selectedIds.length > 0">
@@ -51,17 +50,16 @@
         >
           <el-table-column type="selection" width="46" />
 
-          <el-table-column label="商品信息" min-width="260" show-overflow-tooltip>
+          <el-table-column label="商品名称" min-width="260" show-overflow-tooltip>
             <template #default="{ row }">
               <div class="product-cell">
                 <strong class="product-name">{{ row.productName || '-' }}</strong>
-                <div class="product-meta">
-                  <span>商品ID {{ row.id }}</span>
-                  <span>平台ID {{ row.externalProductId || '-' }}</span>
-                  <span>{{ row.categoryName || '未分类' }}</span>
-                </div>
               </div>
             </template>
+          </el-table-column>
+
+          <el-table-column label="类别" width="120" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.categoryName || '-' }}</template>
           </el-table-column>
 
           <el-table-column label="商品平台" width="100">
@@ -94,7 +92,7 @@
           <el-table-column v-if="!isVeryNarrowDesktop" label="经营表现" width="130">
             <template #default="{ row }">
               <div class="cell-stack">
-                <strong>销量 {{ Number(row.monthlySales || 0) }}</strong>
+                <strong>月销量 {{ Number(row.monthlySales || 0) }}</strong>
                 <span>转化 {{ formatPercent(row.conversionRate) }}</span>
               </div>
             </template>
@@ -115,14 +113,12 @@
           <div class="mobile-head">
             <div class="mobile-title">
               <strong>{{ row.productName || '-' }}</strong>
-              <span>商品ID {{ row.id }}</span>
             </div>
             <el-tag :type="statusTagType(row.status)">{{ formatStatusText(row.status) }}</el-tag>
           </div>
 
           <div class="mobile-meta">
             <span>平台：{{ row.platform || '-' }}</span>
-            <span>平台ID：{{ row.externalProductId || '-' }}</span>
             <span>类目：{{ row.categoryName || '未分类' }}</span>
           </div>
 
@@ -140,7 +136,7 @@
               <strong :class="{ low: Number(row.stock || 0) <= 20 }">{{ Number(row.stock || 0) }}</strong>
             </div>
             <div class="mobile-item">
-              <span>近30天销量</span>
+              <span>月销量</span>
               <strong>{{ Number(row.monthlySales || 0) }}</strong>
             </div>
           </div>
@@ -186,7 +182,7 @@
           </el-form-item>
           <el-form-item label="状态" prop="status">
             <el-select v-model="form.status" placeholder="请选择状态">
-              <el-option label="销售中" value="ON_SALE" />
+              <el-option label="出售中" value="ON_SALE" />
               <el-option label="下架" value="OFF_SHELF" />
             </el-select>
           </el-form-item>
@@ -284,20 +280,6 @@
                 </div>
               </div>
 
-              <div class="base-meta-grid">
-                <div class="base-meta-item">
-                  <span>商品平台</span>
-                  <strong>{{ currentProduct.platform || '-' }}</strong>
-                </div>
-                <div class="base-meta-item">
-                  <span>库存数量</span>
-                  <strong>{{ formatCount(currentProduct.stock) }}</strong>
-                </div>
-                <div class="base-meta-item">
-                  <span>销售状态</span>
-                  <strong>{{ formatStatusText(currentProduct.status) }}</strong>
-                </div>
-              </div>
             </section>
           </el-tab-pane>
 
@@ -322,30 +304,43 @@
                 </div>
               </div>
               <el-empty v-if="dailyMetrics.length === 0" description="暂无商品日指标数据" />
-              <el-table v-else :data="dailyMetrics" border stripe size="small">
-                <el-table-column label="日期" width="120">
-                  <template #default="{ row }">{{ row.statDate || '-' }}</template>
-                </el-table-column>
-                <el-table-column label="流量与转化" min-width="280">
-                  <template #default="{ row }">
-                    <div class="metric-pairs">
-                      <span><label>访客</label><strong>{{ formatCount(row.visitorCount) }}</strong></span>
-                      <span><label>加购</label><strong>{{ formatCount(row.addCartCount) }}</strong></span>
-                      <span><label>支付买家</label><strong>{{ formatCount(row.payBuyerCount) }}</strong></span>
-                      <span><label>转化率</label><strong>{{ formatPercent(row.conversionRate) }}</strong></span>
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column label="交易数据" min-width="240">
-                  <template #default="{ row }">
-                    <div class="metric-pairs">
-                      <span><label>支付件数</label><strong>{{ formatCount(row.salesCount) }}</strong></span>
-                      <span><label>成交金额</label><strong>{{ formatCurrency(row.turnover) }}</strong></span>
-                      <span><label>退款金额</label><strong>{{ formatCurrency(row.refundAmount) }}</strong></span>
-                    </div>
-                  </template>
-                </el-table-column>
-              </el-table>
+              <template v-else>
+                <el-table :data="dailyMetrics" border stripe size="small">
+                  <el-table-column label="日期" width="120">
+                    <template #default="{ row }">{{ row.statDate || '-' }}</template>
+                  </el-table-column>
+                  <el-table-column label="流量与转化" min-width="280">
+                    <template #default="{ row }">
+                      <div class="metric-pairs">
+                        <span><label>访客</label><strong>{{ formatCount(row.visitorCount) }}</strong></span>
+                        <span><label>加购</label><strong>{{ formatCount(row.addCartCount) }}</strong></span>
+                        <span><label>支付买家</label><strong>{{ formatCount(row.payBuyerCount) }}</strong></span>
+                        <span><label>转化率</label><strong>{{ formatPercent(row.conversionRate) }}</strong></span>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="交易数据" min-width="240">
+                    <template #default="{ row }">
+                      <div class="metric-pairs">
+                        <span><label>支付件数</label><strong>{{ formatCount(row.salesCount) }}</strong></span>
+                        <span><label>成交金额</label><strong>{{ formatCurrency(row.turnover) }}</strong></span>
+                        <span><label>退款金额</label><strong>{{ formatCurrency(row.refundAmount) }}</strong></span>
+                      </div>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <div class="detail-pagination">
+                  <el-pagination
+                    v-model:current-page="dailyMetricPagination.page"
+                    v-model:page-size="dailyMetricPagination.size"
+                    :total="dailyMetricPagination.total"
+                    :page-sizes="[10, 20, 50]"
+                    layout="total, sizes, prev, pager, next"
+                    @current-change="handleDailyMetricPageChange"
+                    @size-change="handleDailyMetricSizeChange"
+                  />
+                </div>
+              </template>
             </div>
           </el-tab-pane>
 
@@ -471,6 +466,7 @@ import {
   getProductList,
   getProductSkus,
   getTrafficPromoDaily,
+  type ProductDailyMetricPageVO,
   type ProductDailyMetricVO,
   type ProductListVO,
   type ProductSkuVO,
@@ -506,6 +502,12 @@ const detailLoading = ref(false)
 const detailTab = ref('base')
 const currentProduct = ref<ProductListVO | null>(null)
 const dailyMetrics = ref<ProductDailyMetricVO[]>([])
+const dailyMetricSummary = ref<ProductDailyMetricPageVO['summary']>({
+  days: 0,
+  totalVisitors: 0,
+  totalTurnover: 0,
+  avgConversionRate: 0
+})
 const skus = ref<ProductSkuVO[]>([])
 const trafficPromos = ref<TrafficPromoDailyVO[]>([])
 const formRef = ref<FormInstance>()
@@ -515,6 +517,12 @@ const trendDrawerRef = ref<InstanceType<typeof ProductTrendDrawer>>()
 const queryParams = reactive({
   page: 1,
   size: 10
+})
+
+const dailyMetricPagination = reactive({
+  page: 1,
+  size: 10,
+  total: 0
 })
 
 const filters = reactive({
@@ -566,7 +574,7 @@ const displayData = computed(() =>
 
 const formatCurrency = (value?: number | null) => sharedFormatCurrency(value)
 const formatPercent = (value?: number | null) => sharedFormatPercent(value)
-const formatStatusText = (status?: string) => (status === 'ON_SALE' ? '销售中' : status || '-')
+const formatStatusText = (status?: string) => (status === 'ON_SALE' ? '出售中' : status || '-')
 const average = (sum: number, count: number) => (count > 0 ? sum / count : 0)
 const calcRate = (numerator?: number | null, denominator?: number | null) => {
   const den = Number(denominator || 0)
@@ -576,21 +584,7 @@ const calcRate = (numerator?: number | null, denominator?: number | null) => {
 const calcGrossProfit = (salePrice?: number | null, costPrice?: number | null) =>
   Number(salePrice || 0) - Number(costPrice || 0)
 
-const dailySummary = computed(() => {
-  const rows = dailyMetrics.value
-  const totalVisitors = rows.reduce((sum, row) => sum + Number(row.visitorCount || 0), 0)
-  const totalTurnover = rows.reduce((sum, row) => sum + Number(row.turnover || 0), 0)
-  const avgConversionRate = average(
-    rows.reduce((sum, row) => sum + Number(row.conversionRate || 0), 0),
-    rows.length
-  )
-  return {
-    days: rows.length,
-    totalVisitors,
-    totalTurnover,
-    avgConversionRate
-  }
-})
+const dailySummary = computed(() => dailyMetricSummary.value)
 
 const skuSummary = computed(() => {
   const rows = skus.value
@@ -680,6 +674,14 @@ const handleSearch = async () => {
   }
 }
 
+const resetFilters = () => {
+  filters.keyword = ''
+  filters.platform = 'ALL'
+  filters.status = 'ALL'
+  queryParams.page = 1
+  handleSearch()
+}
+
 const refreshList = () => {
   queryParams.page = 1
   handleSearch()
@@ -758,21 +760,56 @@ const openTrendDrawer = (row: ProductListVO) => {
   trendDrawerRef.value?.open(row)
 }
 
+const resetDailyMetricState = () => {
+  dailyMetrics.value = []
+  dailyMetricPagination.page = 1
+  dailyMetricPagination.size = 10
+  dailyMetricPagination.total = 0
+  dailyMetricSummary.value = {
+    days: 0,
+    totalVisitors: 0,
+    totalTurnover: 0,
+    avgConversionRate: 0
+  }
+}
+
+const loadDailyMetricsPage = async (productId: number) => {
+  const dailyRes: any = await getProductDailyMetrics(productId, {
+    page: dailyMetricPagination.page,
+    size: dailyMetricPagination.size
+  })
+
+  if (dailyRes?.code !== 200) {
+    throw new Error(dailyRes?.message || '加载商品日指标失败')
+  }
+
+  const pageData = dailyRes.data || {}
+  dailyMetrics.value = pageData.records || []
+  dailyMetricPagination.page = Number(pageData.page || dailyMetricPagination.page)
+  dailyMetricPagination.size = Number(pageData.size || dailyMetricPagination.size)
+  dailyMetricPagination.total = Number(pageData.total || 0)
+  dailyMetricSummary.value = pageData.summary || {
+    days: 0,
+    totalVisitors: 0,
+    totalTurnover: 0,
+    avgConversionRate: 0
+  }
+}
+
 const loadDetailData = async (productId: number) => {
   detailLoading.value = true
   try {
-    const [dailyRes, skuRes, trafficRes] = await Promise.all([
-      getProductDailyMetrics(productId, { limit: 90 }),
+    const [, skuRes, trafficRes] = await Promise.all([
+      loadDailyMetricsPage(productId),
       getProductSkus(productId),
       getTrafficPromoDaily(productId, { limit: 90 })
     ])
 
-    dailyMetrics.value = dailyRes?.code === 200 ? dailyRes.data || [] : []
     skus.value = skuRes?.code === 200 ? skuRes.data || [] : []
     trafficPromos.value = trafficRes?.code === 200 ? trafficRes.data || [] : []
   } catch (error) {
     ElMessage.error(await resolveRequestErrorMessage(error, '加载商品明细数据失败'))
-    dailyMetrics.value = []
+    resetDailyMetricState()
     skus.value = []
     trafficPromos.value = []
   } finally {
@@ -780,10 +817,30 @@ const loadDetailData = async (productId: number) => {
   }
 }
 
+const handleDailyMetricPageChange = async (page: number) => {
+  if (!currentProduct.value) return
+  dailyMetricPagination.page = page
+  try {
+    detailLoading.value = true
+    await loadDailyMetricsPage(currentProduct.value.id)
+  } catch (error) {
+    ElMessage.error(await resolveRequestErrorMessage(error, '加载商品日指标失败'))
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+const handleDailyMetricSizeChange = async (size: number) => {
+  dailyMetricPagination.page = 1
+  dailyMetricPagination.size = size
+  await handleDailyMetricPageChange(1)
+}
+
 const openDetailDrawer = async (row: ProductListVO) => {
   currentProduct.value = row
   detailTab.value = 'base'
   detailVisible.value = true
+  resetDailyMetricState()
   await loadDetailData(row.id)
 }
 
@@ -798,7 +855,7 @@ handleSearch()
 
 .search-toolbar {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) 140px 140px 104px;
+  grid-template-columns: minmax(320px, 560px) 140px 140px 96px 96px;
   align-items: center;
   gap: 10px;
   margin-bottom: 14px;
@@ -1204,6 +1261,12 @@ handleSearch()
 .detail-table-wrap :deep(.el-table td .cell) {
   font-size: 14px;
   line-height: 1.65;
+}
+
+.detail-pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
 }
 
 .detail-actions {

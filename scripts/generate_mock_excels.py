@@ -57,6 +57,8 @@ CATEGORY_TOPICS: list[tuple[str, list[str]]] = [
 ]
 TITLE_PREFIXES = ["2026新款", "爆款升级", "高颜值", "轻奢质感", "旗舰款", "热卖同款"]
 TITLE_SUFFIXES = ["", " 女款", " 男款", " 家用", " 旅行装", " 礼盒装"]
+TITLE_SERIES = ["山系轻外出", "城市通勤", "周末出游", "居家回购", "办公室常备", "直播热推", "礼赠甄选", "亲子出行", "补货常备", "轻能量运动"]
+FOCUS_TITLE_MARKERS = ["长周期日指标样本", "近90天截断样本", "多月经营轨迹样本"]
 TRAFFIC_SOURCES = ["直通车", "万相台", "手淘搜索", "猜你喜欢", "活动会场", "短视频", "直播间"]
 COLORS = ["雅黑", "云白", "雾蓝", "奶杏", "石墨灰", "抹茶绿", "樱花粉"]
 SIZES = ["S", "M", "L", "XL", "2XL"]
@@ -168,7 +170,7 @@ def build_product_catalog(count: int, start_product_id: int, rng: random.Random)
         topic = topic_pool[rng.randrange(len(topic_pool))]
         prefix = TITLE_PREFIXES[(index + rng.randrange(len(TITLE_PREFIXES))) % len(TITLE_PREFIXES)]
         suffix = TITLE_SUFFIXES[(index + rng.randrange(len(TITLE_SUFFIXES))) % len(TITLE_SUFFIXES)]
-        title = f"{prefix}{topic}{suffix} {index + 1:03d}".strip()
+        title = build_product_title(index, prefix, topic, suffix, rng)
 
         cost_price = money(Decimal(str(rng.uniform(12, 220))))
         markup = Decimal(str(rng.uniform(1.2, 2.1)))
@@ -219,7 +221,7 @@ def build_daily_rows(
     newest_date: date,
     rng: random.Random,
 ) -> list[list[object]]:
-    row_counts = allocate_counts(total_rows, len(products), rng)
+    row_counts = allocate_daily_counts(total_rows, len(products), rng)
     rows: list[list[object]] = []
 
     for product, row_count in zip(products, row_counts):
@@ -351,6 +353,39 @@ def allocate_counts(total_rows: int, bucket_count: int, rng: random.Random) -> l
     for _ in range(remaining):
         counts[rng.randrange(bucket_count)] += 1
     return counts
+
+
+def allocate_daily_counts(total_rows: int, bucket_count: int, rng: random.Random) -> list[int]:
+    counts = [1] * bucket_count
+    remaining = total_rows - bucket_count
+    if remaining <= 0:
+        return counts
+
+    # 让前几个商品稳定形成长周期日指标，便于复现“详情页只显示最近 90 条”的情况。
+    for index, focus_extra in enumerate((149, 119, 94)):
+        if index >= bucket_count or remaining <= 0:
+            break
+        extra = min(focus_extra, remaining)
+        counts[index] += extra
+        remaining -= extra
+
+    for _ in range(remaining):
+        counts[rng.randrange(bucket_count)] += 1
+    return counts
+
+
+def build_product_title(
+    index: int,
+    prefix: str,
+    topic: str,
+    suffix: str,
+    rng: random.Random,
+) -> str:
+    if index < len(FOCUS_TITLE_MARKERS):
+        marker = FOCUS_TITLE_MARKERS[index]
+    else:
+        marker = TITLE_SERIES[(index + rng.randrange(len(TITLE_SERIES))) % len(TITLE_SERIES)]
+    return f"【{marker}】{prefix}{topic}{suffix}".strip()
 
 
 def write_xlsx(path: Path, sheet_name: str, headers: list[str], rows: list[list[object]]) -> None:

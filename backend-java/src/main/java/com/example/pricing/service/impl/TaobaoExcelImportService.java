@@ -79,6 +79,22 @@ public class TaobaoExcelImportService {
      */
     @Transactional(rollbackFor = Exception.class)
     public ImportResultVO importExcel(MultipartFile file, String requestedTypeCode, String platform) {
+        Long shopId = resolveShopId(platform);
+        return doImportExcel(file, requestedTypeCode, shopId);
+    }
+
+    /**
+     * 导入 Excel 文件（前端已指定目标店铺），直接使用传入的 shopId。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public ImportResultVO importExcel(MultipartFile file, String requestedTypeCode, String platform, Long shopId) {
+        return doImportExcel(file, requestedTypeCode, shopId);
+    }
+
+    /**
+     * 统一的导入核心逻辑。
+     */
+    private ImportResultVO doImportExcel(MultipartFile file, String requestedTypeCode, Long shopId) {
         validateFile(file);
         ParsedSheet sheet = parseSheet(file);
         if (sheet.rows().isEmpty()) {
@@ -90,7 +106,6 @@ public class TaobaoExcelImportService {
                 || requestedTypeCode.isBlank()
                 || "AUTO".equalsIgnoreCase(requestedTypeCode);
 
-        Long shopId = resolveShopId(platform);
         UploadBatch batch = createBatch(
                 shopId,
                 Objects.requireNonNullElse(file.getOriginalFilename(), "taobao-import.xlsx"),

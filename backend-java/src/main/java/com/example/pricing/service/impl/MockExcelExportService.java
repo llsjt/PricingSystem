@@ -47,6 +47,8 @@ public class MockExcelExportService {
 
     private static final String[] TITLE_PREFIXES = {"2026新款", "爆款升级", "高颜值", "轻奢质感", "旗舰款", "热卖同款"};
     private static final String[] TITLE_SUFFIXES = {"", " 女款", " 男款", " 家用", " 旅行装", " 礼盒装"};
+    private static final String[] TITLE_SERIES = {"山系轻外出", "城市通勤", "周末出游", "居家回购", "办公室常备", "直播热推", "礼赠甄选", "亲子出行", "补货常备", "轻能量运动"};
+    private static final String[] FOCUS_TITLE_MARKERS = {"长周期日指标样本", "近90天截断样本", "多月经营轨迹样本"};
     private static final String[] TRAFFIC_SOURCES = {"直通车", "万相台", "手淘搜索", "猜你喜欢", "活动会场", "短视频", "直播间"};
     private static final String[] COLORS = {"雅黑", "云白", "雾蓝", "奶杏", "石墨灰", "抹茶绿", "樱花粉"};
     private static final String[] SIZES = {"S", "M", "L", "XL", "2XL"};
@@ -164,7 +166,7 @@ public class MockExcelExportService {
             String topic = categoryTopic.topics().get(random.nextInt(categoryTopic.topics().size()));
             String prefix = TITLE_PREFIXES[(index + random.nextInt(TITLE_PREFIXES.length)) % TITLE_PREFIXES.length];
             String suffix = TITLE_SUFFIXES[(index + random.nextInt(TITLE_SUFFIXES.length)) % TITLE_SUFFIXES.length];
-            String title = (prefix + topic + suffix + " " + String.format("%03d", index + 1)).trim();
+            String title = buildProductTitle(index, prefix, topic, suffix, random);
 
             BigDecimal costPrice = money(decimal(random, 12, 220));
             BigDecimal salePrice = money(costPrice.multiply(decimal(random, 1.2, 2.1)));
@@ -207,7 +209,7 @@ public class MockExcelExportService {
     }
 
     private List<List<Object>> buildDailyRows(List<ProductSpec> products, int totalRows, LocalDate newestDate, Random random) {
-        int[] counts = allocateCounts(totalRows, products.size(), random);
+        int[] counts = allocateDailyCounts(totalRows, products.size(), random);
         List<List<Object>> rows = new ArrayList<>();
 
         for (int index = 0; index < products.size(); index++) {
@@ -382,6 +384,37 @@ public class MockExcelExportService {
             counts[random.nextInt(bucketCount)]++;
         }
         return counts;
+    }
+
+    private int[] allocateDailyCounts(int totalRows, int bucketCount, Random random) {
+        int[] counts = new int[bucketCount];
+        Arrays.fill(counts, 1);
+
+        int remaining = totalRows - bucketCount;
+        if (remaining <= 0) {
+            return counts;
+        }
+
+        // 让前几个商品稳定形成长周期日指标，便于在详情页复现“仅显示最近 90 条”的场景。
+        int[] focusExtras = {149, 119, 94};
+        for (int index = 0; index < Math.min(bucketCount, focusExtras.length) && remaining > 0; index++) {
+            int extra = Math.min(focusExtras[index], remaining);
+            counts[index] += extra;
+            remaining -= extra;
+        }
+
+        while (remaining > 0) {
+            counts[random.nextInt(bucketCount)]++;
+            remaining--;
+        }
+        return counts;
+    }
+
+    private String buildProductTitle(int index, String prefix, String topic, String suffix, Random random) {
+        String marker = index < FOCUS_TITLE_MARKERS.length
+                ? FOCUS_TITLE_MARKERS[index]
+                : TITLE_SERIES[(index + random.nextInt(TITLE_SERIES.length)) % TITLE_SERIES.length];
+        return ("【" + marker + "】" + prefix + topic + suffix).trim();
     }
 
     private BigDecimal decimal(Random random, double min, double max) {
