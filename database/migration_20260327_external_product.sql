@@ -14,7 +14,7 @@ ALTER TABLE product
   MODIFY COLUMN sale_price DECIMAL(10,2) NULL COMMENT '当前售价',
   MODIFY COLUMN cost_price DECIMAL(10,2) NULL COMMENT '成本价',
   MODIFY COLUMN stock INT NOT NULL DEFAULT 0 COMMENT '库存',
-  MODIFY COLUMN status VARCHAR(20) NOT NULL DEFAULT 'UNKNOWN' COMMENT '商品状态',
+  MODIFY COLUMN status VARCHAR(20) NOT NULL DEFAULT '出售中' COMMENT '商品状态',
   ADD COLUMN profile_status VARCHAR(20) NOT NULL DEFAULT 'COMPLETE' COMMENT '商品档案状态：PLACEHOLDER/COMPLETE' AFTER status,
   ADD UNIQUE KEY uk_shop_external_product (shop_id, external_product_id),
   ADD KEY idx_shop_profile_status (shop_id, profile_status);

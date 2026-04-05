@@ -17,5 +17,5 @@ public class ProductManualDTO {
     private Integer stock;
     private Integer monthlySales = 0;
     private BigDecimal conversionRate = BigDecimal.ZERO;
-    private String status = "ON_SALE";
+    private String status = "出售中";
 }

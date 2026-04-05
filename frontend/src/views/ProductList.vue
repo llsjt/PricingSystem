@@ -27,8 +27,8 @@
         </el-select>
         <el-select v-model="filters.status" class="toolbar-select" placeholder="状态筛选">
           <el-option label="全部状态" value="ALL" />
-          <el-option label="出售中" value="ON_SALE" />
-          <el-option label="下架" value="OFF_SHELF" />
+          <el-option label="出售中" value="出售中" />
+          <el-option label="下架" value="下架" />
         </el-select>
         <el-button type="primary" @click="handleSearch">搜索</el-button>
         <el-button @click="resetFilters">重置</el-button>
@@ -183,8 +183,8 @@
           </el-form-item>
           <el-form-item label="状态" prop="status">
             <el-select v-model="form.status" placeholder="请选择状态">
-              <el-option label="出售中" value="ON_SALE" />
-              <el-option label="下架" value="OFF_SHELF" />
+              <el-option label="出售中" value="出售中" />
+              <el-option label="下架" value="下架" />
             </el-select>
           </el-form-item>
           <el-form-item label="成本价" prop="costPrice">
@@ -542,7 +542,7 @@ const createDefaultForm = (): ProductFormModel => ({
   stock: 0,
   monthlySales: 120,
   conversionRate: 0.04,
-  status: 'ON_SALE'
+  status: '出售中'
 })
 
 const form = reactive(createDefaultForm())
@@ -576,7 +576,7 @@ const displayData = computed(() =>
 
 const formatCurrency = (value?: number | null) => sharedFormatCurrency(value)
 const formatPercent = (value?: number | null) => sharedFormatPercent(value)
-const formatStatusText = (status?: string) => (status === 'ON_SALE' ? '出售中' : status || '-')
+const formatStatusText = (status?: string) => status || '-'
 const average = (sum: number, count: number) => (count > 0 ? sum / count : 0)
 const calcRate = (numerator?: number | null, denominator?: number | null) => {
   const den = Number(denominator || 0)
@@ -622,8 +622,8 @@ const trafficSummary = computed(() => {
 })
 
 const statusTagType = (status?: string) => {
-  if (status === 'ON_SALE') return 'success'
-  if (status === 'OFF_SHELF') return 'info'
+  if (status === '出售中') return 'success'
+  if (status === '下架') return 'info'
   return 'warning'
 }
 

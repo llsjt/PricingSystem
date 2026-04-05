@@ -373,7 +373,7 @@ public class TaobaoExcelImportService {
         product.setCurrentPrice(nullableMoney(parseAmount(row.getFirst("\u5f53\u524d\u552e\u4ef7", "\u552e\u4ef7", "\u9500\u552e\u4ef7", "\u4e00\u53e3\u4ef7", "\u5546\u54c1\u4ef7\u683c"))));
         product.setStock(defaultInt(parseInteger(row.getFirst("\u5e93\u5b58", "\u53ef\u552e\u5e93\u5b58", "\u603b\u5e93\u5b58"))));
         String status = row.getFirst("\u5546\u54c1\u72b6\u6001", "\u5b9d\u8d1d\u72b6\u6001", "\u72b6\u6001");
-        product.setStatus(status == null || status.isBlank() ? "ON_SALE" : status.trim());
+        product.setStatus(normalizeProductStatus(status));
         product.setProfileStatus("COMPLETE");
 
         if (product.getId() == null) {
@@ -541,7 +541,7 @@ public class TaobaoExcelImportService {
             product.setExternalProductId(resolveExternalProductId(externalProductId, title));
             product.setTitle(trimToNull(title));
             product.setStock(0);
-            product.setStatus("UNKNOWN");
+            product.setStatus("出售中");
             product.setProfileStatus("PLACEHOLDER");
             productMapper.insert(product);
             return product;
@@ -560,7 +560,7 @@ public class TaobaoExcelImportService {
             changed = true;
         }
         if (product.getStatus() == null || product.getStatus().isBlank()) {
-            product.setStatus("UNKNOWN");
+            product.setStatus("出售中");
             changed = true;
         }
         if (product.getProfileStatus() == null || product.getProfileStatus().isBlank()) {
@@ -878,6 +878,17 @@ public class TaobaoExcelImportService {
                 .divide(BigDecimal.valueOf(visitorCount), 4, RoundingMode.HALF_UP);
     }
 
+    private String normalizeProductStatus(String status) {
+        String normalized = trimToNull(status);
+        if (normalized == null) {
+            return "出售中";
+        }
+        if ("出售中".equals(normalized) || "下架".equals(normalized)) {
+            return normalized;
+        }
+        throw new IllegalArgumentException("商品状态仅支持“出售中”或“下架”");
+    }
+
     /**
      * 去除字符串首尾空格，空内容时返回 null。
      */
@@ -956,7 +967,7 @@ public class TaobaoExcelImportService {
                 "商品基础信息",
                 List.of("商品ID", "商品标题", "商品类目", "成本价", "当前售价", "库存", "商品状态"),
                 List.of(
-                        List.<Object>of("202603260001", "防晒衣女夏季薄款", "女装/外套", "59.00", "99.00", "180", "ON_SALE")
+                        List.<Object>of("202603260001", "防晒衣女夏季薄款", "女装/外套", "59.00", "99.00", "180", "出售中")
                 ),
                 List.of(
                         List.of("商品ID", "商品编号", "宝贝ID", "Item ID"),

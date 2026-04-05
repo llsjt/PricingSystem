@@ -140,7 +140,11 @@ public class ProductServiceImpl implements ProductService {
         product.setCostPrice(defaultDecimal(dto.getCostPrice()));
         product.setCurrentPrice(defaultDecimal(dto.getSalePrice()));
         product.setStock(defaultInteger(dto.getStock()));
-        product.setStatus(dto.getStatus() == null || dto.getStatus().isBlank() ? "ON_SALE" : dto.getStatus().trim());
+        try {
+            product.setStatus(normalizeProductStatus(dto.getStatus()));
+        } catch (IllegalArgumentException e) {
+            return Result.error(e.getMessage());
+        }
         product.setProfileStatus("COMPLETE");
         productMapper.insert(product);
 
@@ -552,6 +556,17 @@ public class ProductServiceImpl implements ProductService {
             return null;
         }
         return value.trim();
+    }
+
+    private String normalizeProductStatus(String status) {
+        String normalized = trimToNull(status);
+        if (normalized == null) {
+            return "出售中";
+        }
+        if ("出售中".equals(normalized) || "下架".equals(normalized)) {
+            return normalized;
+        }
+        throw new IllegalArgumentException("商品状态仅支持“出售中”或“下架”");
     }
 
     private Page<ProductListVO> emptyPage(int current, int size) {

@@ -175,7 +175,7 @@ public class MockExcelExportService {
             }
 
             int stock = 60 + random.nextInt(1141);
-            String status = random.nextDouble() < 0.9 ? "ON_SALE" : "OFF_SHELF";
+            String status = random.nextDouble() < 0.9 ? "出售中" : "下架";
             double popularity = 0.8 + random.nextDouble() * 0.8;
 
             products.add(new ProductSpec(

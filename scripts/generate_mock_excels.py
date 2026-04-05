@@ -179,7 +179,7 @@ def build_product_catalog(count: int, start_product_id: int, rng: random.Random)
             sale_price = money(cost_price * Decimal("1.20"))
 
         stock = rng.randint(60, 1200)
-        status = rng.choices(["ON_SALE", "OFF_SHELF"], weights=[9, 1], k=1)[0]
+        status = rng.choices(["出售中", "下架"], weights=[9, 1], k=1)[0]
         popularity = rng.uniform(0.8, 1.6)
         product_id = str(start_product_id + index)
 
