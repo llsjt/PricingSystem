@@ -248,11 +248,12 @@ public class ProductServiceImpl implements ProductService {
             statMapper.delete(statWrapper);
             deleteTrafficMetrics(ids);
             deletePricingArtifacts(ids);
+            deleteProductSkus(ids);
             productMapper.deleteBatchIds(ids);
             return Result.success();
         } catch (Exception e) {
             log.error("Batch delete products failed", e);
-            return Result.error("批量删除失败: " + e.getMessage());
+            return Result.error("批量删除失败，请稍后重试");
         }
     }
 
@@ -419,6 +420,12 @@ public class ProductServiceImpl implements ProductService {
         LambdaQueryWrapper<TrafficPromoDaily> trafficWrapper = new LambdaQueryWrapper<>();
         trafficWrapper.in(TrafficPromoDaily::getProductId, productIds);
         trafficPromoDailyMapper.delete(trafficWrapper);
+    }
+
+    private void deleteProductSkus(List<Long> productIds) {
+        LambdaQueryWrapper<ProductSku> skuWrapper = new LambdaQueryWrapper<>();
+        skuWrapper.in(ProductSku::getProductId, productIds);
+        productSkuMapper.delete(skuWrapper);
     }
 
     private void deletePricingArtifacts(List<Long> productIds) {

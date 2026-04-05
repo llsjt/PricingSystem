@@ -43,12 +43,13 @@
         <el-table
           ref="tableRef"
           :data="displayData"
+          row-key="id"
           border
           stripe
           v-loading="loading"
           @selection-change="handleSelectionChange"
         >
-          <el-table-column type="selection" width="46" />
+          <el-table-column type="selection" width="46" :reserve-selection="true" />
 
           <el-table-column label="商品名称" min-width="260" show-overflow-tooltip>
             <template #default="{ row }">
@@ -458,7 +459,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import {
   addProductManual,
   batchDeleteProducts,
@@ -513,6 +514,7 @@ const trafficPromos = ref<TrafficPromoDailyVO[]>([])
 const formRef = ref<FormInstance>()
 const tableRef = ref<any>(null)
 const trendDrawerRef = ref<InstanceType<typeof ProductTrendDrawer>>()
+let syncingTableSelection = false
 
 const queryParams = reactive({
   page: 1,
@@ -632,19 +634,39 @@ const clearSelection = () => {
 
 const isSelected = (id: number) => selectedIds.value.includes(id)
 
+const syncTableSelection = async () => {
+  if (isMobile.value) return
+  await nextTick()
+
+  const table = tableRef.value
+  if (!table) return
+
+  const selectedSet = new Set(selectedIds.value)
+  syncingTableSelection = true
+  table.clearSelection()
+  displayData.value.forEach((row) => {
+    if (selectedSet.has(row.id)) {
+      table.toggleRowSelection(row, true)
+    }
+  })
+  await nextTick()
+  syncingTableSelection = false
+}
+
 const toggleRowSelection = (row: ProductListVO) => {
   if (isSelected(row.id)) {
     selectedIds.value = selectedIds.value.filter((id) => id !== row.id)
     return
   }
-  selectedIds.value = [...selectedIds.value, row.id]
+  selectedIds.value = Array.from(new Set([...selectedIds.value, row.id]))
 }
 
 watch(
-  () => filters.status,
+  [displayData, isMobile],
   () => {
-    clearSelection()
-  }
+    void syncTableSelection()
+  },
+  { deep: true }
 )
 
 const resetForm = () => {
@@ -663,7 +685,7 @@ const handleSearch = async () => {
     if (res?.code === 200) {
       tableData.value = res.data.records || []
       total.value = res.data.total || 0
-      clearSelection()
+      await syncTableSelection()
       return
     }
     ElMessage.error(res?.message || '加载商品失败')
@@ -690,7 +712,15 @@ const refreshList = () => {
 defineExpose({ refreshList })
 
 const handleSelectionChange = (selection: ProductListVO[]) => {
-  selectedIds.value = selection.map((item) => item.id)
+  if (syncingTableSelection) return
+
+  const selectedSet = new Set(selectedIds.value)
+  const currentPageIds = displayData.value.map((item) => item.id)
+
+  currentPageIds.forEach((id) => selectedSet.delete(id))
+  selection.forEach((item) => selectedSet.add(item.id))
+
+  selectedIds.value = Array.from(selectedSet)
 }
 
 const confirmBatchDelete = async () => {
@@ -717,6 +747,7 @@ const handleBatchDelete = async () => {
     const res: any = await batchDeleteProducts(selectedIds.value)
     if (res?.code === 200) {
       ElMessage.success('批量删除成功')
+      clearSelection()
       refreshList()
       return
     }
