@@ -3,38 +3,31 @@
     <section class="panel-card archive-hero">
       <div class="section-title">
         <h2>决策档案</h2>
-        <p>统一查看新的定价任务、执行结果和协同日志，页面完全基于 `pricing_task / pricing_result / agent_run_log` 数据结构。</p>
       </div>
-      <div class="metric-grid compact-metrics">
-        <article class="metric-card">
-          <div class="metric-label">任务总数</div>
-          <div class="metric-value">{{ stats.total }}</div>
-          <div class="metric-hint">按当前时间范围统计</div>
+      <div class="summary-strip">
+        <article class="summary-item">
+          <span>任务总数</span>
+          <strong>{{ stats.total }}</strong>
         </article>
-        <article class="metric-card">
-          <div class="metric-label">已完成</div>
-          <div class="metric-value">{{ stats.completed }}</div>
-          <div class="metric-hint">可查看决策结果并导出报告</div>
+        <article class="summary-item">
+          <span>已完成</span>
+          <strong>{{ stats.completed }}</strong>
         </article>
-        <article class="metric-card">
-          <div class="metric-label">执行中</div>
-          <div class="metric-value">{{ stats.running }}</div>
-          <div class="metric-hint">任务仍在处理</div>
+        <article class="summary-item">
+          <span>执行中</span>
+          <strong>{{ stats.running }}</strong>
         </article>
-        <article class="metric-card">
-          <div class="metric-label">失败</div>
-          <div class="metric-value">{{ stats.failed }}</div>
-          <div class="metric-hint">需要排查数据或约束条件</div>
+        <article class="summary-item">
+          <span>失败</span>
+          <strong>{{ stats.failed }}</strong>
         </article>
       </div>
     </section>
 
     <section class="panel-card filter-panel">
-      <div class="section-head">
-        <div class="section-title">
-          <h3>任务筛选</h3>
-          <p>按状态和时间范围查询任务记录。</p>
-        </div>
+      <div class="filter-head">
+        <h3>任务筛选</h3>
+        <span>当前共 {{ total }} 条任务</span>
       </div>
 
       <div class="toolbar-row filter-grid">
@@ -68,7 +61,6 @@
       <div class="section-head">
         <div class="section-title">
           <h3>任务列表</h3>
-          <p>点击任务进入详情，查看结果报告、执行策略和 Agent 协同日志。</p>
         </div>
       </div>
 
@@ -347,57 +339,63 @@ const {
   gap: 16px;
 }
 
-.compact-metrics {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
 .archive-hero {
-  padding: 14px 16px;
-}
-
-.archive-hero .section-title {
-  gap: 4px;
-  margin-bottom: 8px;
-}
-
-.archive-hero .section-title p {
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.archive-hero .compact-metrics {
-  gap: 10px;
-}
-
-.archive-hero .metric-card {
-  min-height: 112px;
-  padding: 14px 16px;
-  border: 1px solid rgba(31, 46, 77, 0.06);
-  border-radius: 12px;
-  background: var(--surface-2);
-  box-shadow: none;
-}
-
-.archive-hero .metric-card::before {
-  display: none;
-}
-
-.archive-hero .metric-card:hover {
-  border-color: var(--border-soft);
-  box-shadow: none;
-}
-
-.archive-hero .metric-value {
-  margin-top: 6px;
-  font-size: 30px;
-}
-
-.filter-panel {
   padding: 12px 14px;
 }
 
-.filter-panel .section-head {
+.archive-hero .section-title {
   margin-bottom: 10px;
+}
+
+.filter-panel {
+  padding: 10px 12px;
+}
+
+.summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 86px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 46, 77, 0.06);
+  background: var(--surface-2);
+}
+
+.summary-item span {
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.summary-item strong {
+  color: var(--text-1);
+  font-size: 36px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.filter-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.filter-head h3 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.filter-head span {
+  color: var(--text-3);
+  font-size: 12px;
 }
 
 .filter-grid {
@@ -421,7 +419,7 @@ const {
 .table-footer {
   display: flex;
   justify-content: center;
-  margin-top: 20px;
+  margin-top: 14px;
 }
 
 .drawer-meta {
@@ -542,7 +540,7 @@ const {
 }
 
 @media (max-width: 1200px) {
-  .compact-metrics,
+  .summary-strip,
   .drawer-meta {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -557,10 +555,19 @@ const {
 }
 
 @media (max-width: 768px) {
-  .compact-metrics,
+  .summary-strip,
   .drawer-meta,
   .filter-grid {
     grid-template-columns: 1fr;
+  }
+
+  .summary-item strong {
+    font-size: 30px;
+  }
+
+  .filter-head {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .drawer-actions {

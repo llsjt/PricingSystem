@@ -19,7 +19,7 @@
           v-model="filters.keyword"
           clearable
           placeholder="搜索商品名称、类目、商品ID或平台商品ID"
-          @keyup.enter="handleSearch"
+          @keyup.enter="applyFilters"
         />
         <el-select v-model="filters.platform" class="toolbar-select" placeholder="平台筛选">
           <el-option label="全部平台" value="ALL" />
@@ -30,7 +30,7 @@
           <el-option label="出售中" value="出售中" />
           <el-option label="下架" value="下架" />
         </el-select>
-        <el-button type="primary" @click="handleSearch">搜索</el-button>
+        <el-button type="primary" @click="applyFilters">搜索</el-button>
         <el-button @click="resetFilters">重置</el-button>
       </div>
 
@@ -565,14 +565,7 @@ const platformOptions = computed(() => {
   return Array.from(values)
 })
 
-const displayData = computed(() =>
-  tableData.value.filter((row) => {
-    if (filters.status !== 'ALL' && row.status !== filters.status) {
-      return false
-    }
-    return true
-  })
-)
+const displayData = computed(() => tableData.value)
 
 const formatCurrency = (value?: number | null) => sharedFormatCurrency(value)
 const formatPercent = (value?: number | null) => sharedFormatPercent(value)
@@ -680,7 +673,8 @@ const handleSearch = async () => {
       page: queryParams.page,
       size: queryParams.size,
       keyword: filters.keyword.trim() || undefined,
-      platform: filters.platform === 'ALL' ? undefined : filters.platform
+      platform: filters.platform === 'ALL' ? undefined : filters.platform,
+      status: filters.status === 'ALL' ? undefined : filters.status
     })
     if (res?.code === 200) {
       tableData.value = res.data.records || []
@@ -694,6 +688,11 @@ const handleSearch = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const applyFilters = () => {
+  queryParams.page = 1
+  handleSearch()
 }
 
 const resetFilters = () => {

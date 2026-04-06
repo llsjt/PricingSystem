@@ -152,7 +152,7 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
-    public Result<Page<ProductListVO>> getProductList(int page, int size, String keyword, String dataSource, String platform, Long shopId, Long userId) {
+    public Result<Page<ProductListVO>> getProductList(int page, int size, String keyword, String dataSource, String platform, String status, Long shopId, Long userId) {
         int safePage = Math.max(page, 1);
         int safeSize = size <= 0 || size > 100 ? 10 : size;
 
@@ -194,6 +194,9 @@ public class ProductServiceImpl implements ProductService {
                 return Result.success(emptyPage(safePage, safeSize));
             }
             wrapper.in(Product::getShopId, platformShopIds);
+        }
+        if (status != null && !status.isBlank()) {
+            wrapper.eq(Product::getStatus, status.trim());
         }
         wrapper.orderByDesc(Product::getUpdatedAt, Product::getId);
 
