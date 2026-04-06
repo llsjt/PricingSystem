@@ -4,7 +4,6 @@
       <div class="panel-header">
         <div>
           <h2 class="panel-title">店铺管理</h2>
-          <p class="panel-desc">管理您在各电商平台的店铺信息</p>
         </div>
         <el-button type="primary" @click="openCreateDialog">新增店铺</el-button>
       </div>
@@ -171,11 +170,6 @@ onMounted(() => fetchList())
   font-size: 20px;
   font-weight: 700;
   color: #24324a;
-}
-
-.panel-desc {
-  margin: 6px 0 0;
-  color: #5e6a7d;
 }
 
 .shop-table {
