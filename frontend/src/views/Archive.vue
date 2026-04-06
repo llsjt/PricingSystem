@@ -360,9 +360,8 @@ const {
 .summary-item {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  min-height: 86px;
-  padding: 12px 14px;
+  gap: 4px;
+  padding: 10px 14px;
   border-radius: 12px;
   border: 1px solid rgba(31, 46, 77, 0.06);
   background: var(--surface-2);
@@ -375,7 +374,7 @@ const {
 
 .summary-item strong {
   color: var(--text-1);
-  font-size: 36px;
+  font-size: 24px;
   line-height: 1;
   font-weight: 700;
 }
@@ -562,7 +561,7 @@ const {
   }
 
   .summary-item strong {
-    font-size: 30px;
+    font-size: 20px;
   }
 
   .filter-head {

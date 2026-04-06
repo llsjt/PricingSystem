@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowDown, Close, Menu, UserFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { APP_NAME, APP_NAV_ITEMS, APP_SUBTITLE } from '../config/navigation'
+import { APP_NAME, APP_NAV_ITEMS } from '../config/navigation'
 import { useViewport } from '../composables/useViewport'
 import { useUserStore } from '../stores/user'
 import { useShopStore } from '../stores/shop'
@@ -21,7 +21,6 @@ const userStore = useUserStore()
 const { width } = useViewport()
 
 const appName = APP_NAME
-const appSubtitle = APP_SUBTITLE
 const username = computed(() => userStore.username || 'User')
 const isSidebarCollapsed = ref(false)
 const mobileMenuVisible = ref(false)
@@ -228,7 +227,6 @@ onBeforeUnmount(() => {
         <transition name="fade-slide">
           <div v-if="!isSidebarCollapsed || isMobile" class="brand-copy">
             <strong>{{ appName }}</strong>
-            <span>{{ appSubtitle }}</span>
           </div>
         </transition>
       </div>
@@ -377,10 +375,9 @@ onBeforeUnmount(() => {
   height: 100vh;
   min-height: 100vh;
   padding: 12px 10px 10px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(244, 248, 253, 0.96));
-  border-right: 1px solid var(--line-soft);
-  box-shadow: 6px 0 16px rgba(20, 40, 63, 0.08);
+  background: linear-gradient(180deg, #dbe6f4 0%, #d2deef 100%);
+  border-right: 1px solid rgba(98, 122, 154, 0.3);
+  box-shadow: 6px 0 14px rgba(23, 47, 79, 0.12);
   transition: width 0.2s ease-in-out, min-width 0.2s ease-in-out, transform 0.2s ease-in-out;
   z-index: 20;
 }
@@ -403,11 +400,10 @@ onBeforeUnmount(() => {
 
 .brand-copy {
   display: grid;
-  gap: 2px;
   padding: 10px 12px;
   border-radius: 12px;
-  background: var(--surface-2);
-  border: 1px solid var(--line-soft);
+  background: rgba(241, 247, 255, 0.78);
+  border: 1px solid rgba(118, 140, 171, 0.26);
 }
 
 .brand-copy strong {
@@ -417,16 +413,6 @@ onBeforeUnmount(() => {
   color: var(--text-1);
   font-weight: 700;
   letter-spacing: 0.01em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.brand-copy span {
-  font-size: 11px;
-  color: var(--text-3);
-  font-weight: 500;
-  line-height: 1.5;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -458,7 +444,7 @@ onBeforeUnmount(() => {
   border: 1px solid transparent;
   border-radius: 12px;
   background: transparent;
-  color: var(--text-2);
+  color: #475b74;
   cursor: pointer;
   transition: background 0.18s ease-in-out, color 0.18s ease-in-out, border-color 0.18s ease-in-out;
   text-align: left;
@@ -477,13 +463,13 @@ onBeforeUnmount(() => {
 }
 
 .nav-item:hover {
-  background: var(--surface-2);
-  color: var(--text-1);
-  border-color: var(--line-soft);
+  background: rgba(239, 246, 255, 0.88);
+  color: #1f3653;
+  border-color: rgba(112, 135, 165, 0.3);
 }
 
 .nav-item.active {
-  background: var(--brand-soft);
+  background: rgba(225, 238, 255, 0.96);
   color: #114a95;
   border-color: rgba(31, 111, 235, 0.22);
 }
@@ -498,8 +484,8 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   display: grid;
   place-items: center;
-  background: var(--surface-3);
-  color: var(--text-2);
+  background: rgba(241, 247, 255, 0.92);
+  color: #4e637f;
   font-size: 16px;
   flex-shrink: 0;
   transition: background 0.18s ease-in-out, color 0.18s ease-in-out;

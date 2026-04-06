@@ -4,6 +4,7 @@ backend-java/.idea/
 backend-java/*.iml
 backend-java/server.err.log
 backend-java/server.out.log
+backend-java/.mvn/
 
 # === Python Backend ===
 backend-python/.venv/
@@ -11,6 +12,9 @@ backend-python/.idea/
 backend-python/__pycache__/
 backend-python/**/__pycache__/
 backend-python/*.pyc
+backend-python/.pytest_cache/
+backend-python/.mypy_cache/
+backend-python/.ruff_cache/
 backend-python/.env
 backend-python/.claude/
 
@@ -18,15 +22,48 @@ backend-python/.claude/
 frontend/dist/
 frontend/node_modules/
 frontend/.idea/
+frontend/.vite/
+frontend/coverage/
+frontend/.eslintcache
 
 # === IDE ===
 .vscode/
+.idea/
+**/.idea/
 *.swp
 *.swo
+*.iml
+
+# === Local Agent / Tooling ===
+.claude/
+.codex/
+AGENTS.md
+scripts/__pycache__/
+CLAUDE.md
 
 # === OS ===
 .DS_Store
 Thumbs.db
 
-# === Docs (optional) ===
+# === Temp / Logs / Artifacts (non-source) ===
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.orig
+*.log
+*.out
+*.err
+*.pid
+*.zip
+*.tar
+*.gz
+*.7z
+*.rar
+coverage/
+.cache/
+**/.cache/
+
+# === Docs / Notes (non-source) ===
 docs/
