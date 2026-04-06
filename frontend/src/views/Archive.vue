@@ -344,7 +344,7 @@ const {
 
 <style scoped>
 .archive-page {
-  gap: 14px;
+  gap: 16px;
 }
 
 .compact-metrics {
@@ -357,7 +357,7 @@ const {
 
 .archive-hero .section-title {
   gap: 4px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .archive-hero .section-title p {
@@ -370,10 +370,11 @@ const {
 }
 
 .archive-hero .metric-card {
-  padding: 18px 20px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-lg);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(249, 252, 255, 0.98));
+  min-height: 112px;
+  padding: 14px 16px;
+  border: 1px solid rgba(31, 46, 77, 0.06);
+  border-radius: 12px;
+  background: var(--surface-2);
   box-shadow: none;
 }
 
@@ -388,7 +389,7 @@ const {
 
 .archive-hero .metric-value {
   margin-top: 6px;
-  font-size: 34px;
+  font-size: 30px;
 }
 
 .filter-panel {
@@ -396,14 +397,14 @@ const {
 }
 
 .filter-panel .section-head {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .filter-grid {
   display: grid;
   grid-template-columns: 180px minmax(320px, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .filter-grid .toolbar-actions {
@@ -427,16 +428,17 @@ const {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  margin-bottom: 20px;
+  margin-bottom: 18px;
 }
 
 .drawer-meta-item {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px 16px;
-  border-radius: 10px;
-  background: var(--panel-muted);
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 46, 77, 0.06);
+  background: var(--surface-2);
   color: var(--text-secondary);
 }
 
@@ -456,8 +458,9 @@ const {
 }
 
 .embedded-panel {
-  padding: 18px;
-  border: 1px solid var(--border-soft);
+  padding: 0;
+  border: 0;
+  background: transparent;
   box-shadow: none;
 }
 
@@ -472,10 +475,10 @@ const {
 }
 
 .log-card {
-  padding: 18px 20px;
-  border-radius: 10px;
-  border: 1px solid var(--border-soft);
-  background: linear-gradient(180deg, rgba(247, 250, 255, 0.96), #ffffff);
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(31, 46, 77, 0.06);
+  background: var(--surface-2);
 }
 
 .log-head {
@@ -498,10 +501,10 @@ const {
 }
 
 .log-section {
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--border-soft);
-  background: var(--panel-muted);
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 46, 77, 0.06);
+  background: #ffffff;
 }
 
 .log-section h4 {

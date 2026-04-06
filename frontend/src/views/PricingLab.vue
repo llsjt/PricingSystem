@@ -3,8 +3,8 @@
     <section class="panel-card step-panel">
       <div class="section-head">
         <div class="section-title">
-          <h3>任务流程</h3>
-          <p>配置任务、智能决策、结果报告。</p>
+          <h2>任务流程</h2>
+          <p>围绕任务配置、智能决策和结果报告形成一条连续工作流。</p>
         </div>
       </div>
 
@@ -25,48 +25,50 @@
         </div>
 
         <el-form :model="taskConfig" label-position="top" class="config-form">
-          <el-form-item label="平台">
-            <el-select
-              v-model="taskConfig.platform"
-              clearable
-              placeholder="请选择平台"
-              @change="handlePlatformChange"
-            >
-              <el-option v-for="platform in platformOptions" :key="platform" :label="platform" :value="platform" />
-            </el-select>
-          </el-form-item>
+          <div class="primary-config-grid">
+            <el-form-item label="平台">
+              <el-select
+                v-model="taskConfig.platform"
+                clearable
+                placeholder="请选择平台"
+                @change="handlePlatformChange"
+              >
+                <el-option v-for="platform in platformOptions" :key="platform" :label="platform" :value="platform" />
+              </el-select>
+            </el-form-item>
 
-          <el-form-item label="店铺">
-            <el-select
-              v-model="taskConfig.shopId"
-              clearable
-              placeholder="请选择店铺"
-              :disabled="!taskConfig.platform"
-              @change="handleShopChange"
-            >
-              <el-option v-for="shop in availableShops" :key="shop.id" :label="shop.shopName" :value="shop.id" />
-            </el-select>
-          </el-form-item>
+            <el-form-item label="店铺">
+              <el-select
+                v-model="taskConfig.shopId"
+                clearable
+                placeholder="请选择店铺"
+                :disabled="!taskConfig.platform"
+                @change="handleShopChange"
+              >
+                <el-option v-for="shop in availableShops" :key="shop.id" :label="shop.shopName" :value="shop.id" />
+              </el-select>
+            </el-form-item>
 
-          <el-form-item label="选择商品">
-            <el-select
-              v-model="taskConfig.productId"
-              filterable
-              remote
-              reserve-keyword
-              :disabled="!canSearchProducts"
-              :placeholder="productSelectPlaceholder"
-              :remote-method="searchProducts"
-              :loading="searchLoading"
-            >
-              <el-option v-for="item in productOptions" :key="item.id" :label="item.productName" :value="item.id">
-                <div class="option-row">
-                  <span>{{ item.productName }}</span>
-                  <span class="option-id">ID {{ item.id }}</span>
-                </div>
-              </el-option>
-            </el-select>
-          </el-form-item>
+            <el-form-item label="选择商品">
+              <el-select
+                v-model="taskConfig.productId"
+                filterable
+                remote
+                reserve-keyword
+                :disabled="!canSearchProducts"
+                :placeholder="productSelectPlaceholder"
+                :remote-method="searchProducts"
+                :loading="searchLoading"
+              >
+                <el-option v-for="item in productOptions" :key="item.id" :label="item.productName" :value="item.id">
+                  <div class="option-row">
+                    <span>{{ item.productName }}</span>
+                    <span class="option-id">ID {{ item.id }}</span>
+                  </div>
+                </el-option>
+              </el-select>
+            </el-form-item>
+          </div>
 
           <el-form-item label="策略目标">
             <el-radio-group v-model="taskConfig.strategyGoal" class="goal-group">
@@ -93,7 +95,7 @@
             />
           </el-form-item>
 
-          <div class="toolbar-actions">
+          <div class="toolbar-actions config-submit">
             <el-button :loading="starting" type="primary" size="large" @click="startTask">启动任务</el-button>
           </div>
         </el-form>
@@ -108,11 +110,34 @@
         </div>
 
         <div class="summary-card">
-          <div class="summary-line">平台：{{ taskConfig.platform || '尚未选择' }}</div>
-          <div class="summary-line">店铺：{{ selectedShopName || '尚未选择' }}</div>
-          <div class="summary-line">商品：{{ selectedProductName || '尚未选择' }}</div>
-          <div class="summary-line">目标：{{ strategyGoalText }}</div>
-          <div class="summary-line">约束：{{ taskConfig.constraints || '未设置' }}</div>
+          <div class="summary-card-head">
+            <span class="summary-card-caption">当前任务预览</span>
+            <el-tag size="small" :type="taskConfig.productId && taskConfig.strategyGoal ? 'success' : 'info'" effect="light">
+              {{ taskConfig.productId && taskConfig.strategyGoal ? '可启动' : '待完善' }}
+            </el-tag>
+          </div>
+          <div class="summary-grid">
+            <div class="summary-item">
+              <span>平台</span>
+              <strong>{{ taskConfig.platform || '尚未选择' }}</strong>
+            </div>
+            <div class="summary-item">
+              <span>店铺</span>
+              <strong>{{ selectedShopName || '尚未选择' }}</strong>
+            </div>
+            <div class="summary-item summary-item-full">
+              <span>商品</span>
+              <strong>{{ selectedProductName || '尚未选择' }}</strong>
+            </div>
+            <div class="summary-item">
+              <span>目标</span>
+              <strong>{{ strategyGoalText }}</strong>
+            </div>
+            <div class="summary-item summary-item-full">
+              <span>约束</span>
+              <strong>{{ taskConfig.constraints || '未设置' }}</strong>
+            </div>
+          </div>
         </div>
       </section>
     </div>
@@ -121,7 +146,7 @@
       <section class="panel-card agent-stream-panel">
         <div class="section-head">
           <div class="section-title">
-            <h3>多Agent决策</h3>
+            <h2>多Agent决策</h2>
             <p>以下内容按 1 → 4 顺序流式展示，滚动即可查看完整过程。</p>
           </div>
           <div class="toolbar-actions">
@@ -221,7 +246,7 @@
       <section class="panel-card report-panel">
         <div class="section-head">
           <div class="section-title">
-            <h3>结果报告</h3>
+            <h2>结果报告</h2>
             <p>最终建议由 4 个 Agent 的分析结果综合得出。</p>
           </div>
           <div class="toolbar-actions">
@@ -1120,7 +1145,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .pricing-page {
-  gap: 14px;
+  gap: 16px;
 }
 
 .step-panel,
@@ -1128,22 +1153,36 @@ onBeforeUnmount(() => {
 .helper-panel,
 .status-panel,
 .report-panel {
-  padding: 20px;
+  padding: 16px 18px;
 }
 
 .steps {
   padding-top: 0;
 }
 
+.step-panel :deep(.el-step__head) {
+  --el-text-color-primary: var(--text-1);
+}
+
+.step-panel :deep(.el-step__title) {
+  font-weight: 700;
+}
+
+.primary-config-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 14px;
+}
+
 .config-form {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .goal-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
 .goal-tooltip-trigger {
@@ -1152,6 +1191,12 @@ onBeforeUnmount(() => {
 
 .goal-group :deep(.el-radio) {
   margin-right: 0;
+}
+
+.goal-group :deep(.el-radio.is-bordered) {
+  min-width: 124px;
+  justify-content: center;
+  border-radius: 12px;
 }
 
 .option-row {
@@ -1165,24 +1210,75 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
-.summary-card {
-  display: grid;
-  gap: 10px;
-  padding: 14px;
-  border-radius: 10px;
-  background: var(--surface-2);
-  border: 1px solid var(--line-soft);
+.helper-panel {
+  align-self: start;
 }
 
-.summary-line {
-  margin-top: 10px;
-  color: var(--text-2);
-  line-height: 1.7;
+.summary-card {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+}
+
+.summary-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(31, 46, 77, 0.08);
+}
+
+.summary-card-caption {
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.summary-item {
+  display: grid;
+  gap: 6px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid rgba(31, 46, 77, 0.06);
+}
+
+.summary-item span {
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.summary-item strong {
+  color: var(--text-1);
+  font-size: 15px;
+  line-height: 1.5;
+  font-weight: 700;
+}
+
+.summary-item-full {
+  grid-column: 1 / -1;
+}
+
+.config-submit {
+  margin-top: 2px;
 }
 
 .decision-layout {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .status-grid {
@@ -1206,7 +1302,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-stream-panel {
-  padding: 16px 20px;
+  padding: 16px 18px;
 }
 
 .agent-stream-scroll {
@@ -1218,11 +1314,16 @@ onBeforeUnmount(() => {
 }
 
 .stream-card {
-  background: #fff;
-  border: 1px solid var(--line-soft);
-  border-radius: 10px;
-  padding: 18px;
-  transition: border-color 0.3s ease;
+  background: #ffffff;
+  border: 1px solid rgba(31, 46, 77, 0.08);
+  border-radius: 14px;
+  padding: 16px;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.stream-card:hover {
+  border-color: rgba(31, 46, 77, 0.08);
+  box-shadow: none;
 }
 
 /* ── 流式打字机效果 ───────────────────────────── */
@@ -1312,6 +1413,7 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 10px;
   margin-bottom: 12px;
 }
 
@@ -1321,8 +1423,8 @@ onBeforeUnmount(() => {
 }
 
 .card-section {
-  background: var(--surface-2);
-  border: 1px solid var(--line-soft);
+  background: rgba(246, 249, 253, 0.92);
+  border: 1px solid rgba(31, 46, 77, 0.06);
   border-radius: 10px;
   padding: 12px 14px;
 }
@@ -1348,14 +1450,11 @@ onBeforeUnmount(() => {
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  gap: 14px;
 }
 
 .metric-card {
-  background: #fff;
-  border: 1px solid var(--line-soft);
-  border-radius: 10px;
-  padding: 16px;
+  min-height: 132px;
 }
 
 .metric-label {
@@ -1365,7 +1464,7 @@ onBeforeUnmount(() => {
 
 .metric-value {
   margin-top: 8px;
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 700;
 }
 
@@ -1378,6 +1477,8 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 1200px) {
+  .primary-config-grid,
+  .summary-grid,
   .metric-grid,
   .status-grid {
     grid-template-columns: 1fr;

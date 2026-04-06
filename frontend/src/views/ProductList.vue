@@ -3,7 +3,7 @@
     <section class="panel-card table-card product-card">
       <div class="section-head">
         <div class="section-title">
-          <h3>商品数据管理</h3>
+          <h2>商品数据管理</h2>
           <p>支持按平台筛选，并在详情中完整查看商品日指标、SKU 与流量推广数据。</p>
         </div>
         <div class="toolbar-actions">
@@ -231,7 +231,7 @@
               <div class="base-hero">
                 <div class="base-hero-main">
                   <p class="base-hero-caption">商品名称</p>
-                  <h4>{{ currentProduct.productName || '-' }}</h4>
+                  <h3>{{ currentProduct.productName || '-' }}</h3>
                   <div class="base-tags">
                     <el-tag size="small" :type="statusTagType(currentProduct.status)">
                       {{ formatStatusText(currentProduct.status) }}
@@ -881,15 +881,15 @@ handleSearch()
 
 <style scoped>
 .product-card {
-  padding: 20px;
+  padding: 18px;
 }
 
 .search-toolbar {
   display: grid;
-  grid-template-columns: minmax(320px, 560px) 140px 140px 96px 96px;
+  grid-template-columns: minmax(320px, 1.35fr) repeat(2, 148px) 108px 108px;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
 .search-toolbar :deep(.el-input),
@@ -908,6 +908,10 @@ handleSearch()
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(47, 161, 116, 0.16);
+  background: rgba(47, 161, 116, 0.06);
 }
 
 .table-wrap {
@@ -926,12 +930,14 @@ handleSearch()
 
 .product-cell {
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 .product-name {
   color: var(--text-1);
   line-height: 1.4;
+  font-size: 15px;
+  letter-spacing: 0.01em;
 }
 
 .product-meta {
@@ -944,7 +950,7 @@ handleSearch()
 
 .cell-stack {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .cell-stack strong {
@@ -968,11 +974,12 @@ handleSearch()
 
 .mobile-card {
   display: grid;
-  gap: 10px;
-  padding: 14px;
-  border-radius: 12px;
-  border: 1px solid var(--line-soft);
-  background: #fff;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(31, 46, 77, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 255, 0.96));
+  box-shadow: 0 8px 22px rgba(20, 40, 63, 0.06);
 }
 
 .mobile-head {
@@ -990,6 +997,7 @@ handleSearch()
 .mobile-title strong {
   color: var(--text-1);
   line-height: 1.4;
+  font-size: 15px;
 }
 
 .mobile-title span,
@@ -1012,9 +1020,10 @@ handleSearch()
 .mobile-item {
   display: grid;
   gap: 4px;
-  padding: 10px;
-  border-radius: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
   background: var(--surface-2);
+  border: 1px solid rgba(31, 46, 77, 0.05);
 }
 
 .mobile-item span {
@@ -1038,7 +1047,7 @@ handleSearch()
 
 .detail-shell {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .detail-group {
@@ -1048,17 +1057,17 @@ handleSearch()
 
 .base-overview {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .base-hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
-  gap: 12px;
-  padding: 14px;
-  border-radius: 14px;
-  border: 1px solid #dbe7ff;
-  background: linear-gradient(135deg, #f8fbff 0%, #eef5ff 100%);
+  gap: 14px;
+  padding: 0 0 6px;
+  border-radius: 16px;
+  border: 0;
+  background: transparent;
 }
 
 .base-hero-main {
@@ -1072,10 +1081,10 @@ handleSearch()
   font-size: 12px;
 }
 
-.base-hero-main h4 {
+.base-hero-main h3 {
   margin: 0;
   color: #162749;
-  font-size: 24px;
+  font-size: 22px;
   line-height: 1.25;
   font-weight: 700;
 }
@@ -1102,10 +1111,10 @@ handleSearch()
 .base-id-item {
   display: grid;
   gap: 6px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid #d8e3f8;
-  background: rgba(255, 255, 255, 0.86);
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 46, 77, 0.06);
+  background: var(--surface-2);
 }
 
 .base-id-item span {
@@ -1128,10 +1137,10 @@ handleSearch()
 .base-kpi-item {
   display: grid;
   gap: 6px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line-soft);
-  background: #fff;
+  padding: 11px 13px;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 46, 77, 0.06);
+  background: var(--surface-2);
 }
 
 .base-kpi-item span {
@@ -1141,7 +1150,7 @@ handleSearch()
 
 .base-kpi-item strong {
   color: var(--text-1);
-  font-size: 24px;
+  font-size: 22px;
   line-height: 1.15;
 }
 
@@ -1219,17 +1228,17 @@ handleSearch()
 .detail-kpi-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 14px;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 .detail-kpi-item {
   display: grid;
   gap: 8px;
   padding: 12px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--line-soft);
-  background: linear-gradient(135deg, #f8fbff 0%, #f1f6ff 100%);
+  border-radius: 12px;
+  border: 1px solid rgba(31, 46, 77, 0.06);
+  background: var(--surface-2);
 }
 
 .detail-kpi-item span {
@@ -1318,7 +1327,7 @@ handleSearch()
 
 @media (max-width: 1280px) {
   .search-toolbar {
-    grid-template-columns: minmax(220px, 1fr) 128px 128px 96px;
+    grid-template-columns: minmax(220px, 1fr) repeat(2, 128px) repeat(2, 96px);
   }
 
   .toolbar-select {

@@ -295,8 +295,8 @@ watch(visible, (nextVisible) => {
 }
 
 .trend-metric-card:hover {
-  border-color: rgba(31, 111, 235, 0.16);
-  box-shadow: 0 12px 28px rgba(20, 44, 72, 0.1);
+  border-color: var(--border-soft);
+  box-shadow: var(--shadow-card);
 }
 
 .trend-metric-card .metric-label {

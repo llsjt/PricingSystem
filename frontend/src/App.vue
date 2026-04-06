@@ -17,6 +17,7 @@ import { RouterView } from 'vue-router'
   --line-soft: rgba(31, 46, 77, 0.08);
   --line-strong: rgba(31, 46, 77, 0.14);
   --border-soft: rgba(31, 46, 77, 0.08);
+  --border-active: rgba(31, 111, 235, 0.22);
   --text-1: #17233a;
   --text-2: #52627a;
   --text-3: #8091a7;
@@ -30,14 +31,15 @@ import { RouterView } from 'vue-router'
   --danger-soft: rgba(214, 82, 82, 0.14);
   --success-soft: rgba(47, 161, 116, 0.14);
   --warning-soft: rgba(255, 159, 67, 0.14);
-  --shadow-soft: 0 14px 40px rgba(22, 39, 58, 0.1);
-  --shadow-card: 0 8px 24px rgba(20, 40, 63, 0.08);
-  --radius-xl: 10px;
-  --radius-lg: 10px;
-  --radius-md: 10px;
-  --radius-sm: 10px;
+  --shadow-soft: 0 18px 44px rgba(22, 39, 58, 0.1);
+  --shadow-card: 0 10px 28px rgba(20, 40, 63, 0.08);
+  --radius-xl: 20px;
+  --radius-lg: 16px;
+  --radius-md: 14px;
+  --radius-sm: 12px;
   --motion-fast: 0.2s ease-in-out;
-  --content-width: 1380px;
+  --content-width: 1460px;
+  --panel-padding: 20px;
   font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
 }
 
@@ -60,14 +62,24 @@ body {
   margin: 0;
   overflow-x: hidden;
   background:
-    radial-gradient(circle at top left, rgba(58, 118, 196, 0.14), transparent 30%),
-    radial-gradient(circle at right 14%, rgba(152, 187, 227, 0.16), transparent 26%),
+    radial-gradient(circle at top left, rgba(58, 118, 196, 0.12), transparent 30%),
+    radial-gradient(circle at right 14%, rgba(152, 187, 227, 0.15), transparent 26%),
     linear-gradient(180deg, #f9fcff 0%, var(--app-bg) 100%);
   color: var(--text-1);
 }
 
 a {
   color: inherit;
+}
+
+button,
+[role="button"] {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid rgba(31, 111, 235, 0.36);
+  outline-offset: 2px;
 }
 
 .page-shell,
@@ -87,39 +99,46 @@ a {
 }
 
 .panel-card {
-  padding: 24px;
+  padding: var(--panel-padding);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(249, 252, 255, 0.98));
-  border: 1px solid var(--border-soft);
+  border: 1px solid rgba(31, 46, 77, 0.07);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
-  transition: box-shadow var(--motion-fast), border-color var(--motion-fast);
+  transition: border-color var(--motion-fast), background var(--motion-fast);
 }
 
 .panel-card:hover {
-  border-color: rgba(31, 111, 235, 0.16);
-  box-shadow: 0 12px 28px rgba(20, 44, 72, 0.1);
+  border-color: rgba(31, 46, 77, 0.07);
 }
 
 .section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: 14px;
+  margin-bottom: 14px;
 }
 
 .section-title {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 
+.section-title h1,
 .section-title h2,
 .section-title h3,
 .section-title h4,
 .section-title p {
   margin: 0;
+}
+
+.section-title h1 {
+  font-size: 30px;
+  line-height: 1.15;
+  font-weight: 700;
+  color: var(--text-1);
 }
 
 .section-title h2,
@@ -129,9 +148,16 @@ a {
   color: var(--text-1);
 }
 
+.section-title h4 {
+  font-size: 16px;
+  line-height: 1.35;
+  color: var(--text-1);
+}
+
 .section-title p {
   color: var(--text-2);
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .panel-card .section-title p {
@@ -149,40 +175,35 @@ a {
 .metric-card {
   position: relative;
   overflow: hidden;
-  padding: 24px;
+  padding: 18px 20px;
   border-radius: var(--radius-md);
-  background: linear-gradient(160deg, rgba(255, 255, 255, 0.98), rgba(241, 247, 255, 0.96));
-  border: 1px solid rgba(31, 111, 235, 0.10);
-  transition: box-shadow var(--motion-fast), border-color var(--motion-fast);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 255, 0.96));
+  border: 1px solid rgba(31, 46, 77, 0.08);
+  box-shadow: none;
+  transition: border-color var(--motion-fast), background var(--motion-fast);
 }
 
 .metric-card::before {
-  content: "";
-  position: absolute;
-  inset: 0 auto auto 0;
-  width: 100%;
-  height: 3px;
-  background: linear-gradient(90deg, var(--brand), var(--accent));
-  opacity: 0.9;
+  display: none;
 }
 
 .metric-card:hover {
-  border-color: rgba(31, 111, 235, 0.2);
-  box-shadow: 0 10px 22px rgba(25, 53, 84, 0.08);
+  border-color: rgba(31, 46, 77, 0.08);
 }
 
 .metric-label {
   position: relative;
   z-index: 1;
   color: var(--text-2);
-  font-size: 14px;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .metric-value {
   position: relative;
   z-index: 1;
-  margin-top: 8px;
-  font-size: 34px;
+  margin-top: 10px;
+  font-size: 30px;
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.03em;
@@ -191,9 +212,10 @@ a {
 .metric-hint {
   position: relative;
   z-index: 1;
-  margin-top: 8px;
+  margin-top: 10px;
   color: var(--text-3);
   font-size: 12px;
+  line-height: 1.5;
 }
 
 .toolbar-row {
@@ -215,7 +237,7 @@ a {
 }
 
 .table-card {
-  padding: 24px;
+  padding: var(--panel-padding);
   overflow: hidden;
 }
 
@@ -232,6 +254,11 @@ a {
 .table-card .el-table th {
   color: var(--text-2);
   font-weight: 600;
+}
+
+.table-card :deep(.el-table th),
+.table-card :deep(.el-table td) {
+  padding: 12px 0;
 }
 
 .table-card :deep(.el-table__inner-wrapper),
@@ -271,7 +298,8 @@ a {
 
 .el-button,
 .el-input__wrapper,
-.el-select__wrapper {
+.el-select__wrapper,
+.el-textarea__inner {
   transition: all var(--motion-fast);
 }
 
@@ -302,12 +330,33 @@ a {
   font-weight: 600;
 }
 
+.el-button:hover,
+.el-button:focus-visible,
+.el-tabs__item:hover,
+.el-tag:hover {
+  transform: translateY(-1px);
+}
+
 .el-input__wrapper,
 .el-textarea__inner,
 .el-select__wrapper,
 .el-input-number,
 .el-date-editor.el-input__wrapper {
-  border-radius: 10px;
+  border-radius: 12px;
+}
+
+.el-input__wrapper:hover,
+.el-select__wrapper:hover,
+.el-date-editor.el-input__wrapper:hover,
+.el-input-number:hover {
+  box-shadow: 0 0 0 1px rgba(31, 111, 235, 0.14);
+}
+
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused,
+.el-date-editor.el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--border-active) !important;
 }
 
 .el-card {
@@ -320,14 +369,19 @@ a {
   font-weight: 600;
 }
 
+.el-empty__description p {
+  color: var(--text-3);
+}
+
 .el-dialog,
 .el-drawer {
-  border-radius: 10px 10px 0 0;
+  border-radius: 18px 18px 0 0;
 }
 
 .el-tag {
   border-radius: 999px;
   padding-inline: 10px;
+  font-weight: 600;
 }
 
 @media (max-width: 1200px) {
@@ -352,6 +406,10 @@ a {
     font-size: 20px;
   }
 
+  .section-title h1 {
+    font-size: 26px;
+  }
+
   .panel-card,
   .table-card {
     padding: 16px;
@@ -364,6 +422,17 @@ a {
   .el-dialog {
     width: calc(100vw - 24px) !important;
     margin-top: 4vh !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 </style>

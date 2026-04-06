@@ -28,36 +28,40 @@
             </div>
           </div>
 
-          <div class="template-brief">
-            <span>可导入模板：</span>
-            <el-tag size="small" effect="plain">商品基础信息</el-tag>
-            <el-tag size="small" effect="plain">商品 SKU</el-tag>
-            <el-tag size="small" effect="plain">商品经营日报</el-tag>
-            <el-tag size="small" effect="plain">流量推广日报</el-tag>
-          </div>
+          <div class="import-setup-grid">
+            <div class="template-brief">
+              <span>可导入模板：</span>
+              <el-tag size="small" effect="plain">商品基础信息</el-tag>
+              <el-tag size="small" effect="plain">商品 SKU</el-tag>
+              <el-tag size="small" effect="plain">商品经营日报</el-tag>
+              <el-tag size="small" effect="plain">流量推广日报</el-tag>
+            </div>
 
-          <div class="platform-picker">
-            <span class="picker-label">电商平台</span>
-            <el-select v-model="selectedPlatform" placeholder="请先选择电商平台" class="platform-select" clearable>
-              <el-option
-                v-for="platform in platformOptions"
-                :key="platform"
-                :label="platform"
-                :value="platform"
-              />
-            </el-select>
-          </div>
+            <div class="picker-grid">
+              <div class="platform-picker">
+                <span class="picker-label">电商平台</span>
+                <el-select v-model="selectedPlatform" placeholder="请先选择电商平台" class="platform-select" clearable>
+                  <el-option
+                    v-for="platform in platformOptions"
+                    :key="platform"
+                    :label="platform"
+                    :value="platform"
+                  />
+                </el-select>
+              </div>
 
-          <div class="platform-picker">
-            <span class="picker-label">目标店铺</span>
-            <el-select v-model="selectedShopId" placeholder="请选择导入的目标店铺" class="platform-select" clearable>
-              <el-option
-                v-for="shop in filteredShops"
-                :key="shop.id"
-                :label="`${shop.shopName}（${shop.platform}）`"
-                :value="shop.id"
-              />
-            </el-select>
+              <div class="platform-picker">
+                <span class="picker-label">目标店铺</span>
+                <el-select v-model="selectedShopId" placeholder="请选择导入的目标店铺" class="platform-select" clearable>
+                  <el-option
+                    v-for="shop in filteredShops"
+                    :key="shop.id"
+                    :label="`${shop.shopName}（${shop.platform}）`"
+                    :value="shop.id"
+                  />
+                </el-select>
+              </div>
+            </div>
           </div>
 
           <div class="import-layout">
@@ -101,6 +105,12 @@
           />
 
           <div v-if="hasBatchResults" class="result-card">
+            <div class="result-card-head">
+              <div>
+                <strong>本次导入汇总</strong>
+                <span>批次会按模板类型自动排序，并逐个写入目标表。</span>
+              </div>
+            </div>
             <div class="result-grid">
               <div class="result-item">
                 <span>批次文件数</span>
@@ -646,32 +656,13 @@ const resolveFileErrorText = (item: ImportBatchFileItem) => {
 }
 
 .import-panel {
-  padding: 20px;
+  padding: 16px 18px;
 }
 
-.section-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 18px;
-}
-
-.section-title {
+.import-setup-grid {
   display: grid;
-  gap: 6px;
-}
-
-.section-title h2 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-  color: #24324a;
-}
-
-.section-title p {
-  margin: 0;
-  color: #5e6a7d;
-  line-height: 1.6;
+  gap: 12px;
+  margin-bottom: 14px;
 }
 
 .template-brief {
@@ -679,7 +670,10 @@ const resolveFileErrorText = (item: ImportBatchFileItem) => {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 16px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 46, 77, 0.06);
+  background: var(--surface-2);
   color: #4b5b73;
 }
 
@@ -688,21 +682,28 @@ const resolveFileErrorText = (item: ImportBatchFileItem) => {
   color: #2356c5;
 }
 
+.picker-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 280px));
+  gap: 12px;
+}
+
 .platform-picker {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 10px;
-  margin-bottom: 14px;
 }
 
 .picker-label {
   color: #4b5b73;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 700;
   white-space: nowrap;
 }
 
 .platform-select {
-  width: 220px;
+  width: 100%;
 }
 
 .import-layout {
@@ -725,10 +726,12 @@ const resolveFileErrorText = (item: ImportBatchFileItem) => {
 
 .upload-box :deep(.el-upload-dragger) {
   width: 100%;
-  min-height: 250px;
-  border-radius: 14px;
+  min-height: 280px;
+  border-radius: 16px;
   border: 1.5px dashed rgba(37, 99, 235, 0.26);
-  background: linear-gradient(180deg, rgba(37, 99, 235, 0.06), rgba(255, 255, 255, 0.94));
+  background:
+    radial-gradient(circle at top center, rgba(37, 99, 235, 0.12), transparent 42%),
+    linear-gradient(180deg, rgba(37, 99, 235, 0.06), rgba(255, 255, 255, 0.94));
 }
 
 .upload-icon {
@@ -738,7 +741,7 @@ const resolveFileErrorText = (item: ImportBatchFileItem) => {
 }
 
 .upload-title {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
   color: #21324d;
   margin-bottom: 8px;
@@ -751,28 +754,60 @@ const resolveFileErrorText = (item: ImportBatchFileItem) => {
 }
 
 .upload-feedback {
-  margin-top: 16px;
+  margin-top: 14px;
 }
 
 .result-card {
-  margin-top: 16px;
-  padding: 16px;
-  border-radius: 12px;
-  background: #fafcff;
-  border: 1px solid rgba(37, 99, 235, 0.12);
+  margin-top: 14px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+}
+
+.result-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(31, 46, 77, 0.08);
+}
+
+.result-card-head div {
+  display: grid;
+  gap: 4px;
+}
+
+.result-card-head strong {
+  color: #23334e;
+  font-size: 15px;
+}
+
+.result-card-head span {
+  color: #6b778a;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .file-result-list {
   display: grid;
-  gap: 12px;
-  margin-top: 16px;
+  gap: 0;
+  margin-top: 12px;
 }
 
 .file-result-card {
-  padding: 16px;
-  border-radius: 12px;
-  background: #ffffff;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  padding: 14px 0 0;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.file-result-card:first-child {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .file-result-head {
@@ -805,16 +840,16 @@ const resolveFileErrorText = (item: ImportBatchFileItem) => {
 .result-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  gap: 10px;
 }
 
 .result-item {
   display: grid;
   gap: 6px;
-  padding: 14px;
-  border-radius: 10px;
-  background: white;
-  border: 1px solid rgba(148, 163, 184, 0.18);
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid rgba(148, 163, 184, 0.14);
 }
 
 .result-item span {
@@ -859,6 +894,7 @@ const resolveFileErrorText = (item: ImportBatchFileItem) => {
 }
 
 @media (max-width: 1100px) {
+  .picker-grid,
   .result-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -869,9 +905,8 @@ const resolveFileErrorText = (item: ImportBatchFileItem) => {
 }
 
 @media (max-width: 768px) {
-  .platform-picker {
-    flex-direction: column;
-    align-items: flex-start;
+  .picker-grid {
+    grid-template-columns: 1fr;
   }
 
   .platform-select {
