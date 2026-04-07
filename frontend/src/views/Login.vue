@@ -1,34 +1,106 @@
 <template>
   <div class="login-container">
-    <el-card class="login-card">
-      <template #header>
-        <div class="header">
-          <h2>智能定价决策系统</h2>
+    <div class="login-wrapper">
+      <!-- Left side: Branding and Project Info -->
+      <div class="info-section">
+        <div class="info-content">
+          <div class="brand-logo">
+            <el-icon :size="28"><DataLine /></el-icon>
+            <span>Pricing AI</span>
+          </div>
+          <h1 class="main-title">电商智能定价<br>决策中枢</h1>
+          <p class="sub-title">基于多智能体（Multi-Agent）架构的自动化定价系统</p>
+          
+          <div class="feature-list">
+            <div class="feature-item">
+              <div class="feature-icon-wrapper">
+                <el-icon><Goods /></el-icon>
+              </div>
+              <div class="feature-text">
+                <h3>基础数据与商品管理</h3>
+                <p>统一管理店铺及商品信息，支持快捷导入历史经营、流量指标数据</p>
+              </div>
+            </div>
+            <div class="feature-item">
+              <div class="feature-icon-wrapper">
+                <el-icon><Cpu /></el-icon>
+              </div>
+              <div class="feature-text">
+                <h3>多智能体定价实验室</h3>
+                <p>融合数据分析、竞品收集与风控智能体，动态生成商品调价策略</p>
+              </div>
+            </div>
+            <div class="feature-item">
+              <div class="feature-icon-wrapper">
+                <el-icon><Document /></el-icon>
+              </div>
+              <div class="feature-text">
+                <h3>决策日志与结果归档</h3>
+                <p>实时追踪 Agent 分析链路，人工审核确认报价并支持历史结果追溯</p>
+              </div>
+            </div>
+          </div>
         </div>
-      </template>
+        
+        <!-- Decorative background elements -->
+        <div class="decoration circle-1"></div>
+        <div class="decoration circle-2"></div>
+      </div>
 
-      <el-form ref="loginFormRef" :model="loginForm" :rules="rules" label-width="0">
-        <el-form-item prop="username" class="field-item">
-          <div class="field-label">用户名</div>
-          <el-input v-model="loginForm.username" placeholder="请输入用户名" />
-        </el-form-item>
-        <el-form-item prop="password" class="field-item">
-          <div class="field-label">密码</div>
-          <el-input
-            v-model="loginForm.password"
-            type="password"
-            placeholder="请输入密码"
-            show-password
-            @keyup.enter="handleLogin"
-          />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :loading="loading" style="width: 100%" @click="handleLogin">登录</el-button>
-        </el-form-item>
-      </el-form>
+      <!-- Right side: Login Form -->
+      <div class="form-section">
+        <div class="form-wrapper">
+          <div class="form-header">
+            <h2>欢迎回来</h2>
+            <p>登录您的账号以进入控制台</p>
+          </div>
 
-      <div class="tips">默认管理员：admin / 123456</div>
-    </el-card>
+          <el-form ref="loginFormRef" :model="loginForm" :rules="rules" label-position="top">
+            <el-form-item prop="username" label="用户名">
+              <el-input 
+                v-model="loginForm.username" 
+                placeholder="请输入您的用户名" 
+                size="large"
+                :prefix-icon="User"
+              />
+            </el-form-item>
+            <el-form-item prop="password" label="密码">
+              <el-input
+                v-model="loginForm.password"
+                type="password"
+                placeholder="请输入您的密码"
+                size="large"
+                show-password
+                :prefix-icon="Lock"
+                @keyup.enter="handleLogin"
+              />
+            </el-form-item>
+            
+            <div class="form-options">
+              <el-checkbox v-model="rememberMe">记住密码</el-checkbox>
+              <a href="javascript:void(0)" class="forgot-pwd" @click="handleForgotPwd">遇到问题？</a>
+            </div>
+
+            <el-form-item>
+              <el-button 
+                type="primary" 
+                :loading="loading" 
+                size="large"
+                class="login-submit-btn"
+                @click="handleLogin"
+              >
+                立即登录
+              </el-button>
+            </el-form-item>
+          </el-form>
+
+          <div class="tips">
+            <span>演示默认账号：</span>
+            <span class="highlight">admin / 123456</span>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -36,6 +108,7 @@
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+import { DataLine, TrendCharts, Connection, Warning, User, Lock, Goods, Cpu, Document } from '@element-plus/icons-vue'
 import { login } from '../api/user'
 import { useUserStore } from '../stores/user'
 import { useShopStore } from '../stores/shop'
@@ -46,6 +119,7 @@ const userStore = useUserStore()
 const shopStore = useShopStore()
 const loginFormRef = ref<FormInstance>()
 const loading = ref(false)
+const rememberMe = ref(false)
 
 const loginForm = reactive({
   username: '',
@@ -58,14 +132,10 @@ const rules: FormRules = {
 }
 
 const handleLogin = async () => {
-  if (!loginFormRef.value) {
-    return
-  }
+  if (!loginFormRef.value) return
 
   await loginFormRef.value.validate(async (valid: boolean) => {
-    if (!valid) {
-      return
-    }
+    if (!valid) return
 
     loading.value = true
     try {
@@ -89,43 +159,269 @@ const handleLogin = async () => {
     }
   })
 }
+
+const handleForgotPwd = () => {
+  ElMessage.info('请联系系统管理员获取访问权限')
+}
 </script>
 
 <style scoped>
 .login-container {
   height: 100vh;
+  width: 100vw;
   display: flex;
   justify-content: center;
   align-items: center;
-  background-color: #2d3a4b;
+  background: #f0f2f5;
+  font-family: 'Inter', 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
+  overflow: hidden;
 }
 
-.login-card {
-  width: 90%;
-  max-width: 400px;
-  min-width: 280px;
+.login-wrapper {
+  display: flex;
+  width: 1000px;
+  height: auto;
+  min-height: 540px;
+  background: #ffffff;
+  border-radius: 20px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  position: relative;
+  z-index: 1;
 }
 
-.header {
-  text-align: center;
+/* --- Left Section (Info) --- */
+.info-section {
+  flex: 1;
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  color: #fff;
+  padding: 50px 40px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
 }
 
-.field-item :deep(.el-form-item__content) {
-  display: block;
+.info-content {
+  position: relative;
+  z-index: 2;
 }
 
-.field-label {
-  margin-bottom: 8px;
-  font-size: 14px;
+.brand-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 40px;
+  color: #60a5fa;
+  letter-spacing: 1px;
+}
+
+.main-title {
+  font-size: 36px;
   font-weight: 600;
-  line-height: 1.4;
-  color: #25364d;
+  line-height: 1.3;
+  margin: 0 0 16px 0;
+  background: linear-gradient(to right, #ffffff, #93c5fd);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.sub-title {
+  font-size: 15px;
+  color: #94a3b8;
+  margin-bottom: 40px;
+  line-height: 1.6;
+}
+
+.feature-list {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.feature-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.feature-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.feature-text h3 {
+  font-size: 16px;
+  font-weight: 500;
+  margin: 0 0 6px 0;
+  color: #e2e8f0;
+}
+
+.feature-text p {
+  font-size: 13px;
+  color: #94a3b8;
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Decorations */
+.decoration {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(60px);
+  z-index: 0;
+}
+
+.circle-1 {
+  width: 300px;
+  height: 300px;
+  background: rgba(59, 130, 246, 0.2);
+  top: -100px;
+  left: -100px;
+}
+
+.circle-2 {
+  width: 250px;
+  height: 250px;
+  background: rgba(139, 92, 246, 0.15);
+  bottom: -50px;
+  right: -50px;
+}
+
+/* --- Right Section (Form) --- */
+.form-section {
+  width: 440px;
+  padding: 50px 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  background: #ffffff;
+}
+
+.form-wrapper {
+  width: 100%;
+}
+
+.form-header {
+  margin-bottom: 30px;
+}
+
+.form-header h2 {
+  font-size: 26px;
+  font-weight: 600;
+  color: #1e293b;
+  margin: 0 0 8px 0;
+}
+
+.form-header p {
+  font-size: 14px;
+  color: #64748b;
+  margin: 0;
+}
+
+:deep(.el-form-item__label) {
+  font-weight: 500;
+  color: #334155;
+  padding-bottom: 6px;
+}
+
+:deep(.el-input__wrapper) {
+  background-color: #f8fafc;
+  box-shadow: 0 0 0 1px #e2e8f0 inset;
+  border-radius: 8px;
+  transition: all 0.3s;
+}
+
+:deep(.el-input__wrapper:hover), :deep(.el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 1px #3b82f6 inset;
+  background-color: #ffffff;
+}
+
+:deep(.el-input__inner) {
+  color: #1e293b;
+}
+
+.form-options {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  margin-top: -8px;
+}
+
+.forgot-pwd {
+  font-size: 13px;
+  color: #3b82f6;
+  text-decoration: none;
+  transition: color 0.3s;
+}
+
+.forgot-pwd:hover {
+  color: #2563eb;
+}
+
+.login-submit-btn {
+  width: 100%;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 500;
+  height: 44px;
+  background: #3b82f6;
+  border: none;
+  transition: all 0.3s;
+}
+
+.login-submit-btn:hover {
+  background: #2563eb;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
 }
 
 .tips {
-  margin-top: 10px;
-  font-size: 12px;
-  color: #999;
+  margin-top: 24px;
+  font-size: 13px;
+  color: #64748b;
   text-align: center;
+  padding: 12px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px dashed #cbd5e1;
+}
+
+.tips .highlight {
+  color: #3b82f6;
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+/* Responsive adjustments */
+@media screen and (max-width: 800px) {
+  .login-wrapper {
+    width: 90%;
+    flex-direction: column;
+    min-height: 600px;
+  }
+  
+  .info-section {
+    padding: 40px 30px;
+    flex: none;
+  }
+  
+  .form-section {
+    width: 100%;
+    padding: 40px 30px;
+  }
 }
 </style>
