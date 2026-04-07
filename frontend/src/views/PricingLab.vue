@@ -176,27 +176,37 @@
               </p>
             </section>
 
-            <!-- 依据：思考完成后淡入展开 -->
+            <!-- 依据：思考完成后逐条淡入 -->
             <transition name="card-fade">
               <section v-if="typingStates[meta.code]?.showEvidence" class="card-section">
                 <h4>依据</h4>
                 <ul class="info-list">
-                  <li v-for="(item, idx) in taskState.cards[meta.code]?.evidence || []" :key="idx">
-                    <strong>{{ String(item.label || `依据${idx + 1}`) }}：</strong>
-                    <span>{{ formatEvidenceValue(item.label, item.value) }}</span>
-                  </li>
+                  <TransitionGroup name="list-fade">
+                    <li
+                      v-for="(item, idx) in (taskState.cards[meta.code]?.evidence || []).slice(0, typingStates[meta.code]?.visibleEvidenceCount ?? 0)"
+                      :key="idx"
+                    >
+                      <strong>{{ String(item.label || `依据${idx + 1}`) }}：</strong>
+                      <span>{{ formatEvidenceValue(item.label, item.value) }}</span>
+                    </li>
+                  </TransitionGroup>
                 </ul>
               </section>
             </transition>
 
-            <!-- 建议：依据展示后淡入展开 -->
+            <!-- 建议：依据展示后逐条淡入 -->
             <transition name="card-fade">
               <section v-if="typingStates[meta.code]?.showSuggestion" class="card-section">
                 <h4>建议</h4>
                 <ul class="info-list">
-                  <li v-for="(line, index) in getSuggestionLines(meta.code, taskState.cards[meta.code]?.suggestion)" :key="index">
-                    {{ line }}
-                  </li>
+                  <TransitionGroup name="list-fade">
+                    <li
+                      v-for="(line, index) in getSuggestionLines(meta.code, taskState.cards[meta.code]?.suggestion).slice(0, typingStates[meta.code]?.visibleSuggestionCount ?? 0)"
+                      :key="index"
+                    >
+                      {{ line }}
+                    </li>
+                  </TransitionGroup>
                 </ul>
               </section>
             </transition>
@@ -473,6 +483,8 @@ interface TypingState {
   showEvidence: boolean      // 是否显示依据区块
   showSuggestion: boolean    // 是否显示建议区块
   showReason: boolean        // 是否显示理由区块（经理Agent）
+  visibleEvidenceCount: number   // 当前已可见的依据条数
+  visibleSuggestionCount: number // 当前已可见的建议条数
 }
 
 const EMPTY_TYPING = (): TypingState => ({
@@ -480,7 +492,9 @@ const EMPTY_TYPING = (): TypingState => ({
   thinkingDone: false,
   showEvidence: false,
   showSuggestion: false,
-  showReason: false
+  showReason: false,
+  visibleEvidenceCount: 0,
+  visibleSuggestionCount: 0
 })
 
 const typingStates = reactive<Record<PricingAgentCode, TypingState>>({
@@ -506,7 +520,35 @@ const clearTypingTimer = (code: string) => {
   }
 }
 
-// 启动打字机效果：逐字显示思考内容，然后依次展开依据、建议
+// 逐条渐入工具：每隔 interval ms 显示一条
+const itemRevealTimerIds: ReturnType<typeof setInterval>[] = []
+
+const clearItemRevealTimers = () => {
+  itemRevealTimerIds.forEach(id => clearInterval(id))
+  itemRevealTimerIds.length = 0
+}
+
+const revealItemsOneByOne = (
+  state: TypingState,
+  field: 'visibleEvidenceCount' | 'visibleSuggestionCount',
+  total: number,
+  interval: number,
+  onDone?: () => void
+) => {
+  if (total <= 0) { onDone?.(); return }
+  let shown = 0
+  const timer = setInterval(() => {
+    shown++
+    state[field] = shown
+    if (shown >= total) {
+      clearInterval(timer)
+      onDone?.()
+    }
+  }, interval)
+  itemRevealTimerIds.push(timer)
+}
+
+// 启动打字机效果：逐字显示思考内容，然后依次逐条展开依据、建议
 const startTypingEffect = (code: PricingAgentCode, immediate = false) => {
   clearTypingTimer(code)
   const card = taskState.cards[code]
@@ -514,6 +556,8 @@ const startTypingEffect = (code: PricingAgentCode, immediate = false) => {
 
   const state = typingStates[code]
   const fullThinking = card.thinking || ''
+  const evidenceTotal = (card.evidence || []).length
+  const suggestionTotal = getSuggestionLines(code, card.suggestion).length
 
   // 快照加载时跳过动画，直接展示全部内容
   if (immediate || !fullThinking) {
@@ -522,6 +566,8 @@ const startTypingEffect = (code: PricingAgentCode, immediate = false) => {
     state.showEvidence = true
     state.showSuggestion = true
     state.showReason = true
+    state.visibleEvidenceCount = evidenceTotal
+    state.visibleSuggestionCount = suggestionTotal
     return
   }
 
@@ -531,6 +577,8 @@ const startTypingEffect = (code: PricingAgentCode, immediate = false) => {
   state.showEvidence = false
   state.showSuggestion = false
   state.showReason = false
+  state.visibleEvidenceCount = 0
+  state.visibleSuggestionCount = 0
 
   let idx = 0
   // 每30ms输出2-4个字符，模拟 LLM 逐字输出效果
@@ -542,13 +590,19 @@ const startTypingEffect = (code: PricingAgentCode, immediate = false) => {
     } else {
       clearTypingTimer(code)
       state.thinkingDone = true
-      // 依次展开依据、建议、理由区块（各间隔300ms）
+      // 思考完成 → 展开依据区块 → 逐条显示依据
       setTimeout(() => {
         state.showEvidence = true
-        setTimeout(() => {
-          state.showSuggestion = true
-          setTimeout(() => { state.showReason = true }, 200)
-        }, 300)
+        revealItemsOneByOne(state, 'visibleEvidenceCount', evidenceTotal, 200, () => {
+          // 依据逐条完毕 → 展开建议区块 → 逐条显示建议
+          setTimeout(() => {
+            state.showSuggestion = true
+            revealItemsOneByOne(state, 'visibleSuggestionCount', suggestionTotal, 200, () => {
+              // 建议逐条完毕 → 显示理由
+              setTimeout(() => { state.showReason = true }, 200)
+            })
+          }, 300)
+        })
       }, 300)
     }
   }, 30)
@@ -556,6 +610,7 @@ const startTypingEffect = (code: PricingAgentCode, immediate = false) => {
 
 // 重置所有打字状态
 const resetTypingStates = () => {
+  clearItemRevealTimers()
   for (const code of Object.keys(typingStates) as PricingAgentCode[]) {
     clearTypingTimer(code)
     typingStates[code] = EMPTY_TYPING()
@@ -1168,6 +1223,25 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
+.step-panel :deep(.el-step__head.is-process) {
+  color: #3b82f6;
+  border-color: #3b82f6;
+}
+
+.step-panel :deep(.el-step__title.is-process) {
+  color: #3b82f6;
+  font-weight: 800;
+}
+
+.step-panel :deep(.el-step__head.is-success) {
+  color: #10b981;
+  border-color: #10b981;
+}
+
+.step-panel :deep(.el-step__title.is-success) {
+  color: #10b981;
+}
+
 .primary-config-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1315,15 +1389,17 @@ onBeforeUnmount(() => {
 
 .stream-card {
   background: #ffffff;
-  border: 1px solid rgba(31, 46, 77, 0.08);
+  border: 1px solid rgba(226, 232, 240, 0.8);
   border-radius: 14px;
-  padding: 16px;
-  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  padding: 20px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .stream-card:hover {
-  border-color: rgba(31, 46, 77, 0.08);
-  box-shadow: none;
+  border-color: rgba(148, 163, 184, 0.4);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+  transform: translateY(-2px);
 }
 
 /* ── 流式打字机效果 ───────────────────────────── */
@@ -1361,6 +1437,20 @@ onBeforeUnmount(() => {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* 逐条淡入动画 (TransitionGroup) */
+.list-fade-enter-active {
+  transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.list-fade-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.list-fade-move {
+  transition: transform 0.3s ease;
 }
 
 /* 当前正在处理的 Agent 等待状态 */
@@ -1423,10 +1513,10 @@ onBeforeUnmount(() => {
 }
 
 .card-section {
-  background: rgba(246, 249, 253, 0.92);
-  border: 1px solid rgba(31, 46, 77, 0.06);
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  border: 1px solid rgba(226, 232, 240, 0.6);
   border-radius: 10px;
-  padding: 12px 14px;
+  padding: 14px 16px;
 }
 
 .card-section h4 {
@@ -1450,26 +1540,61 @@ onBeforeUnmount(() => {
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
+  gap: 16px;
 }
 
 .metric-card {
   min-height: 132px;
+  background: #ffffff;
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  border-radius: 14px;
+  padding: 24px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.metric-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(180deg, #3b82f6 0%, #93c5fd 100%);
+  border-radius: 4px 0 0 4px;
+  opacity: 0.8;
+}
+
+.metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08);
 }
 
 .metric-label {
-  color: var(--text-2);
-  font-size: 13px;
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .metric-value {
-  margin-top: 8px;
-  font-size: 28px;
-  font-weight: 700;
+  margin-top: 12px;
+  font-size: 32px;
+  font-weight: 800;
+  color: #0f172a;
+  background: linear-gradient(to right, #0f172a, #334155);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .strategy-value {
   font-size: 18px;
+  background: linear-gradient(to right, #3b82f6, #8b5cf6);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .report-table {

@@ -100,15 +100,16 @@ button,
 
 .panel-card {
   padding: var(--panel-padding);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(249, 252, 255, 0.98));
-  border: 1px solid rgba(31, 46, 77, 0.07);
+  background: #ffffff;
+  border: 1px solid rgba(226, 232, 240, 0.8);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-card);
-  transition: border-color var(--motion-fast), background var(--motion-fast);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .panel-card:hover {
-  border-color: rgba(31, 46, 77, 0.07);
+  border-color: rgba(203, 213, 225, 0.5);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08);
 }
 
 .section-head {
@@ -239,12 +240,22 @@ button,
 .table-card {
   padding: var(--panel-padding);
   overflow: hidden;
+  background: #ffffff;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  transition: all 0.3s;
+}
+
+.table-card:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08);
 }
 
 .table-card .el-table {
-  --el-table-border-color: rgba(31, 46, 77, 0.08);
-  --el-table-header-bg-color: #f5f8ff;
-  --el-table-row-hover-bg-color: rgba(31, 111, 235, 0.05);
+  --el-table-border-color: rgba(226, 232, 240, 0.6);
+  --el-table-header-bg-color: #f8fafc;
+  --el-table-row-hover-bg-color: #f1f5f9;
+  --el-table-header-text-color: #475569;
   border-radius: 10px;
   overflow: hidden;
   width: 100%;
@@ -252,13 +263,25 @@ button,
 }
 
 .table-card .el-table th {
-  color: var(--text-2);
   font-weight: 600;
+  border-bottom: 2px solid rgba(226, 232, 240, 0.8) !important;
 }
 
 .table-card :deep(.el-table th),
 .table-card :deep(.el-table td) {
-  padding: 12px 0;
+  padding: 14px 0;
+}
+
+.table-card :deep(.el-table__row) {
+  transition: background-color 0.2s ease, transform 0.2s ease;
+}
+
+.table-card :deep(.el-table__row:hover td) {
+  background-color: var(--el-table-row-hover-bg-color) !important;
+}
+
+.table-card :deep(.el-table__inner-wrapper::before) {
+  display: none;
 }
 
 .table-card :deep(.el-table__inner-wrapper),
@@ -304,26 +327,30 @@ button,
 }
 
 .el-button--primary {
-  --el-button-bg-color: var(--brand);
-  --el-button-border-color: var(--brand);
-  --el-button-hover-bg-color: var(--brand-strong);
-  --el-button-hover-border-color: var(--brand-strong);
-  --el-button-active-bg-color: var(--brand-strong);
-  --el-button-active-border-color: var(--brand-strong);
+  --el-button-bg-color: #3b82f6;
+  --el-button-border-color: #3b82f6;
+  --el-button-hover-bg-color: #2563eb;
+  --el-button-hover-border-color: #2563eb;
+  --el-button-active-bg-color: #1d4ed8;
+  --el-button-active-border-color: #1d4ed8;
 }
 
 .el-button--success {
-  --el-button-bg-color: #16a34a;
-  --el-button-border-color: #16a34a;
-  --el-button-hover-bg-color: #15803d;
-  --el-button-hover-border-color: #15803d;
+  --el-button-bg-color: #10b981;
+  --el-button-border-color: #10b981;
+  --el-button-hover-bg-color: #059669;
+  --el-button-hover-border-color: #059669;
 }
 
 .el-button--danger {
-  --el-button-bg-color: #dc2626;
-  --el-button-border-color: #dc2626;
-  --el-button-hover-bg-color: #b91c1c;
-  --el-button-hover-border-color: #b91c1c;
+  --el-button-bg-color: #ef4444;
+  --el-button-border-color: #ef4444;
+  --el-button-hover-bg-color: #dc2626;
+  --el-button-hover-border-color: #dc2626;
+}
+
+.el-button, .el-tag, .el-card, .el-dialog {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .el-button.is-link {
@@ -379,9 +406,35 @@ button,
 }
 
 .el-tag {
-  border-radius: 999px;
-  padding-inline: 10px;
+  border-radius: 12px;
+  padding: 0 12px;
   font-weight: 600;
+  border: none;
+}
+
+.el-tag.el-tag--success.el-tag--light {
+  background-color: #d1fae5;
+  color: #059669;
+}
+
+.el-tag.el-tag--danger.el-tag--light {
+  background-color: #fee2e2;
+  color: #dc2626;
+}
+
+.el-tag.el-tag--warning.el-tag--light {
+  background-color: #fef3c7;
+  color: #d97706;
+}
+
+.el-tag.el-tag--info.el-tag--light {
+  background-color: #f1f5f9;
+  color: #475569;
+}
+
+.el-tag.el-tag--primary.el-tag--light {
+  background-color: #dbeafe;
+  color: #2563eb;
 }
 
 @media (max-width: 1200px) {
