@@ -17,8 +17,8 @@ Frontend (Vue3, :5173)
 ```
 
 - **Java** is the only backend the frontend talks to. It owns product CRUD, Excel import (EasyExcel/淘宝 format), user auth, and exposes `/api/**` endpoints. It dispatches pricing tasks to Python via `POST /internal/tasks/dispatch`.
-- **Python** receives dispatch calls, runs the 4-agent CrewAI crew, and writes `agent_run_log` / `pricing_result` rows directly to MySQL. It also exposes an SSE endpoint for real-time log streaming.
-- **Frontend** uses Axios to call Java, with an SSE connection to Python for live agent logs.
+- **Python** receives dispatch calls, runs the 4-agent CrewAI crew, and writes `agent_run_log` / `pricing_result` rows directly to MySQL. It also exposes a WebSocket endpoint for real-time log streaming.
+- **Frontend** uses Axios to call Java, with a WebSocket connection to Python for live agent logs.
 
 ## Build & Run Commands
 
