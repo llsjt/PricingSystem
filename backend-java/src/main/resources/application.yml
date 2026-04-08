@@ -1,15 +1,14 @@
 server:
-  port: 8080
+  port: ${SERVER_PORT:8080}
 
 spring:
   application:
     name: pricing-backend
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/pricing_system2.0?useUnicode=true&characterEncoding=utf-8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2b8&allowPublicKeyRetrieval=true
-    username: root
-    password: '123456'  # 请根据实际环境修改
-
+    url: ${DB_URL:jdbc:mysql://localhost:3306/pricing_system2.0?useUnicode=true&characterEncoding=utf-8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2b8&allowPublicKeyRetrieval=true}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:123456}
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml
   global-config:
@@ -17,19 +16,54 @@ mybatis-plus:
       id-type: auto
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl # 开发环境开启 SQL 日志
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
 
 logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level traceId=%X{traceId:-} %logger - %msg%n"
   level:
-    com.example.pricing: DEBUG
+    com.example.pricing: ${APP_LOG_LEVEL:INFO}
     org.springframework: INFO
 
 jwt:
-  secret: "PricingSystem2024SecretKeyForHS256AlgorithmMustBeLongEnough"
-  expiration: 86400000  # 24h in ms
+  secret: ${JWT_SECRET:PricingSystem2024SecretKeyForHS256AlgorithmMustBeLongEnough}
+  expiration: ${JWT_ACCESS_TOKEN_EXPIRATION_MS:900000}
+  refresh-secret: ${JWT_REFRESH_SECRET:PricingSystem2024RefreshSecretKeyForHS256MustBeLongEnough}
+  refresh-expiration: ${JWT_REFRESH_TOKEN_EXPIRATION_MS:1209600000}
 
 agent:
   python:
-    base-url: http://127.0.0.1:8000
-    dispatch-path: /internal/tasks/dispatch
-    internal-token: ''
+    base-url: ${PYTHON_AGENT_BASE_URL:http://127.0.0.1:8000}
+    dispatch-path: ${PYTHON_AGENT_DISPATCH_PATH:/internal/tasks/dispatch}
+    internal-token: ${INTERNAL_API_TOKEN:}
+    connect-timeout-ms: ${PYTHON_AGENT_CONNECT_TIMEOUT_MS:3000}
+    read-timeout-ms: ${PYTHON_AGENT_READ_TIMEOUT_MS:15000}
+    ready-path: ${PYTHON_AGENT_READY_PATH:/health/ready}
+    health-timeout-ms: ${PYTHON_AGENT_HEALTH_TIMEOUT_MS:2000}
+    max-attempts: ${PYTHON_AGENT_MAX_ATTEMPTS:3}
+    retry-backoff-ms: ${PYTHON_AGENT_RETRY_BACKOFF_MS:300}
+    circuit-breaker:
+      failure-threshold: ${PYTHON_AGENT_CIRCUIT_FAILURE_THRESHOLD:3}
+      open-ms: ${PYTHON_AGENT_CIRCUIT_OPEN_MS:30000}
+
+app:
+  env: ${APP_ENV:dev}
+  security:
+    allow-dev-bootstrap: ${ALLOW_DEV_BOOTSTRAP:true}
+    allowed-origins: ${ALLOWED_ORIGINS:http://localhost:5173}
+    refresh-token-days: ${REFRESH_TOKEN_DAYS:14}
+    secure-cookie: ${SECURE_COOKIE:false}
+    login:
+      max-attempts: ${LOGIN_MAX_ATTEMPTS:5}
+      lock-minutes: ${LOGIN_LOCK_MINUTES:15}
+  pricing:
+    max-adjustment-ratio: ${MAX_PRICE_ADJUSTMENT_RATIO:0.30}
+    min-margin-rate: ${MIN_MARGIN_RATE:0.05}
+  market:
+    allow-simulation: ${ALLOW_MARKET_SIMULATION:true}
+  metrics:
+    stale-running-minutes: ${STALE_RUNNING_MINUTES:15}
+
+python:
+  agent:
+    max-retries: ${AGENT_MAX_RETRIES:2}

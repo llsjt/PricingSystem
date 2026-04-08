@@ -5,16 +5,17 @@ import { clearAuthSession, readAuthSession, saveAuthSession, type AuthSessionPay
 export const useUserStore = defineStore('user', () => {
   const token = ref('')
   const username = ref('Guest')
-  const isAdmin = ref(false)
+  const role = ref('USER')
   const loginTime = ref('')
 
+  const isAdmin = computed(() => role.value === 'ADMIN')
   const isAuthenticated = computed(() => Boolean(token.value))
 
   const syncFromSession = () => {
     const snapshot = readAuthSession()
     token.value = snapshot.token
     username.value = snapshot.username || 'Guest'
-    isAdmin.value = snapshot.isAdmin
+    role.value = snapshot.role || 'USER'
     loginTime.value = snapshot.loginTime
     return snapshot
   }
@@ -29,7 +30,7 @@ export const useUserStore = defineStore('user', () => {
     clearAuthSession()
     token.value = ''
     username.value = 'Guest'
-    isAdmin.value = false
+    role.value = 'USER'
     loginTime.value = ''
   }
 
@@ -38,6 +39,7 @@ export const useUserStore = defineStore('user', () => {
   return {
     token,
     username,
+    role,
     isAdmin,
     loginTime,
     isAuthenticated,

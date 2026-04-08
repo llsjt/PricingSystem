@@ -1,25 +1,28 @@
 package com.example.pricing.common;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.CorsFilter;
 
-/**
- * 跨域访问配置，允许前端在不同域名下访问后端接口。
- */
+import java.util.Arrays;
+
 @Configuration
 public class CorsConfig {
 
-    /**
-     * 注册全局跨域过滤器，统一放行常见请求头、方法和认证头。
-     */
+    @Value("${app.security.allowed-origins:http://localhost:5173}")
+    private String allowedOrigins;
+
     @Bean
     public CorsFilter corsFilter() {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         CorsConfiguration corsConfiguration = new CorsConfiguration();
-        corsConfiguration.addAllowedOriginPattern("*");
+        Arrays.stream(String.valueOf(allowedOrigins).split(","))
+                .map(String::trim)
+                .filter(origin -> !origin.isBlank())
+                .forEach(corsConfiguration::addAllowedOrigin);
         corsConfiguration.addAllowedHeader("*");
         corsConfiguration.addAllowedMethod("*");
         corsConfiguration.addExposedHeader("Authorization");

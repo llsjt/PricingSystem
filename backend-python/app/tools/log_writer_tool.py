@@ -3,6 +3,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.repos.log_repo import LogRepo
+from app.repos.task_repo import TaskRepo
 
 
 class LogWriterTool:
@@ -10,6 +11,7 @@ class LogWriterTool:
 
     def __init__(self, db: Session):
         self.log_repo = LogRepo(db)
+        self.task_repo = TaskRepo(db)
 
     def write_agent_card(
         self,
@@ -21,6 +23,10 @@ class LogWriterTool:
         suggestion: dict[str, Any],
         reason_why: str | None = None,
     ) -> None:
+        task = self.task_repo.get_by_id(task_id)
+        if task is None or str(task.task_status or "").upper() == "CANCELLED":
+            return
+
         self.log_repo.append_card(
             task_id=task_id,
             agent_name=agent_name,

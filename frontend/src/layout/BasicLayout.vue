@@ -8,6 +8,7 @@ import { useViewport } from '../composables/useViewport'
 import { useUserStore } from '../stores/user'
 import { useShopStore } from '../stores/shop'
 import { createShop, type ShopCreateDTO } from '../api/shop'
+import { logout } from '../api/user'
 
 interface OpenTab {
   path: string
@@ -131,13 +132,18 @@ const toggleSidebar = () => {
   isSidebarCollapsed.value = !isSidebarCollapsed.value
 }
 
-const handleCommand = (command: string) => {
+const handleCommand = async (command: string) => {
   if (command === 'profile') {
     navigateTo('/profile')
     return
   }
 
   if (command === 'logout') {
+    try {
+      await logout()
+    } catch {
+      // fall through and clear local state regardless
+    }
     shopStore.resetState()
     userStore.clearSession()
     ElMessage.success('\u5df2\u9000\u51fa\u767b\u5f55')

@@ -25,6 +25,7 @@ class ResultRepo:
         is_pass: bool,
         execute_strategy: str,
         result_summary: str,
+        review_required: bool,
     ) -> PricingResult:
         entity = self.get_by_task_id(task_id)
         if entity is None:
@@ -37,9 +38,9 @@ class ResultRepo:
         entity.is_pass = 1 if is_pass else 0
         entity.execute_strategy = execute_strategy
         entity.result_summary = result_summary
+        entity.review_required = 1 if review_required else 0
 
         self.db.add(entity)
         self.db.commit()
         self.db.refresh(entity)
         return entity
-

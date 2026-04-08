@@ -3,7 +3,7 @@
 ============================
 使用 CrewAI Crew 驱动 4 个 Agent 顺序执行定价决策。
 每个 Task 完成时通过回调将 Agent 卡片实时写入数据库，
-前端 WebSocket 轮询 agent_run_log 表即可展示实时进度。
+前端通过 Java 实时流读取 agent_run_log 表即可展示进度。
 
 执行流程：
   1. 构建 LLM 实例
@@ -210,7 +210,7 @@ class OrchestrationService:
             """
             Task 完成时的回调函数。
             解析 LLM 输出，构建 Agent 卡片，写入数据库。
-            这是实现 WebSocket 实时推送的关键——每个 Task 完成后立即入库。
+            这是实现实时结果推送的关键: 每个 Task 完成后立即入库。
             """
             try:
                 # 获取 LLM 原始输出并解析 JSON
@@ -254,7 +254,7 @@ class OrchestrationService:
                         parsed, data_p, market_p, risk_p
                     )
 
-                # 写入 agent_run_log 表（立即 commit，WebSocket 轮询可即时读取）
+                # 写入 agent_run_log 表，立即 commit 后前端即可通过实时流看到更新
                 self.log_tool.write_agent_card(
                     task_id=payload.task_id,
                     agent_name=meta["name"],
@@ -282,7 +282,7 @@ class OrchestrationService:
             crew_output = crew.kickoff()
         except Exception as crew_exc:
             # Crew 执行失败：为第一个未完成的 Agent 写入错误卡片，
-            # 让前端 WebSocket 能立即展示错误信息而非无限转圈
+            # 让前端实时流能尽快拿到错误信息，而不是一直停留在加载中
             logger.error("Crew 执行失败: %s", crew_exc, exc_info=True)
             print(f"[CrewAI] Crew 执行失败: {crew_exc}", flush=True)
             error_idx = card_counter[0]  # 当前未完成的 Agent 索引

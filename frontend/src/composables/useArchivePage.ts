@@ -32,6 +32,10 @@ import { resolveRequestErrorMessage } from '../utils/error'
 import { formatCurrency, formatDateTime, formatPercent, formatSignedCurrency } from '../utils/formatters'
 
 const STATUS_MAP: Record<string, string> = {
+  QUEUED: '待执行',
+  RETRYING: '重试中',
+  MANUAL_REVIEW: '人工审核',
+  CANCELLED: '已取消',
   PENDING: '待执行',
   RUNNING: '执行中',
   COMPLETED: '已完成',
@@ -39,6 +43,10 @@ const STATUS_MAP: Record<string, string> = {
 }
 
 const STATUS_TYPE_MAP: Record<string, 'info' | 'warning' | 'success' | 'danger'> = {
+  QUEUED: 'info',
+  RETRYING: 'warning',
+  MANUAL_REVIEW: 'warning',
+  CANCELLED: 'info',
   PENDING: 'info',
   RUNNING: 'warning',
   COMPLETED: 'success',
@@ -46,7 +54,11 @@ const STATUS_TYPE_MAP: Record<string, 'info' | 'warning' | 'success' | 'danger'>
 }
 
 const STATUS_OPTIONS = [
+  { label: '待执行', value: 'QUEUED' },
   { label: '执行中', value: 'RUNNING' },
+  { label: '重试中', value: 'RETRYING' },
+  { label: '人工审核', value: 'MANUAL_REVIEW' },
+  { label: '已取消', value: 'CANCELLED' },
   { label: '已完成', value: 'COMPLETED' },
   { label: '失败', value: 'FAILED' }
 ]
@@ -175,9 +187,9 @@ export const useArchivePage = () => {
 
     stats.value = {
       total: total.value,
-      completed: tasks.value.filter((item) => item.taskStatus === 'COMPLETED').length,
-      running: tasks.value.filter((item) => item.taskStatus === 'RUNNING').length,
-      failed: tasks.value.filter((item) => item.taskStatus === 'FAILED').length
+      completed: tasks.value.filter((item) => ['COMPLETED', 'MANUAL_REVIEW'].includes(item.taskStatus)).length,
+      running: tasks.value.filter((item) => ['QUEUED', 'RUNNING', 'RETRYING'].includes(item.taskStatus)).length,
+      failed: tasks.value.filter((item) => ['FAILED', 'CANCELLED'].includes(item.taskStatus)).length
     }
   }
 

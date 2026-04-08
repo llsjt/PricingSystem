@@ -8,10 +8,16 @@ import com.example.pricing.entity.SysUser;
 import com.example.pricing.exception.ForbiddenException;
 import com.example.pricing.exception.UnauthorizedException;
 import com.example.pricing.mapper.SysUserMapper;
+import com.example.pricing.security.AuthSessionService;
+import com.example.pricing.security.LoginAttemptService;
+import com.example.pricing.security.LoginAuditService;
+import com.example.pricing.security.PasswordPolicyValidator;
 import com.example.pricing.vo.UserListVO;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.mindrot.jbcrypt.BCrypt;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -26,66 +32,88 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * 用户管理控制器，处理登录、登出以及管理员的用户维护操作。
- */
 @RestController
 @RequestMapping("/api/user")
 @RequiredArgsConstructor
 public class UserController {
 
+    private static final String ROLE_ADMIN = "ADMIN";
+    private static final String ROLE_USER = "USER";
+
     private final SysUserMapper userMapper;
     private final JwtUtil jwtUtil;
+    private final AuthSessionService authSessionService;
+    private final LoginAttemptService loginAttemptService;
+    private final LoginAuditService loginAuditService;
 
-    /**
-     * 校验账号密码并签发 JWT，返回前端会话所需信息。
-     */
     @PostMapping("/login")
-    public Result<Map<String, Object>> login(@RequestBody Map<String, String> body) {
-        String username = body.get("username");
-        String password = body.get("password");
+    public Result<Map<String, Object>> login(
+            @RequestBody Map<String, String> body,
+            HttpServletRequest request,
+            HttpServletResponse response) {
+        String username = trimToEmpty(body.get("username"));
+        String password = body.getOrDefault("password", "");
+        String attemptKey = buildAttemptKey(username, request);
+
+        if (!loginAttemptService.isAllowed(attemptKey)) {
+            loginAuditService.record(null, username, request, "BLOCKED", loginAttemptService.blockedMessage());
+            return Result.error(HttpStatus.TOO_MANY_REQUESTS.value(), loginAttemptService.blockedMessage());
+        }
 
         LambdaQueryWrapper<SysUser> wrapper = new LambdaQueryWrapper<>();
         wrapper.and(query -> query.eq(SysUser::getUsername, username).or().eq(SysUser::getAccount, username));
         SysUser user = userMapper.selectOne(wrapper);
-
-        if (user == null || user.getStatus() != null && user.getStatus() == 0) {
-            return Result.error("用户名或密码错误");
+        if (user == null || (user.getStatus() != null && user.getStatus() == 0)) {
+            loginAttemptService.recordFailure(attemptKey);
+            loginAuditService.record(null, username, request, "FAILED", "invalid credentials");
+            return Result.error("Invalid username or password");
         }
 
         if (!BCrypt.checkpw(password, user.getPassword())) {
-            return Result.error("用户名或密码错误");
+            loginAttemptService.recordFailure(attemptKey);
+            loginAuditService.record(user.getId(), user.getUsername(), request, "FAILED", "invalid credentials");
+            return Result.error("Invalid username or password");
         }
 
-        boolean isAdmin = "admin".equals(user.getUsername());
-        String token = jwtUtil.generateToken(user.getId(), user.getUsername(), isAdmin);
-
-        Map<String, Object> data = new HashMap<>();
-        data.put("token", token);
-        data.put("username", user.getUsername());
-        data.put("isAdmin", isAdmin);
-        return Result.success(data);
+        loginAttemptService.recordSuccess(attemptKey);
+        loginAuditService.record(user.getId(), user.getUsername(), request, "SUCCESS", null);
+        return Result.success(buildSessionPayload(user, request, response));
     }
 
-    /**
-     * 退出登录接口，当前由前端自行删除令牌，因此后端只返回成功状态。
-     */
+    @PostMapping("/refresh")
+    public Result<Map<String, Object>> refresh(HttpServletRequest request, HttpServletResponse response) {
+        AuthSessionService.IssuedSession issuedSession = authSessionService.rotate(request);
+        SysUser user = userMapper.selectById(issuedSession.userId());
+        if (user == null || (user.getStatus() != null && user.getStatus() == 0)) {
+            authSessionService.clearRefreshCookie(response);
+            throw new UnauthorizedException("Session expired, please log in again");
+        }
+        authSessionService.writeRefreshCookie(response, issuedSession.rawToken());
+        return Result.success(buildAccessTokenPayload(user));
+    }
+
     @PostMapping("/logout")
-    public Result<Void> logout() {
+    public Result<Void> logout(HttpServletRequest request, HttpServletResponse response) {
+        Long currentUserId = (Long) request.getAttribute("currentUserId");
+        if (currentUserId != null) {
+            SysUser user = userMapper.selectById(currentUserId);
+            if (user != null) {
+                user.setTokenVersion((user.getTokenVersion() == null ? 0 : user.getTokenVersion()) + 1);
+                userMapper.updateById(user);
+            }
+        }
+        authSessionService.revoke(request);
+        authSessionService.clearRefreshCookie(response);
         return Result.success(null);
     }
 
-    /**
-     * 管理员分页查询系统用户列表。
-     */
     @GetMapping("/list")
     public Result<Page<UserListVO>> getUserList(
             HttpServletRequest request,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size) {
         requireAdmin(request);
-        Page<SysUser> pageParam = new Page<>(page, size);
-        Page<SysUser> userPage = userMapper.selectPage(pageParam, null);
+        Page<SysUser> userPage = userMapper.selectPage(new Page<>(page, size), null);
         Page<UserListVO> resultPage = new Page<>();
         resultPage.setCurrent(userPage.getCurrent());
         resultPage.setSize(userPage.getSize());
@@ -94,86 +122,81 @@ public class UserController {
         return Result.success(resultPage);
     }
 
-    /**
-     * 管理员新增用户，并在落库前完成密码加密。
-     */
     @PostMapping("/add")
-    public Result<Void> addUser(
-            HttpServletRequest request,
-            @RequestBody SysUser user) {
+    public Result<Void> addUser(HttpServletRequest request, @RequestBody SysUser user) {
         requireAdmin(request);
 
         LambdaQueryWrapper<SysUser> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(SysUser::getUsername, user.getUsername());
         if (userMapper.exists(wrapper)) {
-            return Result.error("用户名已存在");
+            return Result.error("Username already exists");
         }
 
+        PasswordPolicyValidator.validate(user.getPassword());
         user.setAccount(user.getUsername());
+        user.setRole(normalizeRole(user.getRole()));
+        user.setTokenVersion(0);
         user.setPassword(BCrypt.hashpw(user.getPassword(), BCrypt.gensalt()));
         user.setStatus(user.getStatus() == null ? 1 : user.getStatus());
         userMapper.insert(user);
         return Result.success(null);
     }
 
-    /**
-     * 管理员更新用户资料，可选修改用户名、密码、邮箱和状态。
-     */
     @PutMapping("/{id}")
-    public Result<Void> updateUser(
-            HttpServletRequest request,
-            @PathVariable Long id,
-            @RequestBody SysUser user) {
+    public Result<Void> updateUser(HttpServletRequest request, @PathVariable Long id, @RequestBody SysUser user) {
         requireAdmin(request);
 
         SysUser existing = userMapper.selectById(id);
         if (existing == null) {
-            return Result.error("用户不存在");
+            return Result.error("User not found");
         }
 
         if (user.getUsername() != null && !user.getUsername().equals(existing.getUsername())) {
             LambdaQueryWrapper<SysUser> wrapper = new LambdaQueryWrapper<>();
             wrapper.eq(SysUser::getUsername, user.getUsername());
             if (userMapper.exists(wrapper)) {
-                return Result.error("用户名已存在");
+                return Result.error("Username already exists");
             }
             existing.setUsername(user.getUsername());
             existing.setAccount(user.getUsername());
         }
 
+        boolean invalidateToken = false;
         if (user.getPassword() != null && !user.getPassword().isBlank()) {
+            PasswordPolicyValidator.validate(user.getPassword());
             existing.setPassword(BCrypt.hashpw(user.getPassword(), BCrypt.gensalt()));
+            invalidateToken = true;
         }
         existing.setEmail(user.getEmail());
         if (user.getStatus() != null) {
             existing.setStatus(user.getStatus());
+            invalidateToken = true;
+        }
+        if (user.getRole() != null && !user.getRole().isBlank()) {
+            existing.setRole(normalizeRole(user.getRole()));
+            invalidateToken = true;
+        }
+        if (invalidateToken) {
+            existing.setTokenVersion((existing.getTokenVersion() == null ? 0 : existing.getTokenVersion()) + 1);
         }
 
         userMapper.updateById(existing);
         return Result.success(null);
     }
 
-    /**
-     * 管理员删除单个用户，但保护内置管理员账号不被误删。
-     */
     @DeleteMapping("/{id:\\d+}")
-    public Result<Void> deleteUser(
-            HttpServletRequest request,
-            @PathVariable Long id) {
+    public Result<Void> deleteUser(HttpServletRequest request, @PathVariable Long id) {
         requireAdmin(request);
 
         SysUser existing = userMapper.selectById(id);
-        if (existing != null && "admin".equals(existing.getUsername())) {
-            return Result.error("不能删除管理员");
+        if (existing != null && ROLE_ADMIN.equalsIgnoreCase(existing.getRole())) {
+            return Result.error("Admin user cannot be deleted");
         }
 
         userMapper.deleteById(id);
         return Result.success(null);
     }
 
-    /**
-     * 管理员批量删除用户，同样禁止删除管理员账号。
-     */
     @DeleteMapping("/batch-delete")
     public Result<Void> batchDeleteUsers(
             HttpServletRequest request,
@@ -181,47 +204,88 @@ public class UserController {
         requireAdmin(request);
 
         if (ids == null || ids.isEmpty()) {
-            return Result.error("请选择要删除的用户");
+            return Result.error("Please select users to delete");
         }
 
         List<SysUser> users = userMapper.selectBatchIds(ids);
-        boolean containsAdmin = users.stream().anyMatch(user -> "admin".equals(user.getUsername()));
+        boolean containsAdmin = users.stream().anyMatch(user -> ROLE_ADMIN.equalsIgnoreCase(user.getRole()));
         if (containsAdmin) {
-            return Result.error("不能删除管理员");
+            return Result.error("Admin user cannot be deleted");
         }
 
         userMapper.deleteBatchIds(ids);
         return Result.success(null);
     }
 
-    /**
-     * 校验当前请求是否由管理员发起，不满足条件时抛出权限异常。
-     */
     private void requireAdmin(HttpServletRequest request) {
         String currentUsername = (String) request.getAttribute("currentUsername");
         if (currentUsername == null || currentUsername.isBlank()) {
-            throw new UnauthorizedException("请先登录");
+            throw new UnauthorizedException("Please log in");
         }
 
         Boolean isAdmin = (Boolean) request.getAttribute("isAdmin");
-        if (isAdmin != null && isAdmin) {
+        if (Boolean.TRUE.equals(isAdmin)) {
             return;
         }
 
-        throw new ForbiddenException("无权进行此操作，仅限管理员");
+        throw new ForbiddenException("Admin permission required");
     }
 
-    /**
-     * 将用户实体转换为列表页展示对象，避免前端接收到敏感字段。
-     */
     private UserListVO toUserListVO(SysUser user) {
         UserListVO vo = new UserListVO();
         vo.setId(user.getId());
         vo.setUsername(user.getUsername());
         vo.setEmail(user.getEmail());
         vo.setStatus(user.getStatus());
+        vo.setRole(normalizeRole(user.getRole()));
         vo.setCreatedAt(user.getCreatedAt());
         vo.setUpdatedAt(user.getUpdatedAt());
         return vo;
+    }
+
+    private Map<String, Object> buildSessionPayload(SysUser user, HttpServletRequest request, HttpServletResponse response) {
+        AuthSessionService.IssuedSession issuedSession = authSessionService.issueSession(user.getId(), request);
+        authSessionService.writeRefreshCookie(response, issuedSession.rawToken());
+        return buildAccessTokenPayload(user);
+    }
+
+    private Map<String, Object> buildAccessTokenPayload(SysUser user) {
+        String role = normalizeRole(user.getRole());
+        String token = jwtUtil.generateAccessToken(
+                user.getId(),
+                user.getUsername(),
+                role,
+                user.getTokenVersion() == null ? 0 : user.getTokenVersion()
+        );
+
+        Map<String, Object> data = new HashMap<>();
+        data.put("token", token);
+        data.put("username", user.getUsername());
+        data.put("role", role);
+        data.put("isAdmin", ROLE_ADMIN.equalsIgnoreCase(role));
+        return data;
+    }
+
+    private String normalizeRole(String role) {
+        String normalized = trimToEmpty(role).toUpperCase();
+        if (normalized.isBlank()) {
+            return ROLE_USER;
+        }
+        if (!ROLE_ADMIN.equals(normalized) && !ROLE_USER.equals(normalized)) {
+            throw new IllegalArgumentException("Invalid user role");
+        }
+        return normalized;
+    }
+
+    private String trimToEmpty(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private String buildAttemptKey(String username, HttpServletRequest request) {
+        String forwardedFor = request.getHeader("X-Forwarded-For");
+        String ipAddress = forwardedFor != null && !forwardedFor.isBlank()
+                ? forwardedFor.split(",")[0].trim()
+                : request.getRemoteAddr();
+        return trimToEmpty(username).toLowerCase() + "|" + trimToEmpty(ipAddress);
     }
 }

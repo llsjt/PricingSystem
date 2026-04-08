@@ -9,9 +9,6 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/**
- * 系统用户实体，保存后台登录账号的基础资料和状态。
- */
 @Data
 @TableName("sys_user")
 public class SysUser {
@@ -32,6 +29,12 @@ public class SysUser {
 
     @TableField("status")
     private Integer status;
+
+    @TableField("role")
+    private String role;
+
+    @TableField("token_version")
+    private Integer tokenVersion;
 
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

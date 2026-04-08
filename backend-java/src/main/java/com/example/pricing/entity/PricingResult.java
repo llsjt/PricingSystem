@@ -10,9 +10,6 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/**
- * 定价结果实体，保存最终建议价格、预计销量、预计利润等输出结果。
- */
 @Data
 @TableName("pricing_result")
 public class PricingResult {
@@ -42,6 +39,18 @@ public class PricingResult {
 
     @TableField("result_summary")
     private String resultSummary;
+
+    @TableField("review_required")
+    private Integer reviewRequired;
+
+    @TableField("applied_previous_price")
+    private BigDecimal appliedPreviousPrice;
+
+    @TableField("applied_at")
+    private LocalDateTime appliedAt;
+
+    @TableField("applied_by_user_id")
+    private Long appliedByUserId;
 
     @TableField(exist = false)
     private Long productId;

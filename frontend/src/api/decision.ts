@@ -75,7 +75,16 @@ export interface DecisionLogItem {
   createdAt: string
 }
 
-export type PricingTaskStatus = 'IDLE' | 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED'
+export type PricingTaskStatus =
+  | 'IDLE'
+  | 'PENDING'
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'RETRYING'
+  | 'MANUAL_REVIEW'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
 
 export type PricingAgentCode = 'DATA_ANALYSIS' | 'MARKET_INTEL' | 'RISK_CONTROL' | 'MANAGER_COORDINATOR'
 
@@ -145,6 +154,7 @@ export interface PricingTaskCompletedMessage {
   type: 'task_completed'
   taskId: number
   timestamp: string
+  status?: PricingTaskStatus
   result?: PricingTaskResultPayload
 }
 
@@ -154,10 +164,11 @@ export interface PricingTaskFailedMessage {
   type: 'task_failed'
   taskId: number
   timestamp: string
+  status?: PricingTaskStatus
   message?: string
 }
 
-export type PricingWsMessage =
+export type PricingTaskStreamMessage =
   | PricingTaskStartedMessage
   | PricingAgentCardMessage
   | PricingTaskCompletedMessage
@@ -177,16 +188,6 @@ export const getTaskComparison = (taskId: number) => {
 
 export const getTaskLogs = (taskId: number) => {
   return request.get(`/decision/logs/${taskId}`)
-}
-
-export const getTaskLogWebSocketUrl = (taskId: number) => {
-  const customBase = String(import.meta.env.VITE_AGENT_WS_BASE || '').trim()
-  if (customBase) {
-    return `${customBase.replace(/\/+$/, '')}/ws/decision/${taskId}`
-  }
-  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const hostname = window.location.hostname || '127.0.0.1'
-  return `${protocol}://${hostname}:8000/ws/decision/${taskId}`
 }
 
 export const getTaskList = (params: DecisionTaskQuery) => {
@@ -213,12 +214,8 @@ export const getPricingTaskLogs = (taskId: number) => {
   return request.get(`/pricing/tasks/${taskId}/logs`)
 }
 
-export const getPricingTaskWebSocketUrl = (taskId: number) => {
-  const customBase = String(import.meta.env.VITE_AGENT_WS_BASE || '').trim()
-  if (customBase) {
-    return `${customBase.replace(/\/+$/, '')}/ws/pricing/tasks/${taskId}`
-  }
-  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const hostname = window.location.hostname || '127.0.0.1'
-  return `${protocol}://${hostname}:8000/ws/pricing/tasks/${taskId}`
+export const getPricingTaskStreamUrl = (taskId: number) => `/api/pricing/tasks/${taskId}/events`
+
+export const cancelPricingTask = (taskId: number) => {
+  return request.post(`/pricing/tasks/${taskId}/cancel`)
 }

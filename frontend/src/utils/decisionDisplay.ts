@@ -26,9 +26,12 @@ const TEXT_VALUE_MAP: Record<string, string> = {
   LOW: '低风险',
   MEDIUM: '中风险',
   HIGH: '高风险',
+  QUEUED: '待执行',
+  RETRYING: '重试中',
   SUCCESS: '成功',
   RUNNING: '执行中',
   COMPLETED: '已完成',
+  CANCELLED: '已取消',
   FAILED: '失败',
   PENDING: '待执行'
 }

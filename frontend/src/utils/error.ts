@@ -1,8 +1,21 @@
+export const sanitizeErrorMessage = (value: unknown, fallback: string) => {
+  if (typeof value !== 'string') {
+    return fallback
+  }
+
+  const normalized = value.trim()
+  if (!normalized || ['null', 'undefined'].includes(normalized.toLowerCase())) {
+    return fallback
+  }
+
+  return normalized
+}
+
 const parseBlobErrorMessage = async (raw: Blob, fallback: string) => {
   try {
     const text = await raw.text()
     const parsed = JSON.parse(text)
-    return parsed?.message || parsed?.error || fallback
+    return sanitizeErrorMessage(parsed?.message, sanitizeErrorMessage(parsed?.error, fallback))
   } catch {
     return fallback
   }
@@ -14,5 +27,5 @@ export const resolveRequestErrorMessage = async (error: unknown, fallback = '网
     return parseBlobErrorMessage(responseData, fallback)
   }
 
-  return responseData?.message || (error as any)?.message || fallback
+  return sanitizeErrorMessage(responseData?.message, sanitizeErrorMessage((error as any)?.message, fallback))
 }

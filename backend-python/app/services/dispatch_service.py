@@ -1,11 +1,9 @@
-﻿import logging
-from typing import Any
+import logging
 
-from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
+from app.core.trace_context import bind_trace_context
 from app.crew.protocols import CrewRunPayload
-from app.db.session import SessionLocal
 from app.repos.log_repo import LogRepo
 from app.repos.result_repo import ResultRepo
 from app.repos.task_repo import TaskRepo
@@ -26,8 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 class DispatchService:
-    """任务分发服务：Java 触发后异步执行 4 Agent MVP。"""
-
     def __init__(self, db: Session):
         self.db = db
         self.task_repo = TaskRepo(db)
@@ -44,21 +40,83 @@ class DispatchService:
         }
         return mapping.get(int(order or 0), "UNKNOWN")
 
-    def dispatch(self, req: DispatchTaskRequest, background_tasks: BackgroundTasks) -> DispatchTaskResponse:
-        # 幂等受理：避免重复派发同一个 task。
+    def dispatch(self, req: DispatchTaskRequest, queue_service) -> DispatchTaskResponse:
         task = self.task_repo.get_by_id(req.task_id)
         if task is None:
             return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="NOT_FOUND", message="task not found")
 
-        if task.task_status == "COMPLETED":
+        status = str(task.task_status or "").upper()
+        if status == "COMPLETED":
             return DispatchTaskResponse(accepted=True, taskId=req.task_id, status="COMPLETED", message="already completed")
-        if task.task_status == "RUNNING":
-            return DispatchTaskResponse(accepted=True, taskId=req.task_id, status="RUNNING", message="already running")
+        if status in {"RUNNING", "QUEUED", "RETRYING"}:
+            return DispatchTaskResponse(accepted=True, taskId=req.task_id, status=status, message="already accepted")
+        if not queue_service.can_accept():
+            self.task_repo.update_status(task, "FAILED", failure_reason="worker queue is full")
+            return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="FAILED", message="worker queue is full")
 
-        self.task_repo.update_status(task, "RUNNING")
-        payload = req.model_dump()
-        background_tasks.add_task(self._run_background, payload)
-        return DispatchTaskResponse(accepted=True, taskId=req.task_id, status="RUNNING", message="accepted")
+        self.task_repo.mark_queued(task, trace_id=req.trace_id)
+        return DispatchTaskResponse(
+            accepted=True,
+            taskId=req.task_id,
+            status="QUEUED",
+            message=f"accepted, queue size {queue_service.queue_size()}",
+        )
+
+    def recover_pending_tasks(self, queue_service, max_retries: int) -> int:
+        for task in self.task_repo.list_recoverable():
+            status = str(task.task_status or "").upper()
+            if status == "RUNNING":
+                if int(task.retry_count or 0) >= max(max_retries, 0):
+                    self.task_repo.mark_manual_review(task, "worker restarted after retry budget exhausted")
+                    continue
+                self.task_repo.mark_retrying(
+                    task,
+                    trace_id=task.trace_id,
+                    failure_reason="worker restarted during execution",
+                )
+        return self.task_repo.count_dispatchable()
+
+    def retry(self, req: DispatchTaskRequest, queue_service) -> DispatchTaskResponse:
+        task = self.task_repo.get_by_id(req.task_id)
+        if task is None:
+            return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="NOT_FOUND", message="task not found")
+        if not queue_service.can_accept():
+            self.task_repo.update_status(task, "FAILED", failure_reason="worker queue is full")
+            return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="FAILED", message="worker queue is full")
+
+        self.task_repo.mark_retrying(task, trace_id=req.trace_id)
+        return DispatchTaskResponse(
+            accepted=True,
+            taskId=req.task_id,
+            status="RETRYING",
+            message=f"retry accepted, queue size {queue_service.queue_size()}",
+        )
+
+    def handle_worker_failure(self, req: DispatchTaskRequest, reason: str, max_retries: int) -> DispatchTaskResponse:
+        task = self.task_repo.get_by_id(req.task_id)
+        if task is None:
+            return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="NOT_FOUND", message="task not found")
+
+        status = str(task.task_status or "").upper()
+        if status == "CANCELLED":
+            return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="CANCELLED", message="task cancelled")
+
+        if int(task.retry_count or 0) >= max(max_retries, 0):
+            self.task_repo.mark_manual_review(task, reason)
+            return DispatchTaskResponse(
+                accepted=False,
+                taskId=req.task_id,
+                status="MANUAL_REVIEW",
+                message="retry budget exhausted",
+            )
+
+        self.task_repo.mark_retrying(task, trace_id=req.trace_id, failure_reason=reason)
+        return DispatchTaskResponse(
+            accepted=True,
+            taskId=req.task_id,
+            status="RETRYING",
+            message="worker failure scheduled for retry",
+        )
 
     def get_status(self, task_id: int) -> TaskStatusResponse:
         task = self.task_repo.get_by_id(task_id)
@@ -66,15 +124,6 @@ class DispatchService:
             return TaskStatusResponse(taskId=task_id, status="NOT_FOUND", hasResult=False, message="task not found")
         result = self.result_repo.get_by_task_id(task_id)
         return TaskStatusResponse(taskId=task_id, status=task.task_status, hasResult=result is not None)
-
-    def retry(self, req: DispatchTaskRequest, background_tasks: BackgroundTasks) -> DispatchTaskResponse:
-        task = self.task_repo.get_by_id(req.task_id)
-        if task is None:
-            return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="NOT_FOUND", message="task not found")
-        self.task_repo.update_status(task, "RUNNING")
-        payload = req.model_dump()
-        background_tasks.add_task(self._run_background, payload)
-        return DispatchTaskResponse(accepted=True, taskId=req.task_id, status="RUNNING", message="retry accepted")
 
     def get_detail(self, task_id: int) -> TaskDetailResponse:
         task = self.task_repo.get_by_id(task_id)
@@ -128,8 +177,8 @@ class DispatchService:
                     agentName=item.role_name,
                     runOrder=order,
                     displayOrder=order,
-                    stage="已完成",
-                    runStatus="成功",
+                    stage="completed",
+                    runStatus="success",
                     outputSummary=thinking,
                     needManualReview=is_manual_review_action(action),
                     thinking=thinking,
@@ -142,56 +191,62 @@ class DispatchService:
 
         return TaskLogsResponse(taskId=task_id, total=len(items), logs=items)
 
-    @staticmethod
-    def _run_background(payload: dict) -> None:
-        db = SessionLocal()
-        try:
-            req = DispatchTaskRequest.model_validate(payload)
-            service = DispatchService(db)
-            service._execute(req)
-        except Exception as exc:
-            logger.exception("Background dispatch execution failed")
-            # 确保错误信息在控制台可见，方便调试 CrewAI 执行问题
-            print(f"[ERROR] Background dispatch failed: {exc}", flush=True)
-        finally:
-            db.close()
+    def build_dispatch_request(self, task) -> DispatchTaskRequest:
+        return DispatchTaskRequest(
+            taskId=task.id,
+            productId=task.product_id,
+            productIds=[task.product_id],
+            strategyGoal=(task.strategy_goal or "MAX_PROFIT"),
+            constraints=task.constraint_text or "",
+            traceId=task.trace_id,
+        )
 
-    def _execute(self, req: DispatchTaskRequest) -> None:
-        """后台执行入口：聚合上下文 -> 顺序运行 4 Agent -> 结果落库。"""
+    def execute_queued(self, req: DispatchTaskRequest, worker_id: int | None = None) -> None:
         task = self.task_repo.get_by_id(req.task_id)
         if task is None:
             raise ValueError(f"task not found: {req.task_id}")
 
-        context_service = ContextService(self.db)
-        try:
-            product = context_service.load_product_context(req.product_id or 0)
-            metrics = context_service.load_daily_metrics(product.product_id, limit=30)
-            traffic = context_service.load_traffic(product.product_id, limit=30)
-            baseline_sales = context_service.infer_baseline_sales(metrics, product.stock)
-            baseline_profit = context_service.infer_baseline_profit(
-                current_price=product.current_price,
-                cost_price=product.cost_price,
-                monthly_sales=baseline_sales,
-            )
-            task.baseline_profit = baseline_profit
+        with bind_trace_context(trace_id=req.trace_id or task.trace_id or f"task-{req.task_id}", task_id=req.task_id):
+            if str(task.task_status or "").upper() == "CANCELLED":
+                logger.info("Worker %s skipped cancelled task %s", worker_id, req.task_id)
+                return
+
+            logger.info("Worker %s started task %s", worker_id, req.task_id)
+            task.failure_reason = None
             self.db.add(task)
             self.db.commit()
 
-            payload = CrewRunPayload(
-                task_id=req.task_id,
-                strategy_goal=req.strategy_goal,
-                constraints=parse_constraints(req.constraints),
-                product=product,
-                metrics=metrics,
-                traffic=traffic,
-                baseline_sales=baseline_sales,
-                baseline_profit=baseline_profit,
-            )
-            orchestration_service = OrchestrationService(self.db)
-            orchestration_service.run(payload)
-        except Exception:
-            self.db.rollback()
-            task = self.task_repo.get_by_id(req.task_id)
-            if task is not None:
-                self.task_repo.update_status(task, "FAILED")
-            raise
+            context_service = ContextService(self.db)
+            try:
+                product = context_service.load_product_context(req.product_id or 0)
+                metrics = context_service.load_daily_metrics(product.product_id, limit=30)
+                traffic = context_service.load_traffic(product.product_id, limit=30)
+                baseline_sales = context_service.infer_baseline_sales(metrics, product.stock)
+                baseline_profit = context_service.infer_baseline_profit(
+                    current_price=product.current_price,
+                    cost_price=product.cost_price,
+                    monthly_sales=baseline_sales,
+                )
+                task.baseline_profit = baseline_profit
+                self.db.add(task)
+                self.db.commit()
+
+                payload = CrewRunPayload(
+                    task_id=req.task_id,
+                    strategy_goal=req.strategy_goal,
+                    constraints=parse_constraints(req.constraints),
+                    product=product,
+                    metrics=metrics,
+                    traffic=traffic,
+                    baseline_sales=baseline_sales,
+                    baseline_profit=baseline_profit,
+                )
+                if str(self.task_repo.get_by_id(req.task_id).task_status or "").upper() == "CANCELLED":
+                    logger.info("Worker %s aborted cancelled task %s before orchestration", worker_id, req.task_id)
+                    return
+                orchestration_service = OrchestrationService(self.db)
+                orchestration_service.run(payload)
+            except Exception:
+                logger.exception("Worker execution failed for task %s", req.task_id)
+                self.db.rollback()
+                raise

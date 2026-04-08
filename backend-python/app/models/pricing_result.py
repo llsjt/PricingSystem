@@ -20,8 +20,11 @@ class PricingResult(Base):
     is_pass: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     execute_strategy: Mapped[str | None] = mapped_column(String(50), nullable=True)
     result_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    review_required: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    applied_previous_price: Mapped[Decimal | None] = mapped_column(DECIMAL(10, 2), nullable=True)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    applied_by_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"), server_onupdate=text("CURRENT_TIMESTAMP")
     )
-

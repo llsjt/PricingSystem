@@ -3,18 +3,20 @@ package com.example.pricing.controller;
 import com.example.pricing.common.Result;
 import com.example.pricing.dto.PricingTaskCreateDTO;
 import com.example.pricing.service.DecisionTaskService;
+import com.example.pricing.service.PricingTaskStreamService;
 import com.example.pricing.vo.DecisionLogVO;
 import com.example.pricing.vo.PricingTaskDetailVO;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.bind.annotation.CrossOrigin;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 
@@ -25,10 +27,10 @@ import java.util.List;
 @RequestMapping("/api/pricing/tasks")
 @RequiredArgsConstructor
 @Slf4j
-@CrossOrigin(origins = "*")
 public class PricingTaskController {
 
     private final DecisionTaskService decisionTaskService;
+    private final PricingTaskStreamService pricingTaskStreamService;
 
     /**
      * 为单个商品创建定价任务，供旧版前端或简化入口使用。
@@ -52,6 +54,17 @@ public class PricingTaskController {
     /**
      * 查询任务详情，返回价格区间、最终建议和摘要信息。
      */
+    @PostMapping("/{taskId}/cancel")
+    public Result<Void> cancelTask(@PathVariable Long taskId, HttpServletRequest request) {
+        try {
+            decisionTaskService.cancelTask(taskId, getCurrentUserId(request));
+            return Result.success();
+        } catch (Exception e) {
+            log.error("cancel pricing task failed", e);
+            return Result.error(e.getMessage());
+        }
+    }
+
     @GetMapping("/{taskId}")
     public Result<PricingTaskDetailVO> getTaskDetail(@PathVariable Long taskId, HttpServletRequest request) {
         try {
@@ -67,6 +80,11 @@ public class PricingTaskController {
     @GetMapping("/{taskId}/logs")
     public Result<List<DecisionLogVO>> getTaskLogs(@PathVariable Long taskId, HttpServletRequest request) {
         return Result.success(decisionTaskService.getTaskLogs(taskId, getCurrentUserId(request)));
+    }
+
+    @GetMapping(value = "/{taskId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamTaskEvents(@PathVariable Long taskId, HttpServletRequest request) {
+        return pricingTaskStreamService.streamTask(taskId, getCurrentUserId(request));
     }
 
     private Long getCurrentUserId(HttpServletRequest request) {

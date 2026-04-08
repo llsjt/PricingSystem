@@ -1,6 +1,7 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.core.trace_context import bind_trace_context
 from app.core.security import verify_internal_token
 from app.db.session import get_db
 from app.repos.task_repo import TaskRepo
@@ -13,6 +14,7 @@ from app.schemas.task import (
     TaskStatusResponse,
 )
 from app.services.dispatch_service import DispatchService
+from app.services.task_queue_service import get_task_queue_service
 
 router = APIRouter(
     prefix="/tasks",
@@ -22,9 +24,8 @@ router = APIRouter(
 
 
 @router.post("/dispatch", response_model=DispatchTaskResponse)
-def dispatch_task(
+async def dispatch_task(
     request: DispatchTaskRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> DispatchTaskResponse:
     """
@@ -32,8 +33,9 @@ def dispatch_task(
     1. 受理任务
     2. 后台触发 4-Agent 协作执行
     """
-    service = DispatchService(db)
-    return service.dispatch(request, background_tasks)
+    with bind_trace_context(trace_id=request.trace_id or f"task-{request.task_id}", task_id=request.task_id):
+        service = DispatchService(db)
+        return service.dispatch(request, get_task_queue_service())
 
 
 @router.get("/{task_id}/status", response_model=TaskStatusResponse)
@@ -66,10 +68,9 @@ def task_logs(
 
 
 @router.post("/{task_id}/retry", response_model=DispatchTaskResponse)
-def retry_task(
+async def retry_task(
     task_id: int,
     payload: RetryTaskRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ) -> DispatchTaskResponse:
     task_repo = TaskRepo(db)
@@ -81,8 +82,10 @@ def retry_task(
         taskId=task_id,
         productId=payload.product_id or task.product_id,
         productIds=[payload.product_id or task.product_id],
-        strategyGoal=payload.strategy_goal or "MAX_PROFIT",
-        constraints=payload.constraints or "",
+        strategyGoal=payload.strategy_goal or task.strategy_goal or "MAX_PROFIT",
+        constraints=payload.constraints if payload.constraints is not None else (task.constraint_text or ""),
+        traceId=task.trace_id,
     )
-    service = DispatchService(db)
-    return service.retry(req, background_tasks)
+    with bind_trace_context(trace_id=req.trace_id or f"task-{task_id}", task_id=task_id):
+        service = DispatchService(db)
+        return service.retry(req, get_task_queue_service())

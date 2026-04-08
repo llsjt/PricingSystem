@@ -1,5 +1,24 @@
 import { onBeforeUnmount, ref } from 'vue'
-import * as echarts from 'echarts'
+import { BarChart, LineChart } from 'echarts/charts'
+import {
+  DataZoomComponent,
+  GridComponent,
+  LegendComponent,
+  TooltipComponent
+} from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+import { use } from 'echarts/core'
+import * as echarts from 'echarts/core'
+
+use([
+  BarChart,
+  LineChart,
+  GridComponent,
+  TooltipComponent,
+  LegendComponent,
+  DataZoomComponent,
+  CanvasRenderer
+])
 
 export const useEChart = () => {
   const chartRef = ref<HTMLElement | null>(null)

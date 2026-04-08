@@ -96,7 +96,7 @@
 
           <div class="tips">
             <span>演示默认账号：</span>
-            <span class="highlight">admin / 123456</span>
+            <span class="highlight">Use an assigned account</span>
           </div>
         </div>
       </div>
@@ -145,6 +145,7 @@ const handleLogin = async () => {
         userStore.applySession({
           token: res.data.token,
           username: res.data.username,
+          role: res.data.role,
           isAdmin: Boolean(res.data.isAdmin)
         })
         ElMessage.success('登录成功')

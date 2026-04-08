@@ -1,116 +1,45 @@
-# Python 多 Agent 协作后端（最小可运行版）
+# Python Agent Worker
 
-本目录是毕业设计中的 Python 协作后端，负责：
-- 接收 Java 派发的定价任务
-- 启动 CrewAI 的 4 Agent 协作过程（真实 LLM 调用）
-- 将 Agent 关键输出写入 `agent_run_log`
-- 生成最终决策并写入 `pricing_result`
-- 回写 `pricing_task` 状态和建议价格区间
+这个目录是智能定价平台的 Python 内部 Worker，负责执行 4 个定价 Agent，并把过程日志和最终结果写入数据库。
 
-## 1. 系统架构
+## 角色定位
+
+- 接收 Java 派发的内部任务
+- 从 MySQL 中认领 `QUEUED/RETRYING` 任务
+- 执行多 Agent 定价编排
+- 写入 `agent_run_log` 和 `pricing_result`
+- 提供健康检查和任务指标接口
+
+## 架构位置
 
 ```text
-Vue 前端
-  -> Java 后端 /api/decision/start
-    -> Python 后端 /internal/tasks/dispatch
-      -> CrewAI 协作 + 本地规则计算
-        -> MySQL (pricing_task / agent_run_log / pricing_result)
+Frontend
+  -> Java Backend
+    -> Python Worker
+      -> CrewAI / 定价 Agent
+        -> MySQL
 ```
 
 说明：
-- Java 负责业务入口、对外 API 和页面查询。
-- Python 负责多 Agent 协作与落库。
-- 前端继续通过 Java 查询结果与日志。
 
-## 2. 目录结构
+- 浏览器不直接访问 Python
+- 实时展示由 Java 的 SSE 接口负责
+- Python 只负责内部执行和写库
 
-```text
-backend-python/
-  app/
-    api/                # 内部接口：dispatch/status/detail/logs/retry/health
-    core/               # 配置、日志、安全、uvicorn loop 适配
-    db/                 # SQLAlchemy 会话
-    models/             # 表映射：pricing_task / agent_run_log / pricing_result 等
-    repos/              # 仓储层（数据库读写）
-    services/           # 调度与编排服务
-    agents/             # 4 个业务 Agent（Data/Market/Risk/Manager）
-    crew/               # CrewAI 运行层（OpenAI 兼容 LLM 调用）
-    tools/              # 工具层（数据、风控、市场模拟、日志、结果）
-    schemas/            # 接口/协作 DTO
-    utils/              # 通用工具
-  run_server.py         # Windows 推荐启动入口
-```
+## 启动
 
-## 3. 四个 Agent 职责
-
-1. `DATA`（数据分析 Agent）
-- 汇总商品、日指标、流量数据
-- 输出建议价格区间、预估销量、预估利润
-
-2. `MARKET`（市场情报 Agent）
-- 使用可替换的模拟竞品工具
-- 输出市场价格带和市场侧建议价
-
-3. `RISK`（风险控制 Agent）
-- 校验最低利润、上下限、折扣等约束
-- 输出是否通过、风险等级、是否人工复核
-
-4. `MANAGER`（经理协调 Agent）
-- 汇总三方意见并给出最终价格
-- 输出执行策略与结果摘要
-
-## 4. 多 Agent 特征（非普通顺序流）
-
-- 先启动 CrewAI 的 4 Agent 协作会话（`Process.hierarchical`）。
-- 再执行本地业务 Agent 的可解释规则计算并落库。
-- 当 `DATA` 与 `MARKET` 价格分歧超过阈值时，触发“二次协商复议”分支，不是单向直线流程。
-
-## 5. API 设计（Python 内部）
-
-基础前缀：`/internal`
-
-### 5.1 派发任务
-- `POST /internal/tasks/dispatch`
-
-请求示例：
-```json
-{
-  "taskId": 101,
-  "productId": 31,
-  "productIds": [31],
-  "strategyGoal": "MAX_PROFIT",
-  "constraints": "利润率不低于10%"
-}
-```
-
-### 5.2 查询状态
-- `GET /internal/tasks/{taskId}/status`
-
-### 5.3 查询任务详情
-- `GET /internal/tasks/{taskId}/detail`
-
-### 5.4 查询 Agent 日志
-- `GET /internal/tasks/{taskId}/logs?limit=200`
-
-### 5.5 任务重试
-- `POST /internal/tasks/{taskId}/retry`
-
-### 5.6 健康检查
-- `GET /health`
-
-## 6. 启动方式
-
-### 6.1 安装依赖
 ```bash
 cd backend-python
 python -m venv .venv
-# Windows
 .venv\Scripts\activate
 pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
 ```
 
-### 6.2 环境变量
-复制 `.env.example` 为 `.env`，至少配置：
+## 环境变量
+
+至少需要配置：
+
 - `MYSQL_HOST`
 - `MYSQL_PORT`
 - `MYSQL_DB`
@@ -119,27 +48,60 @@ pip install -r requirements.txt
 - `LLM_API_KEY`
 - `LLM_BASE_URL`
 - `MODEL`
-- `INTERNAL_API_TOKEN`（可选，与 Java 对齐）
+- `INTERNAL_API_TOKEN`
 
-可选参数：
-- `LLM_TIMEOUT_SECONDS`（默认 60 秒）
+队列相关参数：
 
-### 6.3 启动服务（Windows 推荐）
-```bash
-python run_server.py
-```
+- `AGENT_WORKER_CONCURRENCY`
+- `AGENT_QUEUE_MAXSIZE`
+- `AGENT_POLL_INTERVAL_MS`
+- `AGENT_MAX_RETRIES`
 
-说明：
-- `run_server.py` 使用自定义 Selector loop，规避 Windows + Python 3.13 下 uvicorn 的 Proactor `WinError 10014`。
+## API
 
-## 7. 可演示数据闭环
+内部任务接口前缀：
 
-一次成功任务会产生：
-- `pricing_task`：`PENDING/RUNNING -> COMPLETED`
-- `agent_run_log`：至少 5 条（`CREWAI + DATA + MARKET + RISK + MANAGER`）
-- `pricing_result`：最终价格、预估销量、预估利润、执行策略
+- `/internal/tasks`
 
-前端可通过 Java 现有接口查看：
-- 任务列表
-- 任务对比结果
-- Agent 日志
+主要接口：
+
+- `POST /internal/tasks/dispatch`
+- `POST /internal/tasks/{taskId}/retry`
+- `GET /internal/tasks/{taskId}/status`
+- `GET /internal/tasks/{taskId}/detail`
+- `GET /internal/tasks/{taskId}/logs`
+
+健康与指标：
+
+- `GET /health`
+- `GET /health/live`
+- `GET /health/ready`
+- `GET /health/metrics`
+
+## 调度模型
+
+当前不是浏览器实时服务，而是数据库认领式 worker：
+
+1. Java 创建任务并写入 `pricing_task`
+2. Java 调用 Python `/internal/tasks/dispatch`
+3. Python 将任务置为 `QUEUED` 或 `RETRYING`
+4. Worker 从数据库认领任务并转为 `RUNNING`
+5. 执行完成后写入 `agent_run_log` / `pricing_result`
+6. Java 轮询数据库并通过 SSE 推给前端
+
+## 可观测性
+
+Python 日志已经接入：
+
+- `traceId`
+- `taskId`
+- HTTP 请求开始/结束日志
+- worker 执行日志
+
+任务指标通过 `/health/metrics` 提供，包含：
+
+- 队列深度
+- 活跃执行数
+- 终态任务数量
+- 超时未完成任务数量
+- 平均和最大执行时长

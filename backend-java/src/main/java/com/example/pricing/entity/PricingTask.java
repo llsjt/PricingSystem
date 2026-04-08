@@ -10,9 +10,6 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
-/**
- * 定价任务实体，记录一次价格分析任务的输入商品、状态和建议区间。
- */
 @Data
 @TableName("pricing_task")
 public class PricingTask {
@@ -43,8 +40,35 @@ public class PricingTask {
     @TableField("suggested_max_price")
     private BigDecimal suggestedMaxPrice;
 
+    @TableField("strategy_goal")
+    private String strategyGoal;
+
+    @TableField("constraint_text")
+    private String constraintText;
+
     @TableField("task_status")
     private String taskStatus;
+
+    @TableField("requested_by_user_id")
+    private Long requestedByUserId;
+
+    @TableField("trace_id")
+    private String traceId;
+
+    @TableField("idempotency_key")
+    private String idempotencyKey;
+
+    @TableField("retry_count")
+    private Integer retryCount;
+
+    @TableField("failure_reason")
+    private String failureReason;
+
+    @TableField("started_at")
+    private LocalDateTime startedAt;
+
+    @TableField("completed_at")
+    private LocalDateTime completedAt;
 
     @TableField(exist = false)
     private String productTitle;

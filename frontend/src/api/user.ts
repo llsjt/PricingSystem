@@ -5,11 +5,19 @@ export interface LoginPayload {
   password: string
 }
 
+export interface LoginResponse {
+  token: string
+  username: string
+  role: string
+  isAdmin: boolean
+}
+
 export interface UserListItem {
   id: number
   username: string
   email: string
   status: number
+  role: string
   createdAt: string
   updatedAt: string
 }
@@ -19,6 +27,7 @@ export interface UserPayload {
   password?: string
   email: string
   status?: number
+  role?: string
 }
 
 export const login = (data: LoginPayload) => {
@@ -26,6 +35,13 @@ export const login = (data: LoginPayload) => {
     url: '/user/login',
     method: 'post',
     data
+  })
+}
+
+export const refreshSession = () => {
+  return request({
+    url: '/user/refresh',
+    method: 'post'
   })
 }
 

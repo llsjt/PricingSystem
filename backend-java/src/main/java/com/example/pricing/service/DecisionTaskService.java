@@ -60,6 +60,8 @@ public interface DecisionTaskService {
      */
     void applyDecision(Long resultId, Long userId);
 
+    void cancelTask(Long taskId, Long userId);
+
     /**
      * 导出任务报告。
      */

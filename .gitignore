@@ -16,6 +16,7 @@ backend-python/.pytest_cache/
 backend-python/.mypy_cache/
 backend-python/.ruff_cache/
 backend-python/.env
+/.env.public-beta
 backend-python/.claude/
 
 # === Frontend ===
@@ -64,6 +65,23 @@ temp/
 coverage/
 .cache/
 **/.cache/
+backups/
+ops/reports/
 
 # === Docs / Notes (non-source) ===
 docs/
+
+# === Project Files To Exclude (non-source) ===
+.github/
+ops/
+scripts/
+数据集/
+README.md
+backend-python/README.md
+frontend/.env
+.env.public-beta.example
+docker-compose.public-beta.yml
+backend-java/Dockerfile
+backend-python/Dockerfile
+frontend/Dockerfile
+简历项目经历_STAR.md

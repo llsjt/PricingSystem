@@ -12,6 +12,7 @@ import com.example.pricing.mapper.PricingResultMapper;
 import com.example.pricing.mapper.PricingTaskMapper;
 import com.example.pricing.mapper.ProductMapper;
 import com.example.pricing.service.DecisionTaskService;
+import com.example.pricing.service.PythonDispatchClient;
 import com.example.pricing.service.ShopService;
 import com.example.pricing.vo.DecisionComparisonVO;
 import com.example.pricing.vo.DecisionLogVO;
@@ -24,26 +25,25 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.UriComponentsBuilder;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URLEncoder;
+import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -59,15 +59,13 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     private final AgentRunLogMapper logMapper;
     private final ProductMapper productMapper;
     private final ShopService shopService;
+    private final PythonDispatchClient pythonDispatchClient;
 
-    @Value("${agent.python.base-url:http://localhost:8000}")
-    private String pythonBaseUrl;
+    @Value("${app.pricing.max-adjustment-ratio:0.30}")
+    private BigDecimal maxAdjustmentRatio;
 
-    @Value("${agent.python.dispatch-path:/internal/tasks/dispatch}")
-    private String pythonDispatchPath;
-
-    @Value("${agent.python.internal-token:}")
-    private String pythonInternalToken;
+    @Value("${app.pricing.min-margin-rate:0.05}")
+    private BigDecimal minMarginRate;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -103,22 +101,39 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
             throw new IllegalArgumentException("无权操作此商品");
         }
 
+        String normalizedGoal = (strategyGoal == null || strategyGoal.isBlank()) ? "MAX_PROFIT" : strategyGoal.trim();
+        String normalizedConstraints = constraints == null ? "" : constraints.trim();
+        String idempotencyKey = buildIdempotencyKey(productIds, normalizedGoal, normalizedConstraints, userId);
+
+        PricingTask existingTask = findReusableTask(idempotencyKey, product.getShopId());
+        if (existingTask != null) {
+            return existingTask.getId();
+        }
+
         PricingTask task = new PricingTask();
         task.setTaskCode("TASK-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase());
         task.setShopId(product.getShopId());
         task.setProductId(product.getId());
         task.setCurrentPrice(scaleMoney(product.getCurrentPrice()));
         task.setBaselineProfit(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
-        task.setTaskStatus("PENDING");
+        task.setStrategyGoal(normalizedGoal);
+        task.setConstraintText(normalizedConstraints);
+        task.setTaskStatus("QUEUED");
+        task.setRequestedByUserId(userId);
+        task.setTraceId(UUID.randomUUID().toString().replace("-", ""));
+        task.setIdempotencyKey(idempotencyKey);
+        task.setRetryCount(0);
+        task.setFailureReason(null);
         taskMapper.insert(task);
 
         try {
-            dispatchToPython(task.getId(), productId, productIds, strategyGoal, constraints);
-            task.setTaskStatus("RUNNING");
+            dispatchToPython(task.getId(), productId, productIds, normalizedGoal, normalizedConstraints, task.getTraceId());
             taskMapper.updateById(task);
         } catch (Exception e) {
             log.error("Dispatch decision task to python failed, taskId={}", task.getId(), e);
             task.setTaskStatus("FAILED");
+            task.setFailureReason(truncate(e.getMessage(), 255));
+            task.setCompletedAt(LocalDateTime.now());
             taskMapper.updateById(task);
             throw new IllegalStateException("任务派发到 Python 协作后端失败: " + e.getMessage(), e);
         }
@@ -235,9 +250,15 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
 
         List<PricingTask> tasks = taskMapper.selectList(wrapper);
         long total = tasks.size();
-        long completed = tasks.stream().filter(task -> "COMPLETED".equalsIgnoreCase(task.getTaskStatus())).count();
-        long running = tasks.stream().filter(task -> "RUNNING".equalsIgnoreCase(task.getTaskStatus())).count();
-        long failed = tasks.stream().filter(task -> "FAILED".equalsIgnoreCase(task.getTaskStatus())).count();
+        long completed = tasks.stream()
+                .filter(task -> List.of("COMPLETED", "MANUAL_REVIEW").contains(String.valueOf(task.getTaskStatus()).toUpperCase()))
+                .count();
+        long running = tasks.stream()
+                .filter(task -> List.of("QUEUED", "RUNNING", "RETRYING").contains(String.valueOf(task.getTaskStatus()).toUpperCase()))
+                .count();
+        long failed = tasks.stream()
+                .filter(task -> List.of("FAILED", "CANCELLED").contains(String.valueOf(task.getTaskStatus()).toUpperCase()))
+                .count();
         return Map.of("total", total, "completed", completed, "running", running, "failed", failed);
     }
 
@@ -274,7 +295,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         vo.setFinalPrice(result == null ? null : result.getFinalPrice());
         vo.setExpectedSales(result == null ? null : result.getExpectedSales());
         vo.setExpectedProfit(result == null ? null : result.getExpectedProfit());
-        vo.setStrategy(result == null ? null : result.getExecuteStrategy());
+        vo.setStrategy(result == null ? null : resolveExecuteStrategy(result));
         vo.setFinalSummary(result == null ? null : result.getResultSummary());
         vo.setCreatedAt(task.getCreatedAt());
         vo.setUpdatedAt(task.getUpdatedAt());
@@ -300,8 +321,41 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         if (product == null) {
             throw new IllegalArgumentException("商品不存在");
         }
-        product.setCurrentPrice(scaleMoney(result.getFinalPrice()));
+        BigDecimal finalPrice = scaleMoney(result.getFinalPrice());
+        assertPriceWithinGuardrails(product, task, finalPrice);
+
+        result.setAppliedPreviousPrice(scaleMoney(product.getCurrentPrice()));
+        result.setAppliedAt(LocalDateTime.now());
+        result.setAppliedByUserId(userId);
+        result.setReviewRequired(0);
+        resultMapper.updateById(result);
+
+        product.setCurrentPrice(finalPrice);
         productMapper.updateById(product);
+        task.setTaskStatus("COMPLETED");
+        if (task.getCompletedAt() == null) {
+            task.setCompletedAt(LocalDateTime.now());
+        }
+        taskMapper.updateById(task);
+    }
+
+    @Override
+    public void cancelTask(Long taskId, Long userId) {
+        PricingTask task = taskMapper.selectById(taskId);
+        if (task == null) {
+            throw new IllegalArgumentException("任务不存在");
+        }
+        verifyTaskOwnership(task, userId);
+
+        String status = String.valueOf(task.getTaskStatus()).toUpperCase();
+        if (List.of("COMPLETED", "FAILED", "CANCELLED", "MANUAL_REVIEW").contains(status)) {
+            throw new IllegalStateException("当前任务状态不允许取消");
+        }
+
+        task.setTaskStatus("CANCELLED");
+        task.setFailureReason("任务已取消");
+        task.setCompletedAt(LocalDateTime.now());
+        taskMapper.updateById(task);
     }
 
     /**
@@ -344,38 +398,15 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     /**
      * 调用 Python 协作端的内部接口，把任务派发给多智能体工作流。
      */
-    private void dispatchToPython(Long taskId, Long productId, List<Long> productIds, String strategyGoal, String constraints) {
-        String url = UriComponentsBuilder.fromHttpUrl(pythonBaseUrl)
-                .path(pythonDispatchPath)
-                .toUriString();
-
+    private void dispatchToPython(Long taskId, Long productId, List<Long> productIds, String strategyGoal, String constraints, String traceId) {
         Map<String, Object> payload = new HashMap<>();
         payload.put("taskId", taskId);
         payload.put("productId", productId);
         payload.put("productIds", productIds);
         payload.put("strategyGoal", strategyGoal);
         payload.put("constraints", constraints);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        if (pythonInternalToken != null && !pythonInternalToken.isBlank()) {
-            headers.set("X-Internal-Token", pythonInternalToken);
-        }
-
-        RestTemplate restTemplate = new RestTemplate();
-        HttpEntity<Map<String, Object>> request = new HttpEntity<>(payload, headers);
-        ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
-        if (!response.getStatusCode().is2xxSuccessful()) {
-            throw new IllegalStateException("HTTP " + response.getStatusCode().value());
-        }
-        Map<?, ?> body = response.getBody();
-        if (body != null && body.containsKey("accepted")) {
-            Object accepted = body.get("accepted");
-            if (accepted instanceof Boolean bool && !bool) {
-                Object message = body.get("message");
-                throw new IllegalStateException(message == null ? "python declined task" : String.valueOf(message));
-            }
-        }
+        payload.put("traceId", traceId);
+        pythonDispatchClient.dispatchTask(payload, traceId);
     }
 
     /**
@@ -394,7 +425,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         vo.setSuggestedMaxPrice(task.getSuggestedMaxPrice());
         vo.setFinalPrice(result == null ? null : result.getFinalPrice());
         vo.setTaskStatus(task.getTaskStatus());
-        vo.setExecuteStrategy(result == null ? null : result.getExecuteStrategy());
+        vo.setExecuteStrategy(result == null ? null : resolveExecuteStrategy(result));
         vo.setCreatedAt(task.getCreatedAt());
         return vo;
     }
@@ -422,8 +453,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         vo.setProfitChange(result.getProfitGrowth());
         vo.setExpectedSales(result.getExpectedSales());
         vo.setExpectedProfit(result.getExpectedProfit());
-        vo.setPassStatus(result.getIsPass() != null && result.getIsPass() == 1 ? "通过" : "待审核");
-        vo.setExecuteStrategy(result.getExecuteStrategy());
+        boolean reviewRequired = result.getReviewRequired() != null && result.getReviewRequired() == 1;
+        vo.setPassStatus(reviewRequired ? "待人工审核" : (result.getIsPass() != null && result.getIsPass() == 1 ? "通过" : "未通过"));
+        vo.setExecuteStrategy(resolveExecuteStrategy(result));
         vo.setResultSummary(result.getResultSummary());
         vo.setAppliedStatus(isApplied(product, result) ? "已应用" : "未应用");
         return List.of(vo);
@@ -518,6 +550,66 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     /**
      * 统一把金额字段规整为两位小数。
      */
+    private PricingTask findReusableTask(String idempotencyKey, Long shopId) {
+        LambdaQueryWrapper<PricingTask> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(PricingTask::getIdempotencyKey, idempotencyKey)
+                .eq(PricingTask::getShopId, shopId)
+                .in(PricingTask::getTaskStatus, List.of("QUEUED", "RUNNING", "RETRYING", "MANUAL_REVIEW", "COMPLETED"))
+                .orderByDesc(PricingTask::getId)
+                .last("LIMIT 1");
+        return taskMapper.selectOne(wrapper);
+    }
+
+    private String buildIdempotencyKey(List<Long> productIds, String strategyGoal, String constraints, Long userId) {
+        String source = String.join("|",
+                String.valueOf(userId),
+                String.valueOf(productIds),
+                String.valueOf(strategyGoal),
+                String.valueOf(constraints)
+        );
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(source.getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception e) {
+            return UUID.randomUUID().toString().replace("-", "");
+        }
+    }
+
+    private void assertPriceWithinGuardrails(Product product, PricingTask task, BigDecimal finalPrice) {
+        BigDecimal currentPrice = scaleMoney(task.getCurrentPrice());
+        if (currentPrice.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal changeRatio = finalPrice.subtract(currentPrice)
+                    .abs()
+                    .divide(currentPrice, 4, RoundingMode.HALF_UP);
+            if (changeRatio.compareTo(maxAdjustmentRatio) > 0) {
+                throw new IllegalStateException("Price adjustment exceeds configured guardrail");
+            }
+        }
+
+        BigDecimal costPrice = product.getCostPrice();
+        if (costPrice != null && finalPrice.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal marginRate = finalPrice.subtract(costPrice)
+                    .divide(finalPrice, 4, RoundingMode.HALF_UP);
+            if (marginRate.compareTo(minMarginRate) < 0) {
+                throw new IllegalStateException("Price violates minimum margin guardrail");
+            }
+        }
+    }
+
+    private String resolveExecuteStrategy(PricingResult result) {
+        if (result.getExecuteStrategy() != null && !result.getExecuteStrategy().isBlank()) {
+            return result.getExecuteStrategy();
+        }
+        return Objects.equals(result.getReviewRequired(), 1) ? "MANUAL_REVIEW" : null;
+    }
+
+    private String truncate(String value, int maxLength) {
+        if (value == null) {
+            return null;
+        }
+        return value.length() <= maxLength ? value : value.substring(0, maxLength);
+    }
+
     private BigDecimal scaleMoney(BigDecimal value) {
         if (value == null) {
             return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);

@@ -35,8 +35,8 @@
         <el-table-column prop="createdAt" label="创建时间" min-width="180" />
         <el-table-column label="角色说明" min-width="140">
           <template #default="{ row }">
-            <el-tag :type="row.username === 'admin' ? 'warning' : 'info'" effect="plain">
-              {{ row.username === 'admin' ? '系统管理员' : '普通用户' }}
+            <el-tag :type="row.role === 'ADMIN' ? 'warning' : 'info'" effect="plain">
+              {{ row.role === 'ADMIN' ? '系统管理员' : '普通用户' }}
             </el-tag>
           </template>
         </el-table-column>
@@ -46,7 +46,7 @@
               <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
               <el-popconfirm title="确认删除该用户吗？" @confirm="handleDelete(row)">
                 <template #reference>
-                  <el-button link type="danger" :disabled="row.username === 'admin'">删除</el-button>
+                  <el-button link type="danger" :disabled="row.role === 'ADMIN'">删除</el-button>
                 </template>
               </el-popconfirm>
             </div>
@@ -72,7 +72,7 @@
     <el-dialog v-model="dialogVisible" :title="isEditMode ? '编辑用户' : '新增用户'" :width="dialogWidth">
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top" class="user-form">
         <el-form-item label="用户名" prop="username">
-          <el-input v-model="form.username" :disabled="isEditMode && form.username === 'admin'" />
+          <el-input v-model="form.username" :disabled="isEditMode && form.role === 'ADMIN'" />
         </el-form-item>
         <el-form-item label="密码" prop="password">
           <el-input
@@ -86,9 +86,15 @@
           <el-input v-model="form.email" placeholder="请输入邮箱地址" />
         </el-form-item>
         <el-form-item label="状态" prop="status">
-          <el-select v-model="form.status" :disabled="isEditMode && form.username === 'admin'">
+          <el-select v-model="form.status" :disabled="isEditMode && form.role === 'ADMIN'">
             <el-option label="启用" :value="1" />
             <el-option label="禁用" :value="0" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="角色" prop="role">
+          <el-select v-model="form.role" :disabled="isEditMode && form.role === 'ADMIN'">
+            <el-option label="普通用户" value="USER" />
+            <el-option label="管理员" value="ADMIN" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -112,6 +118,7 @@ interface UserFormModel {
   password: string
   email: string
   status: number
+  role: string
 }
 
 const { isMobile } = useViewport()
@@ -139,7 +146,8 @@ const createDefaultForm = (): UserFormModel => ({
   username: '',
   password: '',
   email: '',
-  status: 1
+  status: 1,
+  role: 'USER'
 })
 
 const form = reactive(createDefaultForm())
@@ -184,7 +192,7 @@ const fetchUsers = async () => {
   }
 }
 
-const isRowSelectable = (row: UserListItem) => row.username !== 'admin'
+const isRowSelectable = (row: UserListItem) => row.role !== 'ADMIN'
 
 const handleSelectionChange = (rows: UserListItem[]) => {
   selectedIds.value = rows.map((row) => Number(row.id)).filter((id) => Number.isFinite(id))
@@ -203,13 +211,15 @@ const openEditDialog = (row: UserListItem) => {
   form.username = row.username || ''
   form.email = row.email || ''
   form.status = row.status ?? 1
+  form.role = row.role || 'USER'
 }
 
 const buildUpdatePayload = (): UserPayload => {
   const payload: UserPayload = {
     username: form.username,
     email: form.email,
-    status: form.status
+    status: form.status,
+    role: form.role
   }
   if (form.password) {
     payload.password = form.password
@@ -221,7 +231,8 @@ const buildCreatePayload = (): UserPayload => ({
   username: form.username,
   password: form.password,
   email: form.email,
-  status: form.status
+  status: form.status,
+  role: form.role
 })
 
 const submitUser = async () => {
