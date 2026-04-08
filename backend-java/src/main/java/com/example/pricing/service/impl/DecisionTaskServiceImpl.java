@@ -18,6 +18,7 @@ import com.example.pricing.vo.DecisionComparisonVO;
 import com.example.pricing.vo.DecisionLogVO;
 import com.example.pricing.vo.DecisionTaskItemVO;
 import com.example.pricing.vo.PricingTaskDetailVO;
+import com.example.pricing.vo.PricingTaskSnapshotVO;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
@@ -300,6 +301,15 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         vo.setCreatedAt(task.getCreatedAt());
         vo.setUpdatedAt(task.getUpdatedAt());
         return vo;
+    }
+
+    @Override
+    public PricingTaskSnapshotVO getTaskSnapshot(Long taskId, Long userId) {
+        PricingTaskSnapshotVO snapshot = new PricingTaskSnapshotVO();
+        snapshot.setDetail(getTaskDetail(taskId, userId));
+        snapshot.setLogs(getTaskLogs(taskId, userId));
+        snapshot.setComparison(getTaskComparison(taskId, userId));
+        return snapshot;
     }
 
     /**

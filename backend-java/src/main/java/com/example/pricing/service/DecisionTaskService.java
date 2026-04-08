@@ -5,6 +5,7 @@ import com.example.pricing.vo.DecisionComparisonVO;
 import com.example.pricing.vo.DecisionLogVO;
 import com.example.pricing.vo.DecisionTaskItemVO;
 import com.example.pricing.vo.PricingTaskDetailVO;
+import com.example.pricing.vo.PricingTaskSnapshotVO;
 import jakarta.servlet.http.HttpServletResponse;
 
 import java.io.IOException;
@@ -54,6 +55,8 @@ public interface DecisionTaskService {
      * 获取任务详情。
      */
     PricingTaskDetailVO getTaskDetail(Long taskId, Long userId);
+
+    PricingTaskSnapshotVO getTaskSnapshot(Long taskId, Long userId);
 
     /**
      * 将某条建议价格应用回商品。

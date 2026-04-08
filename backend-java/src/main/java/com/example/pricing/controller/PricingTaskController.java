@@ -6,6 +6,7 @@ import com.example.pricing.service.DecisionTaskService;
 import com.example.pricing.service.PricingTaskStreamService;
 import com.example.pricing.vo.DecisionLogVO;
 import com.example.pricing.vo.PricingTaskDetailVO;
+import com.example.pricing.vo.PricingTaskSnapshotVO;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -69,6 +70,15 @@ public class PricingTaskController {
     public Result<PricingTaskDetailVO> getTaskDetail(@PathVariable Long taskId, HttpServletRequest request) {
         try {
             return Result.success(decisionTaskService.getTaskDetail(taskId, getCurrentUserId(request)));
+        } catch (Exception e) {
+            return Result.error(e.getMessage());
+        }
+    }
+
+    @GetMapping("/{taskId}/snapshot")
+    public Result<PricingTaskSnapshotVO> getTaskSnapshot(@PathVariable Long taskId, HttpServletRequest request) {
+        try {
+            return Result.success(decisionTaskService.getTaskSnapshot(taskId, getCurrentUserId(request)));
         } catch (Exception e) {
             return Result.error(e.getMessage());
         }

@@ -59,6 +59,7 @@ app:
   pricing:
     max-adjustment-ratio: ${MAX_PRICE_ADJUSTMENT_RATIO:0.30}
     min-margin-rate: ${MIN_MARGIN_RATE:0.05}
+    stream-poll-ms: ${PRICING_STREAM_POLL_MS:400}
   market:
     allow-simulation: ${ALLOW_MARKET_SIMULATION:true}
   metrics:

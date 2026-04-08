@@ -112,6 +112,12 @@ export interface PricingTaskDetail {
   updatedAt: string
 }
 
+export interface PricingTaskSnapshot {
+  detail: PricingTaskDetail
+  logs: DecisionLogItem[]
+  comparison: DecisionComparisonItem[]
+}
+
 export interface PricingTaskCreateRequest {
   productId: number
   constraints: string
@@ -212,6 +218,10 @@ export const getPricingTaskDetail = (taskId: number) => {
 
 export const getPricingTaskLogs = (taskId: number) => {
   return request.get(`/pricing/tasks/${taskId}/logs`)
+}
+
+export const getPricingTaskSnapshot = (taskId: number) => {
+  return request.get(`/pricing/tasks/${taskId}/snapshot`)
 }
 
 export const getPricingTaskStreamUrl = (taskId: number) => `/api/pricing/tasks/${taskId}/events`

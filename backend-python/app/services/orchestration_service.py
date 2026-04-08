@@ -20,7 +20,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.crew.crew_factory import build_pricing_crew
-from app.crew.crewai_runtime import build_crewai_llm, extract_json_object
+from app.crew.crewai_runtime import build_crewai_llm, debug_log, extract_json_object
 from app.crew.protocols import CrewRunPayload
 from app.schemas.result import TaskFinalResult
 from app.tools.log_writer_tool import LogWriterTool
@@ -198,9 +198,18 @@ class OrchestrationService:
           3. 解析最终输出 → 强制硬约束 → 写入结果
         """
         # ── 构建 CrewAI LLM 实例 ──────────────────────────────
-        llm = build_crewai_llm()
-        logger.info("CrewAI LLM 已构建: model=%s, base_url=%s", llm.model, llm.base_url)
-        print(f"[CrewAI] LLM 已构建: model={llm.model}, task_id={payload.task_id}", flush=True)
+        analysis_llm = build_crewai_llm(profile="fast")
+        manager_llm = build_crewai_llm(profile="default")
+        logger.info(
+            "CrewAI LLMs built analysis_model=%s manager_model=%s",
+            analysis_llm.model,
+            manager_llm.model,
+        )
+        debug_log(
+            "[CrewAI] llms built "
+            f"analysis_model={analysis_llm.model} manager_model={manager_llm.model} "
+            f"task_id={payload.task_id}"
+        )
 
         # ── 用于收集每个 Task 的解析结果 ──────────────────────
         task_outputs: list[dict[str, Any]] = []
@@ -215,10 +224,10 @@ class OrchestrationService:
             try:
                 # 获取 LLM 原始输出并解析 JSON
                 raw = str(task_output.raw) if hasattr(task_output, "raw") else str(task_output)
-                print(f"[CrewAI] Task 回调触发, raw输出前200字符: {raw[:200]}", flush=True)
+                debug_log(f"[CrewAI] task callback raw_preview={raw[:200]}")
                 parsed = extract_json_object(raw)
                 if not parsed:
-                    print(f"[CrewAI] 警告: JSON解析为空, 完整raw输出: {raw[:500]}", flush=True)
+                    debug_log(f"[CrewAI] json parse produced empty object raw={raw[:500]}")
                 task_outputs.append(parsed)
 
                 # 确定当前是第几个 Agent
@@ -269,22 +278,27 @@ class OrchestrationService:
             except Exception as exc:
                 # 回调异常不应中断 Crew 执行
                 logger.error("写入 Agent 卡片失败: %s", exc, exc_info=True)
-                print(f"[CrewAI] 写入卡片失败: {exc}", flush=True)
+                debug_log(f"[CrewAI] write card failed error={exc}")
 
         # ── 构建并执行 Crew ────────────────────────────────────
         logger.info("开始构建定价 Crew (task_id=%d)", payload.task_id)
-        print(f"[CrewAI] 开始构建 Crew (task_id={payload.task_id})", flush=True)
-        crew = build_pricing_crew(payload=payload, llm=llm, on_task_done=on_task_done)
+        debug_log(f"[CrewAI] building crew task_id={payload.task_id}")
+        crew = build_pricing_crew(
+            payload=payload,
+            analysis_llm=analysis_llm,
+            manager_llm=manager_llm,
+            on_task_done=on_task_done,
+        )
 
         logger.info("Crew 启动执行 (task_id=%d)", payload.task_id)
-        print(f"[CrewAI] Crew 开始 kickoff (task_id={payload.task_id})", flush=True)
+        debug_log(f"[CrewAI] crew kickoff task_id={payload.task_id}")
         try:
             crew_output = crew.kickoff()
         except Exception as crew_exc:
             # Crew 执行失败：为第一个未完成的 Agent 写入错误卡片，
             # 让前端实时流能尽快拿到错误信息，而不是一直停留在加载中
             logger.error("Crew 执行失败: %s", crew_exc, exc_info=True)
-            print(f"[CrewAI] Crew 执行失败: {crew_exc}", flush=True)
+            debug_log(f"[CrewAI] crew kickoff failed error={crew_exc}")
             error_idx = card_counter[0]  # 当前未完成的 Agent 索引
             if error_idx < len(_AGENT_META):
                 meta = _AGENT_META[error_idx]
@@ -296,11 +310,11 @@ class OrchestrationService:
                     evidence=[{"label": "错误信息", "value": str(crew_exc)[:200]}],
                     suggestion={"error": True, "message": str(crew_exc)[:300]},
                 )
-                print(f"[CrewAI] 已写入错误卡片: {meta['name']}", flush=True)
+                debug_log(f"[CrewAI] wrote error card agent={meta['name']}")
             raise  # 继续向上抛出，让 dispatch_service 标记 task 为 FAILED
 
         logger.info("Crew 执行完成 (task_id=%d)", payload.task_id)
-        print(f"[CrewAI] Crew 执行完成 (task_id={payload.task_id})", flush=True)
+        debug_log(f"[CrewAI] crew completed task_id={payload.task_id}")
 
         # ── 解析最终经理决策 ──────────────────────────────────
         # 从最后一个 Task 的输出中提取最终定价结果

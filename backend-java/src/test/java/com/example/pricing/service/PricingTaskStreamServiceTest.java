@@ -39,6 +39,7 @@ class PricingTaskStreamServiceTest {
         assertTrue(PricingTaskStreamService.shouldEmitTerminalFailure(task, null));
         assertEquals("需要人工审核", PricingTaskStreamService.resolveTerminalMessage(task));
     }
+
     @Test
     void exceptionMessageFallsBackWhenBlank() {
         Exception emptyMessageException = new RuntimeException((String) null);
@@ -46,6 +47,7 @@ class PricingTaskStreamServiceTest {
 
         assertEquals("stream failed", PricingTaskStreamService.resolveExceptionMessage(emptyMessageException));
         assertEquals("stream failed", PricingTaskStreamService.resolveExceptionMessage(blankMessageException));
+        assertEquals("stream failed", PricingTaskStreamService.resolveExceptionMessage(new RuntimeException("null")));
     }
 
     @Test

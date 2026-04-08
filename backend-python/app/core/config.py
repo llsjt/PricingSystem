@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
     llm_base_url: str = Field(default="", alias="LLM_BASE_URL")
     llm_model: str = Field(default="qwen-plus", alias="MODEL")
+    fast_model: str = Field(default="", alias="FAST_MODEL")
     llm_timeout_seconds: int = Field(default=60, alias="LLM_TIMEOUT_SECONDS")
     llm_connect_timeout_seconds: int = Field(default=8, alias="LLM_CONNECT_TIMEOUT_SECONDS")
     llm_read_timeout_seconds: int = Field(default=25, alias="LLM_READ_TIMEOUT_SECONDS")
@@ -50,9 +51,14 @@ class Settings(BaseSettings):
     crewai_mvp_enabled: bool = Field(default=True, alias="CREWAI_MVP_ENABLED")
     crewai_agent_max_iter: int = Field(default=8, alias="CREWAI_AGENT_MAX_ITER")
     crewai_agent_max_execution_seconds: int = Field(default=180, alias="CREWAI_AGENT_MAX_EXEC_SECONDS")
+    fast_agent_max_iter: int = Field(default=4, alias="FAST_AGENT_MAX_ITER")
+    fast_agent_max_execution_seconds: int = Field(default=60, alias="FAST_AGENT_MAX_EXEC_SECONDS")
+    manager_agent_max_iter: int = Field(default=6, alias="MANAGER_AGENT_MAX_ITER")
+    manager_agent_max_execution_seconds: int = Field(default=120, alias="MANAGER_AGENT_MAX_EXEC_SECONDS")
     crewai_agent_max_retry_limit: int = Field(default=1, alias="CREWAI_AGENT_MAX_RETRY_LIMIT")
     crewai_session_timeout_seconds: int = Field(default=600, alias="CREWAI_SESSION_TIMEOUT_SECONDS")
     crewai_enable_second_round: bool = Field(default=False, alias="CREWAI_ENABLE_SECOND_ROUND")
+    crewai_debug_logs: bool = Field(default=False, alias="CREWAI_DEBUG_LOGS")
 
     market_simulation_enabled: bool = Field(default=True, alias="MARKET_SIMULATION_ENABLED")
 

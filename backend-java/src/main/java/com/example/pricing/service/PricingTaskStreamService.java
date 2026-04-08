@@ -10,6 +10,7 @@ import com.example.pricing.mapper.PricingTaskMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -17,9 +18,11 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -29,7 +32,6 @@ public class PricingTaskStreamService {
 
     private static final String SCHEMA_VERSION = "1.0.0";
     private static final String CHANNEL = "pricing.task.card";
-    private static final long POLL_INTERVAL_MS = 700L;
     private static final int EXPECTED_AGENT_CARD_COUNT = 4;
     private static final ExecutorService STREAM_EXECUTOR = Executors.newCachedThreadPool(runnable -> {
         Thread thread = new Thread(runnable, "pricing-task-stream");
@@ -42,6 +44,8 @@ public class PricingTaskStreamService {
     private final AgentRunLogMapper logMapper;
     private final DecisionTaskService decisionTaskService;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    @Value("${app.pricing.stream-poll-ms:400}")
+    private long streamPollIntervalMs;
 
     public SseEmitter streamTask(Long taskId, Long userId) {
         decisionTaskService.getTaskDetail(taskId, userId);
@@ -54,6 +58,7 @@ public class PricingTaskStreamService {
     private void streamLoop(Long taskId, SseEmitter emitter) {
         long lastLogId = 0L;
         boolean started = false;
+        Set<Integer> completedOrders = new HashSet<>();
         try {
             while (true) {
                 PricingTask task = taskMapper.selectById(taskId);
@@ -74,11 +79,15 @@ public class PricingTaskStreamService {
                 List<AgentRunLog> logs = logMapper.selectList(logWrapper);
                 for (AgentRunLog logItem : logs) {
                     send(emitter, toAgentCard(taskId, logItem));
+                    int order = resolveDisplayOrder(logItem);
+                    if (order >= 1 && order <= EXPECTED_AGENT_CARD_COUNT) {
+                        completedOrders.add(order);
+                    }
                     lastLogId = logItem.getId() == null ? lastLogId : logItem.getId();
                 }
 
                 String status = normalizeStatus(task);
-                int completedCardCount = countCompletedCards(taskId);
+                int completedCardCount = completedOrders.size();
                 PricingResult result = getResultByTaskId(taskId);
                 if (shouldEmitCompletedEvent(task, result, completedCardCount)) {
                     send(emitter, baseMessage(taskId, "task_completed", Map.of(
@@ -94,7 +103,7 @@ public class PricingTaskStreamService {
                     break;
                 }
 
-                Thread.sleep(POLL_INTERVAL_MS);
+                Thread.sleep(resolvePollIntervalMs());
             }
         } catch (Exception e) {
             try {
@@ -216,14 +225,11 @@ public class PricingTaskStreamService {
         return resultMapper.selectOne(wrapper);
     }
 
-    private int countCompletedCards(Long taskId) {
-        LambdaQueryWrapper<AgentRunLog> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(AgentRunLog::getTaskId, taskId);
-        return (int) logMapper.selectList(wrapper).stream()
-                .map(this::resolveDisplayOrder)
-                .filter(order -> order >= 1 && order <= EXPECTED_AGENT_CARD_COUNT)
-                .distinct()
-                .count();
+    private long resolvePollIntervalMs() {
+        if (streamPollIntervalMs < 100L) {
+            return 100L;
+        }
+        return streamPollIntervalMs;
     }
 
     private int resolveDisplayOrder(AgentRunLog item) {

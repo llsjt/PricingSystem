@@ -131,7 +131,8 @@ def _precompute_competitor_summary(payload: CrewRunPayload) -> str:
 
 def build_pricing_crew(
     payload: CrewRunPayload,
-    llm: object,
+    analysis_llm: object,
+    manager_llm: object,
     on_task_done: Callable | None = None,
 ) -> Crew:
     """
@@ -141,7 +142,7 @@ def build_pricing_crew(
     减少 Agent 的工具调用轮次，降低 LLM 往返次数。
     """
     # ── 创建 4 个 Agent ────────────────────────────────────
-    agents = build_crewai_agents(llm)
+    agents = build_crewai_agents(analysis_llm=analysis_llm, manager_llm=manager_llm)
 
     # ── 预计算数据摘要（免去 Agent 调用汇总工具） ─────────
     product = payload.product
