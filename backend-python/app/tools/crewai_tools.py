@@ -16,6 +16,7 @@ from typing import Any
 
 from crewai.tools import tool
 
+
 from app.schemas.agent import DailyMetricSnapshot, ProductContext, TrafficSnapshot
 from app.services.competitor_service import CompetitorService
 from app.tools.elasticity_profit_tool import ElasticityProfitTool
@@ -38,146 +39,145 @@ def _default_serializer(obj: Any) -> Any:
     return str(obj)
 
 
-def _normalize_input(raw: Any) -> dict:
-    """将 CrewAI 传入的工具参数归一化为 dict。
-    CrewAI 可能传 dict（已解析的 JSON）或 str（JSON 字符串），
-    此函数统一处理两种情况。"""
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str):
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-    return {}
-
 
 # ── 商品数据汇总工具 ─────────────────────────────────────────
 @tool("汇总商品经营数据")
-def summarize_product_data(input_json: Any) -> str:
+def summarize_product_data(product_json: str, metrics_json: str, traffic_json: str) -> str:
     """
     根据商品上下文、每日销售指标和流量数据，汇总商品近30天经营概况。
-    输入JSON字段:
-      - product: 商品上下文 (productId, shopId, productName, categoryName, currentPrice, costPrice, stock)
-      - metrics: 每日指标列表 (statDate, visitorCount, addCartCount, payBuyerCount, salesCount, turnover, conversionRate)
-      - traffic: 流量数据列表 (statDate, trafficSource, impressionCount, clickCount, visitorCount, payAmount, roi)
+    参数:
+      - product_json: 商品上下文JSON字符串 (productId, shopId, productName, categoryName, currentPrice, costPrice, stock)
+      - metrics_json: 每日指标JSON数组字符串 (statDate, visitorCount, addCartCount, payBuyerCount, salesCount, turnover, conversionRate)
+      - traffic_json: 流量数据JSON数组字符串 (statDate, trafficSource, impressionCount, clickCount, visitorCount, payAmount, roi)
     返回: 月销量、月营业额、平均转化率、总访客数、CTR 等汇总数据
     """
-    params = _normalize_input(input_json)
-    if not params:
-        return json.dumps({"error": "输入参数无效"}, ensure_ascii=False)
+    product_data = json.loads(product_json) if isinstance(product_json, str) else product_json
+    metrics_data = json.loads(metrics_json) if isinstance(metrics_json, str) else metrics_json
+    traffic_data = json.loads(traffic_json) if isinstance(traffic_json, str) else traffic_json
 
-    # 从字典重建 Pydantic 模型
-    product = ProductContext(**params.get("product", {}))
-    metrics = [DailyMetricSnapshot(**m) for m in params.get("metrics", [])]
-    traffic = [TrafficSnapshot(**t) for t in params.get("traffic", [])]
+    product = ProductContext(**product_data)
+    metrics = [DailyMetricSnapshot(**m) for m in metrics_data]
+    traffic = [TrafficSnapshot(**t) for t in traffic_data]
 
-    # 调用底层工具计算
     result = _product_data_tool.summarize(product=product, metrics=metrics, traffic=traffic)
     return json.dumps(result, ensure_ascii=False, default=_default_serializer)
 
 
 # ── 异常值清洗工具 ─────────────────────────────────────────
 @tool("清洗销量异常值")
-def clean_outliers(input_json: Any) -> str:
+def clean_outliers(values: str) -> str:
     """
     对销量序列执行 Winsorization（缩尾处理），去除极端值干扰。
-    输入JSON字段:
-      - values: 数值列表，例如每日销量 [10, 12, 8, 100, 11, ...]
+    参数:
+      - values: JSON数组字符串，例如每日销量 "[10, 12, 8, 100, 11]"
     返回: 清洗后的数值列表
     """
-    params = _normalize_input(input_json)
-    if not params:
-        return json.dumps({"error": "输入参数无效"}, ensure_ascii=False)
-
-    values = params.get("values", [])
-    cleaned = _outlier_clean_tool.winsorize(values)
+    parsed = json.loads(values) if isinstance(values, str) else values
+    cleaned = _outlier_clean_tool.winsorize(parsed)
     return json.dumps({"cleaned_values": cleaned}, ensure_ascii=False)
 
 
 # ── 价格弹性预估销量工具 ───────────────────────────────────
 @tool("预估调价后销量")
-def estimate_sales_volume(input_json: Any) -> str:
+def estimate_sales_volume(
+    baseline_sales: int,
+    current_price: float,
+    target_price: float,
+    strategy_goal: str,
+) -> str:
     """
     基于价格弹性模型，预估调价后的月销量。
-    输入JSON字段:
+    参数:
       - baseline_sales: 基线月销量（整数）
       - current_price: 当前售价
       - target_price: 目标价格
       - strategy_goal: 策略目标 (MAX_PROFIT / MARKET_SHARE / CLEARANCE)
     返回: estimated_sales（预估月销量）
     """
-    params = _normalize_input(input_json)
-    if not params:
-        return json.dumps({"error": "输入参数无效"}, ensure_ascii=False)
-
     estimated = _elasticity_tool.estimate_sales(
-        baseline_sales=int(params.get("baseline_sales", 30)),
-        current_price=Decimal(str(params.get("current_price", 0))),
-        target_price=Decimal(str(params.get("target_price", 0))),
-        strategy_goal=str(params.get("strategy_goal", "")),
+        baseline_sales=int(baseline_sales),
+        current_price=Decimal(str(current_price)),
+        target_price=Decimal(str(target_price)),
+        strategy_goal=str(strategy_goal),
     )
     return json.dumps({"estimated_sales": estimated}, ensure_ascii=False)
 
 
 # ── 利润预估工具 ─────────────────────────────────────────
 @tool("预估利润")
-def estimate_profit(input_json: Any) -> str:
+def estimate_profit(
+    price: float,
+    cost_price: float,
+    expected_sales: int,
+) -> str:
     """
     根据价格、成本和预期销量，计算预估月利润。
-    输入JSON字段:
+    参数:
       - price: 售价
       - cost_price: 成本价
       - expected_sales: 预期月销量（整数）
     返回: estimated_profit（预估月利润）
     """
-    params = _normalize_input(input_json)
-    if not params:
-        return json.dumps({"error": "输入参数无效"}, ensure_ascii=False)
-
     profit = _elasticity_tool.estimate_profit(
-        price=Decimal(str(params.get("price", 0))),
-        cost_price=Decimal(str(params.get("cost_price", 0))),
-        expected_sales=int(params.get("expected_sales", 0)),
+        price=Decimal(str(price)),
+        cost_price=Decimal(str(cost_price)),
+        expected_sales=int(expected_sales),
     )
     return json.dumps({"estimated_profit": str(profit)}, ensure_ascii=False)
 
 
 # ── 风控规则评估工具 ─────────────────────────────────────
 @tool("评估风控规则")
-def evaluate_risk_rules(input_json: Any) -> str:
+def evaluate_risk_rules(
+    current_price: float,
+    cost_price: float,
+    candidate_price: float,
+    min_profit_rate: float = 0.15,
+    max_discount_rate: float = 0.5,
+    min_price: float = 0.0,
+    max_price: float = 0.0,
+) -> str:
     """
-    对候选价格执行硬约束校验：成本底线、最低利润率、价格上下限、最大折扣率。
-    输入JSON字段:
+    对候选价格执行硬约束校验：成本底线、最低利润率、最大折扣率。
+    参数:
       - current_price: 当前售价
       - cost_price: 成本价
       - candidate_price: 候选价格（待校验）
-      - constraints: 约束条件字典，可包含:
-          min_profit_rate(最低利润率,默认0.15), min_price, max_price, max_discount_rate
+      - min_profit_rate: 最低利润率（默认0.15）
+      - max_discount_rate: 最大折扣率（默认0.5）
+      - min_price: 最低售价限制（0表示不限制）
+      - max_price: 最高售价限制（0表示不限制）
     返回: is_pass(是否通过), safe_floor_price(安全底价), suggested_price(风控建议价),
           risk_level(LOW/HIGH), need_manual_review(是否需人工复核)
     """
-    params = _normalize_input(input_json)
-    if not params:
-        return json.dumps({"error": "输入参数无效"}, ensure_ascii=False)
-
+    constraints: dict[str, Any] = {
+        "min_profit_rate": min_profit_rate,
+        "max_discount_rate": max_discount_rate,
+    }
+    if min_price > 0:
+        constraints["min_price"] = min_price
+    if max_price > 0:
+        constraints["max_price"] = max_price
     result = _risk_rule_tool.evaluate(
-        current_price=Decimal(str(params.get("current_price", 0))),
-        cost_price=Decimal(str(params.get("cost_price", 0))),
-        candidate_price=Decimal(str(params.get("candidate_price", 0))),
-        constraints=params.get("constraints", {}),
+        current_price=Decimal(str(current_price)),
+        cost_price=Decimal(str(cost_price)),
+        candidate_price=Decimal(str(candidate_price)),
+        constraints=constraints,
     )
     return json.dumps(result, ensure_ascii=False, default=_default_serializer)
 
 
 # ── 竞品数据查询工具（模拟数据） ──────────────────────────
 @tool("查询竞品价格数据")
-def search_competitors(input_json: Any) -> str:
+def search_competitors(
+    product_id: int,
+    product_title: str,
+    category_name: str,
+    current_price: float,
+) -> str:
     """
     获取竞品价格数据（模拟数据，非真实爬虫）。
-    输入JSON字段:
+    参数:
       - product_id: 商品ID
       - product_title: 商品名称
       - category_name: 品类名称
@@ -185,14 +185,10 @@ def search_competitors(input_json: Any) -> str:
     返回: 竞品列表，每条包含 competitorName, price, originalPrice, salesVolumeHint,
           promotionTag, shopType, sourcePlatform
     """
-    params = _normalize_input(input_json)
-    if not params:
-        return json.dumps({"error": "输入参数无效"}, ensure_ascii=False)
-
     competitors = _competitor_service.get_competitors(
-        product_id=int(params.get("product_id", 0)),
-        product_title=params.get("product_title"),
-        category_name=params.get("category_name"),
-        current_price=Decimal(str(params.get("current_price", 0))),
+        product_id=int(product_id),
+        product_title=product_title,
+        category_name=category_name,
+        current_price=Decimal(str(current_price)),
     )
     return json.dumps({"competitors": competitors}, ensure_ascii=False, default=_default_serializer)

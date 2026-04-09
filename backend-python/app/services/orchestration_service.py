@@ -30,6 +30,23 @@ from app.utils.text_utils import to_strategy_goal_cn, to_risk_level_cn
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_float(val: Any, default: float = 0.0) -> float:
+    """安全地将 LLM 返回的值转换为 float，避免非数字值导致崩溃。"""
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_int(val: Any, default: int = 0) -> int:
+    """安全地将 LLM 返回的值转换为 int。"""
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return default
+
+
 # ── Agent 元数据（名称和展示顺序） ──────────────────────────
 _AGENT_META = [
     {"code": "DATA_ANALYSIS", "name": "数据分析Agent", "order": 1},
@@ -70,12 +87,12 @@ class OrchestrationService:
         ]
 
         # suggestion: Agent 的定价建议
-        suggested_price = float(parsed.get("suggestedPrice", 0))
-        min_price = float(parsed.get("suggestedMinPrice", 0))
-        max_price = float(parsed.get("suggestedMaxPrice", 0))
-        expected_sales = int(parsed.get("expectedSales", 0))
-        expected_profit = float(parsed.get("expectedProfit", 0))
-        confidence = float(parsed.get("confidence", 0.5))
+        suggested_price = _safe_float(parsed.get("suggestedPrice"))
+        min_price = _safe_float(parsed.get("suggestedMinPrice"))
+        max_price = _safe_float(parsed.get("suggestedMaxPrice"))
+        expected_sales = _safe_int(parsed.get("expectedSales"))
+        expected_profit = _safe_float(parsed.get("expectedProfit"))
+        confidence = _safe_float(parsed.get("confidence"), 0.5)
 
         suggestion = {
             "priceRange": {"min": min_price, "max": max_price},
@@ -101,9 +118,9 @@ class OrchestrationService:
         thinking = parsed.get("thinking", "基于竞品价格数据分析市场价格带和竞争态势，给出市场可接受的建议价格。")
 
         # 从 LLM 输出中提取竞品样本数
-        sample_count = int(parsed.get("simulatedSamples", 0))
-        market_floor = float(parsed.get("marketFloor", 0))
-        market_ceiling = float(parsed.get("marketCeiling", 0))
+        sample_count = _safe_int(parsed.get("simulatedSamples"))
+        market_floor = _safe_float(parsed.get("marketFloor"))
+        market_ceiling = _safe_float(parsed.get("marketCeiling"))
 
         evidence = [
             {"label": "竞品样本数", "value": sample_count},
@@ -132,8 +149,8 @@ class OrchestrationService:
         thinking = parsed.get("thinking", "对候选价格执行成本底线与利润约束校验，判断是否允许自动执行。")
 
         is_pass = bool(parsed.get("isPass", False))
-        safe_floor = float(parsed.get("safeFloorPrice", 0))
-        suggested = float(parsed.get("suggestedPrice", 0))
+        safe_floor = _safe_float(parsed.get("safeFloorPrice"))
+        suggested = _safe_float(parsed.get("suggestedPrice"))
         risk_level = str(parsed.get("riskLevel", "HIGH"))
 
         evidence = [
@@ -168,16 +185,16 @@ class OrchestrationService:
         thinking = parsed.get("thinking", "综合前三个Agent的意见，输出最终可执行的定价决策。")
 
         evidence = [
-            {"label": "数据分析建议价", "value": float(data_parsed.get("suggestedPrice", 0))},
-            {"label": "市场情报建议价", "value": float(market_parsed.get("suggestedPrice", 0))},
-            {"label": "风险控制建议价", "value": float(risk_parsed.get("suggestedPrice", 0))},
+            {"label": "数据分析建议价", "value": _safe_float(data_parsed.get("suggestedPrice"))},
+            {"label": "市场情报建议价", "value": _safe_float(market_parsed.get("suggestedPrice"))},
+            {"label": "风险控制建议价", "value": _safe_float(risk_parsed.get("suggestedPrice"))},
             {"label": "风控通过", "value": bool(risk_parsed.get("isPass", False))},
         ]
 
         suggestion = {
-            "finalPrice": float(parsed.get("finalPrice", 0)),
-            "expectedSales": int(parsed.get("expectedSales", 0)),
-            "expectedProfit": float(parsed.get("expectedProfit", 0)),
+            "finalPrice": _safe_float(parsed.get("finalPrice")),
+            "expectedSales": _safe_int(parsed.get("expectedSales")),
+            "expectedProfit": _safe_float(parsed.get("expectedProfit")),
             "strategy": str(parsed.get("executeStrategy", "人工审核")),
             "summary": parsed.get("resultSummary", "综合决策完成"),
         }
@@ -224,11 +241,8 @@ class OrchestrationService:
             try:
                 # 获取 LLM 原始输出并解析 JSON
                 raw = str(task_output.raw) if hasattr(task_output, "raw") else str(task_output)
-                debug_log(f"[CrewAI] task callback raw_preview={raw[:200]}")
+                debug_log(f"[CrewAI] task callback raw_len={len(raw)} raw_preview={raw[:200]}")
                 parsed = extract_json_object(raw)
-                if not parsed:
-                    debug_log(f"[CrewAI] json parse produced empty object raw={raw[:500]}")
-                task_outputs.append(parsed)
 
                 # 确定当前是第几个 Agent
                 idx = card_counter[0]
@@ -236,9 +250,26 @@ class OrchestrationService:
 
                 if idx >= len(_AGENT_META):
                     logger.warning("回调次数超过预期 Agent 数量: idx=%d", idx)
+                    task_outputs.append(parsed)
                     return
 
                 meta = _AGENT_META[idx]
+
+                # 空输出保护：写入错误卡片而非全零卡片
+                if not parsed:
+                    logger.warning("Agent [%s] 输出解析失败，写入错误卡片", meta["name"])
+                    task_outputs.append(parsed)
+                    self.log_tool.write_agent_card(
+                        task_id=payload.task_id,
+                        agent_name=meta["name"],
+                        display_order=meta["order"],
+                        thinking_summary=f"Agent 输出解析失败，无法提取有效JSON",
+                        evidence=[{"label": "原始输出(截断)", "value": raw[:200]}],
+                        suggestion={"error": True, "message": "输出解析失败"},
+                    )
+                    return
+
+                task_outputs.append(parsed)
                 logger.info("Agent [%s] 完成，正在写入卡片 (order=%d)", meta["name"], meta["order"])
 
                 # 根据 Agent 类型构建不同格式的卡片
@@ -321,9 +352,13 @@ class OrchestrationService:
         raw_final = str(crew_output) if crew_output else ""
         manager_parsed = extract_json_object(raw_final)
 
-        # 如果 kickoff 输出解析失败，回退到 callback 收集的最后一个结果
-        if not manager_parsed and task_outputs:
-            manager_parsed = task_outputs[-1]
+        # 如果 kickoff 输出解析失败，回退到 callback 收集的经理 Agent 结果
+        if not manager_parsed and len(task_outputs) >= 4:
+            manager_parsed = task_outputs[3]
+            logger.info("使用经理 Agent 回调输出作为回退 (task_id=%d)", payload.task_id)
+        elif not manager_parsed:
+            logger.warning("经理 Agent 输出不可用，仅 %d 个 Agent 完成 (task_id=%d)", len(task_outputs), payload.task_id)
+            manager_parsed = {}
 
         # 提取最终定价字段（带默认值兜底）
         final_price = money(manager_parsed.get("finalPrice", payload.product.current_price))

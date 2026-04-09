@@ -191,8 +191,7 @@ def build_pricing_crew(
         callback=on_task_done,
     )
 
-    # ── Task 2: 市场情报任务 ──────────────────────────────
-    # 竞品数据已预计算，Agent 无需调用工具，直接分析给出建议
+    # ── Task 2: 市场情报任务（独立执行，不依赖其他 Agent） ──
     market_task = Task(
         description=(
             f"你正在为商品「{product.product_name}」分析市场竞争态势。\n"
@@ -207,7 +206,6 @@ def build_pricing_crew(
             "   - 利润优先：可略高于市场均价\n"
             "   - 清仓促销：接近市场地板价\n"
             "   - 市场份额优先：接近市场均价\n\n"
-            "同时参考上一步数据分析Agent的结果进行综合判断。\n\n"
             "最终输出必须是严格的JSON格式："
         ),
         expected_output=(
@@ -221,26 +219,43 @@ def build_pricing_crew(
             '"simulatedSamples": 竞品样本数(整数)}'
         ),
         agent=agents["MARKET_INTEL"],
-        context=[data_task],
         callback=on_task_done,
     )
 
-    # ── Task 3: 风险控制任务 ──────────────────────────────
+    # ── Task 3: 风险控制任务（独立执行，不依赖其他 Agent） ──
+    # 构建风控工具参数提示
+    risk_tool_params = (
+        f'"current_price": {float(money(product.current_price))}, '
+        f'"cost_price": {float(money(product.cost_price))}, '
+        '"candidate_price": 你确定的候选价格'
+    )
+    min_pr = float(payload.constraints.get("min_profit_rate", 0.15))
+    risk_tool_params += f', "min_profit_rate": {min_pr}'
+    max_dr = payload.constraints.get("max_discount_rate")
+    if max_dr is not None:
+        risk_tool_params += f', "max_discount_rate": {float(max_dr)}'
+    min_p = payload.constraints.get("min_price")
+    if min_p is not None:
+        risk_tool_params += f', "min_price": {float(min_p)}'
+    max_p = payload.constraints.get("max_price")
+    if max_p is not None:
+        risk_tool_params += f', "max_price": {float(max_p)}'
+
     risk_task = Task(
         description=(
             f"你正在为商品「{product.product_name}」的定价方案进行风险评估。\n"
             f"当前售价: {money(product.current_price)}元，成本价: {money(product.cost_price)}元\n"
+            f"策略目标: {strategy_cn}\n"
             f"约束条件: {constraints_text}\n\n"
             "请按以下步骤操作：\n"
-            "1. 从前面两个Agent的分析结果中提取各自的建议价格\n"
-            "2. 计算候选价格 = (数据分析建议价 + 市场情报建议价) / 2\n"
-            "3. 使用「评估风控规则」工具，传入以下JSON参数：\n"
-            f'   {{"current_price": "{money(product.current_price)}", '
-            f'"cost_price": "{money(product.cost_price)}", '
-            '"candidate_price": "计算出的候选价格", '
-            f'"constraints": {json.dumps(payload.constraints, ensure_ascii=False, default=_serialize_decimal)}}}\n'
-            "4. 分析风控评估结果，判断候选价格是否安全\n"
-            "5. 如果候选价格不通过，说明哪些约束被违反\n\n"
+            "1. 根据策略目标确定一个候选价格：\n"
+            "   - 利润优先：当前售价上浮2%左右\n"
+            "   - 清仓促销：当前售价下调5%左右\n"
+            "   - 市场份额优先：当前售价下调3%左右\n"
+            "2. 使用「评估风控规则」工具校验候选价格，参数如下：\n"
+            f"   {{{risk_tool_params}}}\n"
+            "3. 根据工具返回结果，判断候选价格是否安全\n"
+            "4. 如果候选价格不通过，使用工具返回的suggested_price作为风控建议价\n\n"
             "最终输出必须是严格的JSON格式："
         ),
         expected_output=(
@@ -254,7 +269,6 @@ def build_pricing_crew(
             '"summary": "风控评估摘要(中文字符串)"}'
         ),
         agent=agents["RISK_CONTROL"],
-        context=[data_task, market_task],
         callback=on_task_done,
     )
 

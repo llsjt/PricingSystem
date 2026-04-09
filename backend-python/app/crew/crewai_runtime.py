@@ -287,6 +287,20 @@ def build_crewai_llm(profile: str = "default") -> OpenAICompatibleCrewAILLM:
     )
 
 
+def _repair_json_text(text: str) -> str:
+    """修复 LLM 常见的 JSON 格式错误（双逗号、尾逗号、引号粘连等）。"""
+    # 修复双左花括号: {{ → {
+    text = re.sub(r"\{\s*\{", "{", text)
+    # 修复双逗号: ,, → ,
+    text = re.sub(r",\s*,", ",", text)
+    # 修复值与下一个键之间的粘连引号: "value","  "key" → "value", "key"
+    # 例如 "LOW","  "needManualReview" 中的多余引号
+    text = re.sub(r'","\s*"', '", "', text)
+    # 修复尾逗号: ,} → }  ,] → ]
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+    return text
+
+
 def extract_json_object(raw_output: str) -> dict[str, Any]:
     text = (raw_output or "").strip()
     if not text:
@@ -296,6 +310,7 @@ def extract_json_object(raw_output: str) -> dict[str, Any]:
     if fence_match:
         text = fence_match.group(1).strip()
 
+    # 尝试直接解析
     try:
         parsed = json.loads(text)
         if isinstance(parsed, dict):
@@ -303,12 +318,24 @@ def extract_json_object(raw_output: str) -> dict[str, Any]:
     except Exception:
         pass
 
+    # 提取 JSON 对象子串
     object_match = re.search(r"\{[\s\S]*\}", text)
     if object_match:
+        candidate = object_match.group(0)
         try:
-            parsed = json.loads(object_match.group(0))
+            parsed = json.loads(candidate)
             if isinstance(parsed, dict):
                 return parsed
         except Exception:
-            return {}
+            pass
+
+        # 修复常见 LLM JSON 格式错误后重试
+        repaired = _repair_json_text(candidate)
+        try:
+            parsed = json.loads(repaired)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
     return {}
