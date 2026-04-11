@@ -41,10 +41,24 @@ class DispatchService:
         }
         return mapping.get(int(order or 0), "UNKNOWN")
 
+    def _persist_llm_config(self, task, req: DispatchTaskRequest) -> None:
+        """将用户 LLM 配置加密存入 task 记录（供 worker 和重试时恢复）。"""
+        if not req.llm_api_key:
+            return
+        task.llm_api_key_enc = encrypt_api_key(req.llm_api_key)
+        task.llm_base_url = req.llm_base_url
+        task.llm_model = req.llm_model
+        self.db.add(task)
+        self.db.commit()
+
     def dispatch(self, req: DispatchTaskRequest, queue_service) -> DispatchTaskResponse:
         task = self.task_repo.get_by_id(req.task_id)
         if task is None:
             return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="NOT_FOUND", message="task not found")
+
+        # 无论任务当前状态如何，只要携带了 LLM 配置就立即写入 DB
+        # （Java 插入任务时状态已为 QUEUED，必须在早返回之前持久化 Key）
+        self._persist_llm_config(task, req)
 
         status = str(task.task_status or "").upper()
         if status == "COMPLETED":
@@ -54,12 +68,6 @@ class DispatchService:
         if not queue_service.can_accept():
             self.task_repo.update_status(task, "FAILED", failure_reason="worker queue is full")
             return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="FAILED", message="worker queue is full")
-
-        # 将用户 LLM 配置加密存入 task 记录（供重试时恢复），在 mark_queued 之前设置以避免两次提交间隙丢 Key
-        if req.llm_api_key:
-            task.llm_api_key_enc = encrypt_api_key(req.llm_api_key)
-            task.llm_base_url = req.llm_base_url
-            task.llm_model = req.llm_model
 
         self.task_repo.mark_queued(task, trace_id=req.trace_id)
 
