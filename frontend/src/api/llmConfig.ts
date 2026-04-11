@@ -11,6 +11,7 @@ export interface LlmConfigVO {
   model: string
   hasApiKey: boolean
   apiKeyPreview: string
+  apiKey: string
 }
 
 export type LlmConfigResponse = ApiResponse<LlmConfigVO | null>

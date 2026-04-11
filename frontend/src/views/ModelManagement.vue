@@ -25,12 +25,11 @@
         <el-form-item label="API Key">
           <el-input
             v-model="llmForm.apiKey"
-            :placeholder="hasStoredApiKey ? (llmConfig?.apiKeyPreview || '已配置，留空则保留原 Key') : '请输入 API Key'"
+            :placeholder="'请输入 API Key'"
             type="password"
             show-password
             clearable
           />
-          <div v-if="hasStoredApiKey" class="field-hint">已配置，留空则保留原 Key；验证连接时需要输入完整的 API Key。</div>
         </el-form-item>
 
         <el-form-item label="Base URL">
@@ -84,7 +83,7 @@ const username = computed(() => userStore.username || 'User')
 const hasStoredApiKey = computed(() => Boolean(llmConfig.value?.hasApiKey))
 
 const applyConfigToForm = (config: LlmConfigVO | null) => {
-  llmForm.apiKey = ''
+  llmForm.apiKey = config?.apiKey || ''
   llmForm.baseUrl = config?.baseUrl || ''
   llmForm.model = config?.model || ''
 }
@@ -134,13 +133,8 @@ const handleVerify = async () => {
   }
 
   const apiKey = llmForm.apiKey.trim()
-  if (!apiKey && !hasStoredApiKey.value) {
-    ElMessage.warning('请填写 API Key')
-    return
-  }
-
   if (!apiKey) {
-    ElMessage.warning('验证连接需要输入完整的 API Key')
+    ElMessage.warning('请填写 API Key')
     return
   }
 

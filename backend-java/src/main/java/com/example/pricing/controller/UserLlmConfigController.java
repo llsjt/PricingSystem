@@ -60,6 +60,7 @@ public class UserLlmConfigController {
             if (vo.isHasApiKey()) {
                 String rawKey = AesGcmUtil.decrypt(config.getLlmApiKeyEnc(), encryptionSecret);
                 vo.setApiKeyPreview(AesGcmUtil.maskApiKey(rawKey));
+                vo.setApiKey(rawKey);
             }
             return Result.success(vo);
         } catch (Exception e) {
