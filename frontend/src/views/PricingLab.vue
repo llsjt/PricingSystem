@@ -10,7 +10,7 @@
     >
       <template #default>
         使用智能定价功能需要配置您自己的大模型 API 密钥。
-        <router-link to="/profile" class="alert-link">前往个人中心配置</router-link>
+        <router-link to="/models" class="alert-link">前往模型管理配置</router-link>
       </template>
     </el-alert>
     <section class="panel-card">
@@ -140,6 +140,7 @@ import { getLlmConfig } from '../api/llmConfig'
 import { useShopStore } from '../stores/shop'
 import { getAuthToken } from '../utils/authSession'
 import { sanitizeErrorMessage } from '../utils/error'
+import { hasConfiguredLlmApiKey } from '../utils/llmConfigResponse'
 
 interface ApiResponse<T> { code: number; data: T; message?: string }
 interface ProductOption { id: number; productName: string }
@@ -213,7 +214,7 @@ const refreshSnapshot = async () => { if (!taskId.value) return; await loadSnaps
 const resetTask = () => { resetState(); activeStep.value = 0 }
 const applyPrice = async (row: DecisionComparisonItem) => { const id = Number(row.resultId || 0); if (!id) return ElMessage.error('未找到可应用的结果记录'); try { await ElMessageBox.confirm(`确认将商品“${String(row.productTitle || '-')}”的售价更新为 ${currency(row.suggestedPrice)} 吗？`, '应用价格建议', { type: 'warning', confirmButtonText: '确认应用', cancelButtonText: '取消' }); applyingIds.value.push(id); const res = await applyDecision(id); if (res.code !== 200) return ElMessage.error(sanitizeErrorMessage(res.message, '应用失败')); ElMessage.success('价格建议已应用'); if (taskId.value) await loadSnapshot(taskId.value) } catch (error) { if (error !== 'cancel') ElMessage.error('应用失败') } finally { applyingIds.value = applyingIds.value.filter((item) => item !== id) } }
 
-onMounted(async () => { getLlmConfig().then(res => { hasLlmConfig.value = !!res.data?.data?.hasApiKey }).catch(() => { hasLlmConfig.value = false }); const loaded = await shopStore.fetchShops(); if (loaded && platformOptions.value.length === 1) { taskConfig.platform = platformOptions.value[0]; await onPlatformChange() } })
+onMounted(async () => { getLlmConfig().then((response) => { hasLlmConfig.value = hasConfiguredLlmApiKey(response) }).catch(() => { hasLlmConfig.value = false }); const loaded = await shopStore.fetchShops(); if (loaded && platformOptions.value.length === 1) { taskConfig.platform = platformOptions.value[0]; await onPlatformChange() } })
 onBeforeUnmount(() => stopRealtime())
 </script>
 

@@ -375,17 +375,29 @@ onBeforeUnmount(() => {
   inset: 0 auto 0 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   width: var(--sidebar-width);
   min-width: var(--sidebar-width);
   height: 100vh;
   min-height: 100vh;
-  padding: 12px 10px 10px;
-  background: #0f172a;
-  border-right: 1px solid rgba(255, 255, 255, 0.05);
-  box-shadow: 4px 0 20px rgba(0, 0, 0, 0.15);
+  padding: 14px 12px 12px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(147, 197, 253, 0.14) 0%, rgba(147, 197, 253, 0) 20%),
+    linear-gradient(180deg, #22334c 0%, #29405d 52%, #30486a 100%);
+  border-right: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: 10px 0 26px rgba(2, 6, 23, 0.16);
   transition: width 0.2s ease-in-out, min-width 0.2s ease-in-out, transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 20;
+}
+
+.sidebar::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 96px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0));
+  pointer-events: none;
 }
 
 .sidebar.collapsed {
@@ -395,40 +407,64 @@ onBeforeUnmount(() => {
 
 .mobile-close {
   margin-left: auto;
-  color: var(--text-2);
+  color: #cbd5e1;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(10px);
+}
+
+.mobile-close:hover {
+  color: #f8fafc;
+  border-color: rgba(96, 165, 250, 0.28);
+  background: rgba(30, 41, 59, 0.88);
 }
 
 .sidebar-brand {
   display: block;
-  padding: 2px 4px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  position: relative;
+  padding: 4px 2px 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
 }
 
 .brand-copy {
   display: flex;
   align-items: center;
-  padding: 12px 12px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  transition: all 0.2s;
+  position: relative;
+  overflow: hidden;
+  padding: 14px 16px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03));
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.brand-copy::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.18);
+  opacity: 0.7;
 }
 
 .brand-copy:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.04));
+  border-color: rgba(148, 163, 184, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09);
 }
 
 .brand-copy strong {
   display: block;
-  font-size: 19px;
-  line-height: 1.2;
+  font-size: 20px;
+  line-height: 1.3;
   color: #f8fafc;
-  font-weight: 700;
-  letter-spacing: 0.5px;
+  font-weight: 650;
+  letter-spacing: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
 }
 
 .sidebar.collapsed .sidebar-brand {
@@ -440,10 +476,24 @@ onBeforeUnmount(() => {
 .nav-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-top: 4px;
+  gap: 4px;
+  padding-top: 6px;
   overflow-y: auto;
-  padding-right: 2px;
+  padding-right: 4px;
+  padding-bottom: 10px;
+}
+
+.nav-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.nav-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+}
+
+.nav-list::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .nav-item {
@@ -452,40 +502,47 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 44px;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 12px;
+  min-height: 50px;
+  padding: 9px 12px;
+  border: 1px solid rgba(148, 163, 184, 0);
+  border-radius: 8px;
   background: transparent;
-  color: #94a3b8;
+  color: #8ea1b8;
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    box-shadow 0.2s ease;
   text-align: left;
 }
 
 .nav-item::before {
   content: '';
   position: absolute;
-  left: -2px;
-  top: 10px;
-  bottom: 10px;
-  width: 4px;
-  border-radius: 0 4px 4px 0;
-  background: #3b82f6;
+  left: 7px;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #60a5fa 0%, #3b82f6 100%);
   opacity: 0;
   transition: all 0.2s;
   transform: scaleY(0);
+  transform-origin: center;
 }
 
 .nav-item:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: #f1f5f9;
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(148, 163, 184, 0.12);
+  color: #e2e8f0;
 }
 
 .nav-item.active {
-  background: rgba(59, 130, 246, 0.12);
-  color: #60a5fa;
-  border-color: rgba(59, 130, 246, 0.2);
+  background: linear-gradient(90deg, rgba(37, 99, 235, 0.18), rgba(15, 23, 42, 0.14));
+  color: #f8fafc;
+  border-color: rgba(96, 165, 250, 0.24);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .nav-item.active::before {
@@ -493,28 +550,54 @@ onBeforeUnmount(() => {
   transform: scaleY(1);
 }
 
+.nav-item:focus-visible {
+  outline: none;
+  color: #f8fafc;
+  border-color: rgba(96, 165, 250, 0.34);
+  background: rgba(30, 64, 175, 0.18);
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.18);
+}
+
+.nav-item:focus-visible::before {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
 .nav-icon {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   border-radius: 8px;
   display: grid;
   place-items: center;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.1);
   color: #94a3b8;
-  font-size: 16px;
+  font-size: 15px;
   flex-shrink: 0;
-  transition: all 0.2s;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .nav-item:hover .nav-icon {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.16);
   color: #e2e8f0;
 }
 
 .nav-item.active .nav-icon {
-  background: #3b82f6;
+  background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+  border-color: rgba(96, 165, 250, 0.28);
   color: #ffffff;
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  box-shadow: 0 6px 14px rgba(37, 99, 235, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+
+.nav-item:focus-visible .nav-icon {
+  background: rgba(59, 130, 246, 0.16);
+  border-color: rgba(96, 165, 250, 0.3);
+  color: #dbeafe;
 }
 
 .nav-copy {
@@ -524,10 +607,10 @@ onBeforeUnmount(() => {
 }
 
 .nav-copy strong {
-  font-size: 14px;
-  line-height: 1.35;
-  font-weight: 500;
-  letter-spacing: 0.01em;
+  font-size: 16px;
+  line-height: 1.4;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 .sidebar.collapsed .nav-item {
@@ -537,7 +620,12 @@ onBeforeUnmount(() => {
 }
 
 .sidebar.collapsed .nav-item::before {
-  left: 6px;
+  left: 5px;
+}
+
+.sidebar.collapsed .nav-icon {
+  width: 30px;
+  height: 30px;
 }
 
 .main-shell {
@@ -745,7 +833,7 @@ onBeforeUnmount(() => {
 .mobile-mask {
   position: fixed;
   inset: 0;
-  background: rgba(12, 24, 29, 0.42);
+  background: rgba(2, 6, 23, 0.48);
   z-index: 18;
 }
 
@@ -776,8 +864,8 @@ onBeforeUnmount(() => {
     min-width: min(82vw, 330px);
     height: 100vh;
     min-height: 100vh;
-    border-right: 1px solid var(--line-soft);
-    box-shadow: 12px 0 30px rgba(20, 40, 63, 0.12);
+    border-right: 1px solid rgba(148, 163, 184, 0.16);
+    box-shadow: 14px 0 34px rgba(2, 6, 23, 0.24);
   }
 
   .sidebar.visible {

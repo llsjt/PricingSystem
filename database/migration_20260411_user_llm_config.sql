@@ -1,3 +1,5 @@
+SET NAMES utf8mb4;
+
 -- 用户自备大模型 API Key 功能
 -- 1. 新建用户 LLM 配置表（个人中心管理，Java 端加密写入）
 CREATE TABLE IF NOT EXISTS user_llm_config (

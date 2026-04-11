@@ -50,6 +50,12 @@ const routes: Array<RouteRecordRaw> = [
         meta: { title: getNavTitleByPath('/profile') }
       },
       {
+        path: 'models',
+        name: 'ModelManagement',
+        component: () => import('../views/ModelManagement.vue'),
+        meta: { title: getNavTitleByPath('/models') }
+      },
+      {
         path: 'user',
         name: 'UserManagement',
         component: () => import('../views/UserManagement.vue'),

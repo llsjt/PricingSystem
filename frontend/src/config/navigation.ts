@@ -1,4 +1,4 @@
-import { DataLine, Document, Files, Shop, User, UserFilled } from '@element-plus/icons-vue'
+import { Connection, DataLine, Document, Files, Shop, User, UserFilled } from '@element-plus/icons-vue'
 import type { Component } from 'vue'
 
 export interface AppNavItem {
@@ -41,8 +41,14 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
   {
     path: '/profile',
     title: '个人中心',
-    desc: '查看个人信息与账号管理',
+    desc: '查看个人信息与账户状态',
     icon: UserFilled
+  },
+  {
+    path: '/models',
+    title: '模型管理',
+    desc: '管理个人模型 API 配置',
+    icon: Connection
   },
   {
     path: '/user',

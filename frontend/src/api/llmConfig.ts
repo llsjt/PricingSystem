@@ -1,4 +1,4 @@
-import request from './request'
+import request, { type ApiResponse } from './request'
 
 export interface LlmConfigPayload {
   apiKey: string
@@ -13,10 +13,12 @@ export interface LlmConfigVO {
   apiKeyPreview: string
 }
 
-export const getLlmConfig = () => request.get<LlmConfigVO>('/user/llm-config')
+export type LlmConfigResponse = ApiResponse<LlmConfigVO | null>
 
-export const saveLlmConfig = (data: LlmConfigPayload) => request.put('/user/llm-config', data)
+export const getLlmConfig = () => request.get<LlmConfigResponse>('/user/llm-config')
 
-export const deleteLlmConfig = () => request.delete('/user/llm-config')
+export const saveLlmConfig = (data: LlmConfigPayload) => request.put<ApiResponse<null>>('/user/llm-config', data)
 
-export const verifyLlmConfig = (data: LlmConfigPayload) => request.post('/user/llm-config/verify', data)
+export const deleteLlmConfig = () => request.delete<ApiResponse<null>>('/user/llm-config')
+
+export const verifyLlmConfig = (data: LlmConfigPayload) => request.post<ApiResponse<string>>('/user/llm-config/verify', data)

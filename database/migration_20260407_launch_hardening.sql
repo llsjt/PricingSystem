@@ -1,3 +1,5 @@
+SET NAMES utf8mb4;
+
 ALTER TABLE sys_user
   ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'USER' COMMENT '用户角色' AFTER status,
   ADD COLUMN token_version INT NOT NULL DEFAULT 0 COMMENT '令牌版本号' AFTER role;

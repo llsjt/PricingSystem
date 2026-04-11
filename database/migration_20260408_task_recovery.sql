@@ -1,3 +1,5 @@
+SET NAMES utf8mb4;
+
 CREATE TABLE IF NOT EXISTS schema_migration_history (
   version VARCHAR(128) PRIMARY KEY COMMENT '迁移版本',
   checksum CHAR(64) NOT NULL COMMENT '校验值（SHA256）',
