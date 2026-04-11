@@ -3,14 +3,17 @@ package com.example.pricing.service.impl;
 import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.example.pricing.common.AesGcmUtil;
 import com.example.pricing.entity.AgentRunLog;
 import com.example.pricing.entity.PricingResult;
 import com.example.pricing.entity.PricingTask;
 import com.example.pricing.entity.Product;
+import com.example.pricing.entity.UserLlmConfig;
 import com.example.pricing.mapper.AgentRunLogMapper;
 import com.example.pricing.mapper.PricingResultMapper;
 import com.example.pricing.mapper.PricingTaskMapper;
 import com.example.pricing.mapper.ProductMapper;
+import com.example.pricing.mapper.UserLlmConfigMapper;
 import com.example.pricing.service.DecisionTaskService;
 import com.example.pricing.service.PythonDispatchClient;
 import com.example.pricing.service.ShopService;
@@ -61,12 +64,16 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     private final ProductMapper productMapper;
     private final ShopService shopService;
     private final PythonDispatchClient pythonDispatchClient;
+    private final UserLlmConfigMapper userLlmConfigMapper;
 
     @Value("${app.pricing.max-adjustment-ratio:0.30}")
     private BigDecimal maxAdjustmentRatio;
 
     @Value("${app.pricing.min-margin-rate:0.05}")
     private BigDecimal minMarginRate;
+
+    @Value("${app.llm-key-encryption-secret:}")
+    private String llmKeyEncryptionSecret;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -102,6 +109,15 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
             throw new IllegalArgumentException("无权操作此商品");
         }
 
+        // 查询用户 LLM 配置
+        LambdaQueryWrapper<UserLlmConfig> llmWrapper = new LambdaQueryWrapper<>();
+        llmWrapper.eq(UserLlmConfig::getUserId, userId);
+        UserLlmConfig llmConfig = userLlmConfigMapper.selectOne(llmWrapper);
+        if (llmConfig == null) {
+            throw new IllegalStateException("请先在个人中心配置大模型 API 密钥");
+        }
+        String decryptedApiKey = AesGcmUtil.decrypt(llmConfig.getLlmApiKeyEnc(), llmKeyEncryptionSecret);
+
         String normalizedGoal = (strategyGoal == null || strategyGoal.isBlank()) ? "MAX_PROFIT" : strategyGoal.trim();
         String normalizedConstraints = constraints == null ? "" : constraints.trim();
         String idempotencyKey = buildIdempotencyKey(productIds, normalizedGoal, normalizedConstraints, userId);
@@ -128,7 +144,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         taskMapper.insert(task);
 
         try {
-            dispatchToPython(task.getId(), productId, productIds, normalizedGoal, normalizedConstraints, task.getTraceId());
+            dispatchToPython(task.getId(), productId, productIds, normalizedGoal, normalizedConstraints, task.getTraceId(), decryptedApiKey, llmConfig.getLlmBaseUrl(), llmConfig.getLlmModel());
             taskMapper.updateById(task);
         } catch (Exception e) {
             log.error("Dispatch decision task to python failed, taskId={}", task.getId(), e);
@@ -408,7 +424,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     /**
      * 调用 Python 协作端的内部接口，把任务派发给多智能体工作流。
      */
-    private void dispatchToPython(Long taskId, Long productId, List<Long> productIds, String strategyGoal, String constraints, String traceId) {
+    private void dispatchToPython(Long taskId, Long productId, List<Long> productIds, String strategyGoal, String constraints, String traceId, String llmApiKey, String llmBaseUrl, String llmModel) {
         Map<String, Object> payload = new HashMap<>();
         payload.put("taskId", taskId);
         payload.put("productId", productId);
@@ -416,6 +432,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         payload.put("strategyGoal", strategyGoal);
         payload.put("constraints", constraints);
         payload.put("traceId", traceId);
+        payload.put("llmApiKey", llmApiKey);
+        payload.put("llmBaseUrl", llmBaseUrl);
+        payload.put("llmModel", llmModel);
         pythonDispatchClient.dispatchTask(payload, traceId);
     }
 

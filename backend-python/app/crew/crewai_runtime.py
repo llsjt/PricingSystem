@@ -252,17 +252,28 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
         return content
 
 
-def build_crewai_llm(profile: str = "default") -> OpenAICompatibleCrewAILLM:
+def build_crewai_llm(
+    profile: str = "default",
+    api_key: str | None = None,
+    base_url: str | None = None,
+    model: str | None = None,
+) -> OpenAICompatibleCrewAILLM:
     settings = get_settings()
 
-    selected_model = settings.llm_model.strip()
-    if profile.strip().lower() == "fast" and settings.fast_model.strip():
-        selected_model = settings.fast_model.strip()
+    effective_api_key = api_key.strip() if api_key else settings.llm_api_key.strip()
+    effective_base_url = base_url.strip() if base_url else settings.llm_base_url.strip()
+
+    if model:
+        selected_model = model.strip()
+    else:
+        selected_model = settings.llm_model.strip()
+        if profile.strip().lower() == "fast" and settings.fast_model.strip():
+            selected_model = settings.fast_model.strip()
 
     missing: list[str] = []
-    if not settings.llm_api_key.strip():
+    if not effective_api_key:
         missing.append("LLM_API_KEY")
-    if not settings.llm_base_url.strip():
+    if not effective_base_url:
         missing.append("LLM_BASE_URL")
     if not selected_model:
         missing.append("MODEL")
@@ -276,8 +287,8 @@ def build_crewai_llm(profile: str = "default") -> OpenAICompatibleCrewAILLM:
     max_retries = max(int(settings.crewai_llm_max_retries or 0), 0)
 
     return OpenAICompatibleCrewAILLM(
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
+        api_key=effective_api_key,
+        base_url=effective_base_url,
         model=selected_model,
         timeout_seconds=total_timeout,
         connect_timeout_seconds=connect_timeout,

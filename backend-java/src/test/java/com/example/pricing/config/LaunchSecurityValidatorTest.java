@@ -18,7 +18,7 @@ class LaunchSecurityValidatorTest {
                 "PricingSystem2024SecretKeyForHS256AlgorithmMustBeLongEnough",
                 "",
                 true,
-                "http://localhost:5173"
+                "http://localhost:*,http://127.0.0.1:*,http://[::1]:*"
         ));
     }
 

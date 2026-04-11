@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     internal_api_token: str = Field(default="", alias="INTERNAL_API_TOKEN")
     allow_dev_internal_token_bypass: bool = Field(default=True, alias="ALLOW_DEV_INTERNAL_TOKEN_BYPASS")
     python_base_prefix: str = Field(default="/internal", alias="PYTHON_BASE_PREFIX")
+    llm_key_encryption_secret: str = Field(default="", alias="LLM_KEY_ENCRYPTION_SECRET")
 
     agent_worker_concurrency: int = Field(default=2, alias="AGENT_WORKER_CONCURRENCY")
     agent_queue_maxsize: int = Field(default=100, alias="AGENT_QUEUE_MAXSIZE")
@@ -84,9 +85,6 @@ class Settings(BaseSettings):
             problems.append("market simulation enabled")
         if not self.mysql_password.strip() or self.mysql_password.strip() == "123456":
             problems.append("unsafe mysql password")
-        if not self.llm_api_key.strip():
-            problems.append("blank llm api key")
-
         if problems:
             raise RuntimeError("Unsafe production configuration: " + ", ".join(problems))
 

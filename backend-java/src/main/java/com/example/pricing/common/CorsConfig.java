@@ -12,22 +12,33 @@ import java.util.Arrays;
 @Configuration
 public class CorsConfig {
 
-    @Value("${app.security.allowed-origins:http://localhost:5173}")
+    @Value("${app.security.allowed-origins:http://localhost:*,http://127.0.0.1:*,http://[::1]:*}")
     private String allowedOrigins;
 
     @Bean
     public CorsFilter corsFilter() {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        CorsConfiguration corsConfiguration = buildCorsConfiguration(allowedOrigins);
+        source.registerCorsConfiguration("/**", corsConfiguration);
+        return new CorsFilter(source);
+    }
+
+    static CorsConfiguration buildCorsConfiguration(String allowedOrigins) {
         CorsConfiguration corsConfiguration = new CorsConfiguration();
         Arrays.stream(String.valueOf(allowedOrigins).split(","))
                 .map(String::trim)
                 .filter(origin -> !origin.isBlank())
-                .forEach(corsConfiguration::addAllowedOrigin);
+                .forEach(origin -> {
+                    if (origin.contains("*")) {
+                        corsConfiguration.addAllowedOriginPattern(origin);
+                        return;
+                    }
+                    corsConfiguration.addAllowedOrigin(origin);
+                });
         corsConfiguration.addAllowedHeader("*");
         corsConfiguration.addAllowedMethod("*");
         corsConfiguration.addExposedHeader("Authorization");
         corsConfiguration.setAllowCredentials(true);
-        source.registerCorsConfiguration("/**", corsConfiguration);
-        return new CorsFilter(source);
+        return corsConfiguration;
     }
 }

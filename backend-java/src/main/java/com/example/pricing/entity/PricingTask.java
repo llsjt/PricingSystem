@@ -70,6 +70,15 @@ public class PricingTask {
     @TableField("completed_at")
     private LocalDateTime completedAt;
 
+    @TableField("llm_api_key_enc")
+    private String llmApiKeyEnc;
+
+    @TableField("llm_base_url")
+    private String llmBaseUrl;
+
+    @TableField("llm_model")
+    private String llmModel;
+
     @TableField(exist = false)
     private String productTitle;
 

@@ -1,5 +1,18 @@
 <template>
   <div class="pricing-page">
+    <el-alert
+      v-if="!hasLlmConfig"
+      title="请先配置大模型 API 密钥"
+      type="warning"
+      show-icon
+      :closable="false"
+      class="llm-alert"
+    >
+      <template #default>
+        使用智能定价功能需要配置您自己的大模型 API 密钥。
+        <router-link to="/profile" class="alert-link">前往个人中心配置</router-link>
+      </template>
+    </el-alert>
     <section class="panel-card">
       <div class="section-head">
         <div>
@@ -41,7 +54,7 @@
           <el-input v-model="taskConfig.constraints" type="textarea" :rows="4" placeholder="例如：利润率不低于 15%，最低售价不低于成本价。" />
         </el-form-item>
       </el-form>
-      <div class="toolbar"><el-button type="primary" :loading="starting" @click="startTask">启动任务</el-button></div>
+      <div class="toolbar"><el-button type="primary" :loading="starting" :disabled="!hasLlmConfig" @click="startTask">启动任务</el-button></div>
     </section>
 
     <section v-else-if="activeStep === 1" class="panel-card">
@@ -123,6 +136,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { applyDecision, cancelPricingTask, createPricingTask, getPricingTaskSnapshot, getPricingTaskStreamUrl, type AgentCardContent, type DecisionComparisonItem, type DecisionLogItem, type PricingAgentCode, type PricingTaskSnapshot, type PricingTaskStatus, type PricingTaskStreamMessage } from '../api/decision'
 import { getProductList } from '../api/product'
+import { getLlmConfig } from '../api/llmConfig'
 import { useShopStore } from '../stores/shop'
 import { getAuthToken } from '../utils/authSession'
 import { sanitizeErrorMessage } from '../utils/error'
@@ -145,6 +159,7 @@ const taskId = ref<number | null>(null)
 const comparisonData = ref<DecisionComparisonItem[]>([])
 const archiveReportSummary = ref('')
 const applyingIds = ref<number[]>([])
+const hasLlmConfig = ref(false)
 let aborter: AbortController | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let loadToken = 0
@@ -198,10 +213,10 @@ const refreshSnapshot = async () => { if (!taskId.value) return; await loadSnaps
 const resetTask = () => { resetState(); activeStep.value = 0 }
 const applyPrice = async (row: DecisionComparisonItem) => { const id = Number(row.resultId || 0); if (!id) return ElMessage.error('未找到可应用的结果记录'); try { await ElMessageBox.confirm(`确认将商品“${String(row.productTitle || '-')}”的售价更新为 ${currency(row.suggestedPrice)} 吗？`, '应用价格建议', { type: 'warning', confirmButtonText: '确认应用', cancelButtonText: '取消' }); applyingIds.value.push(id); const res = await applyDecision(id); if (res.code !== 200) return ElMessage.error(sanitizeErrorMessage(res.message, '应用失败')); ElMessage.success('价格建议已应用'); if (taskId.value) await loadSnapshot(taskId.value) } catch (error) { if (error !== 'cancel') ElMessage.error('应用失败') } finally { applyingIds.value = applyingIds.value.filter((item) => item !== id) } }
 
-onMounted(async () => { const loaded = await shopStore.fetchShops(); if (loaded && platformOptions.value.length === 1) { taskConfig.platform = platformOptions.value[0]; await onPlatformChange() } })
+onMounted(async () => { getLlmConfig().then(res => { hasLlmConfig.value = !!res.data?.data?.hasApiKey }).catch(() => { hasLlmConfig.value = false }); const loaded = await shopStore.fetchShops(); if (loaded && platformOptions.value.length === 1) { taskConfig.platform = platformOptions.value[0]; await onPlatformChange() } })
 onBeforeUnmount(() => stopRealtime())
 </script>
 
 <style scoped>
-.pricing-page{display:grid;gap:16px}.panel-card{padding:18px;border-radius:16px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05)}.section-head{display:flex;justify-content:space-between;gap:16px;margin-bottom:16px}.section-head h2{margin:0 0 6px;font-size:28px;color:#172033}.section-head p{margin:0;color:#6b7280}.config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 14px}.full-span{grid-column:1/-1}.toolbar{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.status-bar{display:flex;gap:10px;align-items:center;margin-bottom:16px}.error-text{color:#b42318}.agent-list{display:grid;gap:14px}.agent-box{padding:18px;border-radius:14px;border:1px solid rgba(226,232,240,.9);background:linear-gradient(180deg,#fff 0%,#f8fbff 100%)}.agent-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:12px}.agent-head h3{margin:0;font-size:24px;color:#182236}.thinking{white-space:pre-wrap;line-height:1.8}.waiting{min-height:140px;display:grid;place-items:center;color:#64748b}.report-page,.metric-grid{display:grid;gap:12px}.metric-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.metric-card{padding:18px;border-radius:14px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05);display:grid;gap:8px}.metric-card span{font-size:13px;color:#64748b}.metric-card strong{font-size:24px;color:#172033}@media (max-width:1100px){.config-grid,.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:760px){.config-grid,.metric-grid{grid-template-columns:1fr}.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}}
+.llm-alert{margin-bottom:16px}.alert-link{color:#409eff;text-decoration:underline;margin-left:4px}.pricing-page{display:grid;gap:16px}.panel-card{padding:18px;border-radius:16px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05)}.section-head{display:flex;justify-content:space-between;gap:16px;margin-bottom:16px}.section-head h2{margin:0 0 6px;font-size:28px;color:#172033}.section-head p{margin:0;color:#6b7280}.config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 14px}.full-span{grid-column:1/-1}.toolbar{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.status-bar{display:flex;gap:10px;align-items:center;margin-bottom:16px}.error-text{color:#b42318}.agent-list{display:grid;gap:14px}.agent-box{padding:18px;border-radius:14px;border:1px solid rgba(226,232,240,.9);background:linear-gradient(180deg,#fff 0%,#f8fbff 100%)}.agent-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:12px}.agent-head h3{margin:0;font-size:24px;color:#182236}.thinking{white-space:pre-wrap;line-height:1.8}.waiting{min-height:140px;display:grid;place-items:center;color:#64748b}.report-page,.metric-grid{display:grid;gap:12px}.metric-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.metric-card{padding:18px;border-radius:14px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05);display:grid;gap:8px}.metric-card span{font-size:13px;color:#64748b}.metric-card strong{font-size:24px;color:#172033}@media (max-width:1100px){.config-grid,.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:760px){.config-grid,.metric-grid{grid-template-columns:1fr}.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}}
 </style>

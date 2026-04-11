@@ -34,7 +34,9 @@ public class LaunchSecurityValidator {
         if (normalizedOrigins.isBlank()) {
             throw new IllegalStateException("Unsafe production configuration detected in production mode: blank allowed origins");
         }
-        if (normalizedOrigins.contains("localhost") || normalizedOrigins.contains("127.0.0.1")) {
+        if (normalizedOrigins.contains("localhost")
+                || normalizedOrigins.contains("127.0.0.1")
+                || normalizedOrigins.contains("[::1]")) {
             throw new IllegalStateException("Unsafe production configuration detected in production mode: localhost origins");
         }
     }

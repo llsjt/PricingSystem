@@ -30,7 +30,7 @@ public class SecurityStartupValidator {
     @Value("${app.market.allow-simulation:true}")
     private boolean marketSimulationEnabled;
 
-    @Value("${app.security.allowed-origins:http://localhost:5173}")
+    @Value("${app.security.allowed-origins:http://localhost:*,http://127.0.0.1:*,http://[::1]:*}")
     private String allowedOrigins;
 
     @PostConstruct

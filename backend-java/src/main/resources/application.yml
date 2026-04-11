@@ -50,12 +50,13 @@ app:
   env: ${APP_ENV:dev}
   security:
     allow-dev-bootstrap: ${ALLOW_DEV_BOOTSTRAP:true}
-    allowed-origins: ${ALLOWED_ORIGINS:http://localhost:5173}
+    allowed-origins: ${ALLOWED_ORIGINS:http://localhost:*,http://127.0.0.1:*,http://[::1]:*}
     refresh-token-days: ${REFRESH_TOKEN_DAYS:14}
     secure-cookie: ${SECURE_COOKIE:false}
     login:
       max-attempts: ${LOGIN_MAX_ATTEMPTS:5}
       lock-minutes: ${LOGIN_LOCK_MINUTES:15}
+  llm-key-encryption-secret: ${LLM_KEY_ENCRYPTION_SECRET:MGo++WTIw8a+iOkZAak7BVYIcE5DXix2uOjWsh1I4aY=}
   pricing:
     max-adjustment-ratio: ${MAX_PRICE_ADJUSTMENT_RATIO:0.30}
     min-margin-rate: ${MIN_MARGIN_RATE:0.05}

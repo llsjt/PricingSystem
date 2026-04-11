@@ -105,18 +105,25 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { DataLine, TrendCharts, Connection, Warning, User, Lock, Goods, Cpu, Document } from '@element-plus/icons-vue'
 import { login } from '../api/user'
 import { useUserStore } from '../stores/user'
 import { useShopStore } from '../stores/shop'
+import { clearAuthSession } from '../utils/authSession'
 import { resolveRequestErrorMessage } from '../utils/error'
 
 const router = useRouter()
 const userStore = useUserStore()
 const shopStore = useShopStore()
+
+// 进入登录页时清除旧的认证状态，避免残留 token 导致后台请求产生 401/403 错误
+onMounted(() => {
+  clearAuthSession()
+  userStore.clearSession()
+})
 const loginFormRef = ref<FormInstance>()
 const loading = ref(false)
 const rememberMe = ref(false)

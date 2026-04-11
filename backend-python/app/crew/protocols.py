@@ -14,4 +14,6 @@ class CrewRunPayload:
     traffic: list[TrafficSnapshot]
     baseline_sales: int
     baseline_profit: Decimal
-
+    llm_api_key: str | None = None
+    llm_base_url: str | None = None
+    llm_model: str | None = None

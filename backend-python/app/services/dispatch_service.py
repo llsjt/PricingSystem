@@ -18,6 +18,7 @@ from app.schemas.task import (
 )
 from app.services.context_service import ContextService
 from app.services.orchestration_service import OrchestrationService
+from app.utils.crypto_utils import encrypt_api_key, decrypt_api_key
 from app.utils.text_utils import is_manual_review_action, parse_constraints
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,14 @@ class DispatchService:
             self.task_repo.update_status(task, "FAILED", failure_reason="worker queue is full")
             return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="FAILED", message="worker queue is full")
 
+        # 将用户 LLM 配置加密存入 task 记录（供重试时恢复），在 mark_queued 之前设置以避免两次提交间隙丢 Key
+        if req.llm_api_key:
+            task.llm_api_key_enc = encrypt_api_key(req.llm_api_key)
+            task.llm_base_url = req.llm_base_url
+            task.llm_model = req.llm_model
+
         self.task_repo.mark_queued(task, trace_id=req.trace_id)
+
         return DispatchTaskResponse(
             accepted=True,
             taskId=req.task_id,
@@ -192,6 +200,13 @@ class DispatchService:
         return TaskLogsResponse(taskId=task_id, total=len(items), logs=items)
 
     def build_dispatch_request(self, task) -> DispatchTaskRequest:
+        llm_api_key = None
+        if task.llm_api_key_enc:
+            try:
+                llm_api_key = decrypt_api_key(task.llm_api_key_enc)
+            except Exception:
+                logger.warning("Failed to decrypt LLM API key for task %s", task.id)
+
         return DispatchTaskRequest(
             taskId=task.id,
             productId=task.product_id,
@@ -199,6 +214,9 @@ class DispatchService:
             strategyGoal=(task.strategy_goal or "MAX_PROFIT"),
             constraints=task.constraint_text or "",
             traceId=task.trace_id,
+            llmApiKey=llm_api_key,
+            llmBaseUrl=task.llm_base_url,
+            llmModel=task.llm_model,
         )
 
     def execute_queued(self, req: DispatchTaskRequest, worker_id: int | None = None) -> None:
@@ -240,12 +258,22 @@ class DispatchService:
                     traffic=traffic,
                     baseline_sales=baseline_sales,
                     baseline_profit=baseline_profit,
+                    llm_api_key=req.llm_api_key,
+                    llm_base_url=req.llm_base_url,
+                    llm_model=req.llm_model,
                 )
                 if str(self.task_repo.get_by_id(req.task_id).task_status or "").upper() == "CANCELLED":
                     logger.info("Worker %s aborted cancelled task %s before orchestration", worker_id, req.task_id)
                     return
                 orchestration_service = OrchestrationService(self.db)
                 orchestration_service.run(payload)
+
+                # 任务完成后清空加密的 API Key
+                task_after = self.task_repo.get_by_id(req.task_id)
+                if task_after and task_after.llm_api_key_enc:
+                    task_after.llm_api_key_enc = None
+                    self.db.add(task_after)
+                    self.db.commit()
             except Exception:
                 logger.exception("Worker execution failed for task %s", req.task_id)
                 self.db.rollback()

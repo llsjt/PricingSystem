@@ -8,6 +8,7 @@ import com.example.pricing.mapper.AgentRunLogMapper;
 import com.example.pricing.mapper.PricingResultMapper;
 import com.example.pricing.mapper.PricingTaskMapper;
 import com.example.pricing.mapper.ProductMapper;
+import com.example.pricing.mapper.UserLlmConfigMapper;
 import com.example.pricing.service.impl.DecisionTaskServiceImpl;
 import com.example.pricing.vo.PricingTaskSnapshotVO;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,6 +47,9 @@ class DecisionTaskServiceImplTest {
     @Mock
     private PythonDispatchClient pythonDispatchClient;
 
+    @Mock
+    private UserLlmConfigMapper userLlmConfigMapper;
+
     private DecisionTaskServiceImpl service;
 
     @BeforeEach
@@ -56,7 +60,8 @@ class DecisionTaskServiceImplTest {
                 logMapper,
                 productMapper,
                 shopService,
-                pythonDispatchClient
+                pythonDispatchClient,
+                userLlmConfigMapper
         );
     }
 

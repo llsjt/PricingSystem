@@ -4,6 +4,10 @@ import vue from '@vitejs/plugin-vue'
 import Components from 'unplugin-vue-components/vite'
 import ElementPlus from 'unplugin-element-plus/vite'
 import { ElementPlusResolver } from 'unplugin-vue-components/resolvers'
+import { createApiProxyConfig } from './dev/apiProxy.js'
+
+const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || 'http://localhost:8080'
+const apiProxyOrigin = process.env.VITE_API_PROXY_ORIGIN || 'http://localhost:5173'
 
 export default defineConfig({
   plugins: [
@@ -93,10 +97,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': {
-        target: 'http://localhost:8080',
-        changeOrigin: true
-      }
+      '/api': createApiProxyConfig(apiProxyTarget, apiProxyOrigin)
     }
   }
 })
