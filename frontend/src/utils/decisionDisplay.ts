@@ -200,9 +200,15 @@ export const getSuggestionLines = (
     return lines
   }
 
+  const keyMap: Record<string, string> = {
+    summary: '建议说明', recommendedPrice: '建议定价', expectedSales: '预期销量',
+    expectedProfit: '预期利润', expectedProfitRate: '预期利润率', marketScore: '市场接受度评分',
+    pass: '是否自动通过', riskLevel: '风险等级', action: '建议动作',
+    finalPrice: '最终建议价', strategy: '执行策略'
+  }
   return Object.entries(suggestion)
     .filter(([, value]) => value !== null && value !== undefined)
-    .map(([key, value]) => `${key}：${formatPrimitive(key, value)}`)
+    .map(([key, value]) => `${keyMap[key] || key}：${formatPrimitive(key, value)}`)
 }
 
 export const getLogAgentName = (log: Pick<DecisionLogItem, 'agentName' | 'agentCode' | 'roleName'>) => {
