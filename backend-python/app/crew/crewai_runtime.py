@@ -312,6 +312,71 @@ def _repair_json_text(text: str) -> str:
     return text
 
 
+def _repair_truncated_json(text: str) -> str:
+    """尝试修复被 max_tokens 截断的 JSON（闭合未关闭的字符串、数组、对象）。
+
+    典型场景：LLM 输出被截断后形如
+      { "price": 44.13, "thinking": "分析竞品数据显示...品牌
+    需要补全为
+      { "price": 44.13, "thinking": "分析竞品数据显示...品牌" }
+
+    修复策略：从末尾向前扫描，依次闭合 string → array → object。
+    """
+    text = text.rstrip()
+    if not text:
+        return text
+
+    # 移除末尾不完整的 key（如 , "incompleteKey 或 , "incompleteKey":）
+    text = re.sub(r',\s*"[^"]*"\s*:\s*$', '', text)
+    text = re.sub(r',\s*"[^"]*$', '', text)
+
+    # 判断是否在未闭合的字符串中：统计未转义的引号数量
+    in_string = False
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == '\\' and in_string:
+            i += 2  # 跳过转义字符
+            continue
+        if ch == '"':
+            in_string = not in_string
+        i += 1
+
+    # 如果最后仍处于字符串内部，闭合它
+    if in_string:
+        text += '"'
+
+    # 移除末尾悬空的逗号/冒号
+    text = re.sub(r'[,:]\s*$', '', text)
+
+    # 统计未闭合的括号并补全
+    open_braces = 0
+    open_brackets = 0
+    in_str = False
+    j = 0
+    while j < len(text):
+        ch = text[j]
+        if ch == '\\' and in_str:
+            j += 2
+            continue
+        if ch == '"':
+            in_str = not in_str
+        elif not in_str:
+            if ch == '{':
+                open_braces += 1
+            elif ch == '}':
+                open_braces -= 1
+            elif ch == '[':
+                open_brackets += 1
+            elif ch == ']':
+                open_brackets -= 1
+        j += 1
+
+    text += ']' * max(open_brackets, 0)
+    text += '}' * max(open_braces, 0)
+    return text
+
+
 def extract_json_object(raw_output: str) -> dict[str, Any]:
     text = (raw_output or "").strip()
     if not text:
@@ -329,7 +394,7 @@ def extract_json_object(raw_output: str) -> dict[str, Any]:
     except Exception:
         pass
 
-    # 提取 JSON 对象子串
+    # 提取 JSON 对象子串（完整的 { ... }）
     object_match = re.search(r"\{[\s\S]*\}", text)
     if object_match:
         candidate = object_match.group(0)
@@ -342,6 +407,19 @@ def extract_json_object(raw_output: str) -> dict[str, Any]:
 
         # 修复常见 LLM JSON 格式错误后重试
         repaired = _repair_json_text(candidate)
+        try:
+            parsed = json.loads(repaired)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+    # ── 最后手段：修复被 max_tokens 截断的不完整 JSON ──
+    # 找到第一个 { 开始的子串（可能没有 } 结尾）
+    brace_start = text.find("{")
+    if brace_start >= 0:
+        fragment = text[brace_start:]
+        repaired = _repair_truncated_json(_repair_json_text(fragment))
         try:
             parsed = json.loads(repaired)
             if isinstance(parsed, dict):
