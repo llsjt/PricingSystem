@@ -385,6 +385,11 @@ def extract_json_object(raw_output: str) -> dict[str, Any]:
     fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
     if fence_match:
         text = fence_match.group(1).strip()
+    else:
+        # 未闭合的 ```json 围栏（输出被 max_tokens 截断，没有 closing ```）
+        unclosed = re.match(r"```(?:json)?\s*([\s\S]*)", text, re.IGNORECASE)
+        if unclosed:
+            text = unclosed.group(1).strip()
 
     # 尝试直接解析
     try:

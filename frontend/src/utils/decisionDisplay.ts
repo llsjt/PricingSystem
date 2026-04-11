@@ -204,7 +204,7 @@ export const getSuggestionLines = (
     summary: '建议说明', recommendedPrice: '建议定价', expectedSales: '预期销量',
     expectedProfit: '预期利润', expectedProfitRate: '预期利润率', marketScore: '市场接受度评分',
     pass: '是否自动通过', riskLevel: '风险等级', action: '建议动作',
-    finalPrice: '最终建议价', strategy: '执行策略'
+    finalPrice: '最终建议价', strategy: '执行策略', error: '是否异常', message: '异常信息'
   }
   return Object.entries(suggestion)
     .filter(([, value]) => value !== null && value !== undefined)
