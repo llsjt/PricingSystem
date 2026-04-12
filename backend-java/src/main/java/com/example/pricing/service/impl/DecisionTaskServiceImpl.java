@@ -135,7 +135,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         task.setBaselineProfit(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP));
         task.setStrategyGoal(normalizedGoal);
         task.setConstraintText(normalizedConstraints);
-        task.setTaskStatus("QUEUED");
+        task.setTaskStatus("PENDING");
         task.setRequestedByUserId(userId);
         task.setTraceId(UUID.randomUUID().toString().replace("-", ""));
         task.setIdempotencyKey(idempotencyKey);
