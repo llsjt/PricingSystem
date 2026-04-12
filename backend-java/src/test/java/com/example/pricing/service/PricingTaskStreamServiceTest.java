@@ -55,23 +55,35 @@ class PricingTaskStreamServiceTest {
         Map<String, Object> payload = PricingTaskStreamService.buildCardPayload(
                 "thinking",
                 List.of(Map.of("label", "x", "value", 1)),
-                Map.of("summary", "ok"),
+                Map.of("summary", "ok", "strategy", "DIRECT"),
                 null
         );
 
         assertEquals("thinking", payload.get("thinking"));
+        assertEquals("人工审核", ((Map<?, ?>) payload.get("suggestion")).get("strategy"));
         assertNull(payload.get("reasonWhy"));
     }
 
     @Test
-    void resultPayloadAllowsNullOptionalFields() {
+    void resultPayloadUsesManualReviewStrategyWhenOptionalFieldsAreBlank() {
         PricingResult result = new PricingResult();
         result.setExpectedSales(1);
 
         Map<String, Object> payload = PricingTaskStreamService.buildResultPayload(result);
 
-        assertNull(payload.get("strategy"));
+        assertEquals("人工审核", payload.get("strategy"));
         assertNull(payload.get("summary"));
         assertEquals(1, payload.get("expectedSales"));
+    }
+
+    @Test
+    void resultPayloadAlwaysReportsManualReviewStrategy() {
+        PricingResult result = new PricingResult();
+        result.setExecuteStrategy("DIRECT");
+        result.setReviewRequired(0);
+
+        Map<String, Object> payload = PricingTaskStreamService.buildResultPayload(result);
+
+        assertEquals("人工审核", payload.get("strategy"));
     }
 }

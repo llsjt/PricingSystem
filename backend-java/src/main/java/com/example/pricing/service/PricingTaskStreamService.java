@@ -32,6 +32,7 @@ public class PricingTaskStreamService {
 
     private static final String SCHEMA_VERSION = "1.0.0";
     private static final String CHANNEL = "pricing.task.card";
+    private static final String MANUAL_REVIEW_STRATEGY = "人工审核";
     private static final int EXPECTED_AGENT_CARD_COUNT = 4;
     private static final ExecutorService STREAM_EXECUTOR = Executors.newCachedThreadPool(runnable -> {
         Thread thread = new Thread(runnable, "pricing-task-stream");
@@ -186,10 +187,11 @@ public class PricingTaskStreamService {
             Map<String, Object> suggestion,
             String reasonWhy
     ) {
+        Map<String, Object> normalizedSuggestion = normalizeSuggestionStrategy(suggestion);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("thinking", thinking);
         payload.put("evidence", evidence);
-        payload.put("suggestion", suggestion);
+        payload.put("suggestion", normalizedSuggestion);
         payload.put("reasonWhy", reasonWhy);
         return payload;
     }
@@ -264,10 +266,18 @@ public class PricingTaskStreamService {
     }
 
     private static String resolveExecuteStrategy(PricingResult result) {
-        if (result.getExecuteStrategy() != null && !result.getExecuteStrategy().isBlank()) {
-            return result.getExecuteStrategy();
+        return MANUAL_REVIEW_STRATEGY;
+    }
+
+    private static Map<String, Object> normalizeSuggestionStrategy(Map<String, Object> suggestion) {
+        if (suggestion == null || suggestion.isEmpty()) {
+            return suggestion;
         }
-        return result.getReviewRequired() != null && result.getReviewRequired() == 1 ? "MANUAL_REVIEW" : null;
+        Map<String, Object> normalized = new LinkedHashMap<>(suggestion);
+        if (normalized.containsKey("strategy")) {
+            normalized.put("strategy", MANUAL_REVIEW_STRATEGY);
+        }
+        return normalized;
     }
 
     private static BigDecimal scaleMoney(BigDecimal value) {

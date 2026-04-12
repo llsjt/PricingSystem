@@ -26,7 +26,7 @@ from app.schemas.result import TaskFinalResult
 from app.tools.log_writer_tool import LogWriterTool
 from app.tools.result_writer_tool import ResultWriterTool
 from app.utils.math_utils import money
-from app.utils.text_utils import to_strategy_goal_cn, to_risk_level_cn
+from app.utils.text_utils import MANUAL_REVIEW_STRATEGY, to_strategy_goal_cn, to_risk_level_cn
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +195,7 @@ class OrchestrationService:
             "finalPrice": _safe_float(parsed.get("finalPrice")),
             "expectedSales": _safe_int(parsed.get("expectedSales")),
             "expectedProfit": _safe_float(parsed.get("expectedProfit")),
-            "strategy": str(parsed.get("executeStrategy", "人工审核")),
+            "strategy": MANUAL_REVIEW_STRATEGY,
             "summary": parsed.get("resultSummary", "综合决策完成"),
         }
 
@@ -375,7 +375,7 @@ class OrchestrationService:
         expected_sales = int(manager_parsed.get("expectedSales", payload.baseline_sales))
         expected_profit = money(manager_parsed.get("expectedProfit", payload.baseline_profit))
         profit_growth = money(expected_profit - money(payload.baseline_profit))
-        execute_strategy = str(manager_parsed.get("executeStrategy", "人工审核"))
+        execute_strategy = MANUAL_REVIEW_STRATEGY
         is_pass = bool(manager_parsed.get("isPass", False))
         result_summary = str(manager_parsed.get("resultSummary", "定价决策完成"))
 
@@ -389,7 +389,7 @@ class OrchestrationService:
         if final_price < cost:
             logger.warning("硬约束: 最终价格 %s 低于成本价 %s，强制标记为人工审核", final_price, cost)
             is_pass = False
-            execute_strategy = "人工审核"
+            execute_strategy = MANUAL_REVIEW_STRATEGY
 
         # 约束2: 预期利润必须高于基线利润（调价必须有意义）
         if expected_profit <= money(payload.baseline_profit):
@@ -399,7 +399,7 @@ class OrchestrationService:
                 money(payload.baseline_profit),
             )
             is_pass = False
-            execute_strategy = "人工审核"
+            execute_strategy = MANUAL_REVIEW_STRATEGY
 
         # ── 构建并写入最终定价结果 ──────────────────────────────
         final_payload = TaskFinalResult(

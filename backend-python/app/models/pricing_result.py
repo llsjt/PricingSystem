@@ -18,7 +18,7 @@ class PricingResult(Base):
     expected_profit: Mapped[Decimal] = mapped_column(DECIMAL(12, 2), nullable=False, default=0)
     profit_growth: Mapped[Decimal] = mapped_column(DECIMAL(12, 2), nullable=False, default=0)
     is_pass: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
-    execute_strategy: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    execute_strategy: Mapped[str] = mapped_column(String(50), nullable=False, default="人工审核", server_default="人工审核")
     result_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     review_required: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
     applied_previous_price: Mapped[Decimal | None] = mapped_column(DECIMAL(10, 2), nullable=True)

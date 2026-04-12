@@ -207,7 +207,7 @@ CREATE TABLE pricing_result (
     expected_profit DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '预期利润',
     profit_growth DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '利润增长值',
     is_pass TINYINT NOT NULL DEFAULT 0 COMMENT '是否通过风控',
-    execute_strategy VARCHAR(50) DEFAULT NULL COMMENT '执行策略',
+    execute_strategy VARCHAR(50) NOT NULL DEFAULT '人工审核' COMMENT '执行策略',
     result_summary TEXT DEFAULT NULL COMMENT '结果摘要',
     review_required TINYINT NOT NULL DEFAULT 1 COMMENT '是否需要人工审核',
     applied_previous_price DECIMAL(10,2) DEFAULT NULL COMMENT '应用前价格',

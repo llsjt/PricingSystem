@@ -20,7 +20,7 @@ from app.crew.protocols import CrewRunPayload
 from app.services.competitor_service import CompetitorService
 from app.tools.product_data_tool import ProductDataTool
 from app.utils.math_utils import money
-from app.utils.text_utils import to_strategy_goal_cn
+from app.utils.text_utils import MANUAL_REVIEW_STRATEGY, to_strategy_goal_cn
 
 
 def _serialize_decimal(obj: Any) -> Any:
@@ -289,10 +289,9 @@ def build_pricing_crew(
             "- 使用「预估调价后销量」和「预估利润」工具验证最终价格的预期效果\n"
             f'  (baseline_sales={payload.baseline_sales}, current_price="{money(product.current_price)}", '
             f'cost_price="{money(product.cost_price)}", strategy_goal="{payload.strategy_goal}")\n\n'
-            "执行策略判断：\n"
-            "- 如果风控通过且预期利润高于基线利润 → 执行策略为「直接执行」\n"
-            "- 如果风控通过但预期利润未超过基线 → 执行策略为「灰度发布」\n"
-            "- 如果风控不通过 → 执行策略为「人工审核」\n\n"
+            "执行策略要求：\n"
+            f"- 所有定价结果都必须进入「{MANUAL_REVIEW_STRATEGY}」流程，不允许直接执行或灰度发布。\n"
+            f'- 输出 JSON 的 executeStrategy 字段必须固定为「{MANUAL_REVIEW_STRATEGY}」。\n\n'
             "请说明为什么采纳或不采纳每个专家的建议，给出清晰的决策理由。\n\n"
             "最终输出必须是严格的JSON格式："
         ),
@@ -302,7 +301,7 @@ def build_pricing_crew(
             '"expectedSales": 预期月销量(整数), '
             '"expectedProfit": 预期月利润(数字), '
             '"profitGrowth": 利润变化额(数字,可为负), '
-            '"executeStrategy": "直接执行/灰度发布/人工审核", '
+            f'"executeStrategy": "{MANUAL_REVIEW_STRATEGY}", '
             '"isPass": 是否建议执行(true/false), '
             '"thinking": "你的决策思路(中文)", '
             '"resultSummary": "综合决策摘要(中文字符串,包含对各专家意见的采纳理由)", '

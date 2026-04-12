@@ -4,6 +4,8 @@ import com.example.pricing.entity.AgentRunLog;
 import com.example.pricing.entity.PricingResult;
 import com.example.pricing.entity.PricingTask;
 import com.example.pricing.entity.Product;
+import com.example.pricing.entity.UserLlmConfig;
+import com.example.pricing.common.AesGcmUtil;
 import com.example.pricing.mapper.AgentRunLogMapper;
 import com.example.pricing.mapper.PricingResultMapper;
 import com.example.pricing.mapper.PricingTaskMapper;
@@ -16,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -23,11 +26,15 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class DecisionTaskServiceImplTest {
+
+    private static final String TEST_LLM_SECRET = "MGo++WTIw8a+iOkZAak7BVYIcE5DXix2uOjWsh1I4aY=";
 
     @Mock
     private PricingTaskMapper taskMapper;
@@ -63,6 +70,38 @@ class DecisionTaskServiceImplTest {
                 pythonDispatchClient,
                 userLlmConfigMapper
         );
+        ReflectionTestUtils.setField(service, "llmKeyEncryptionSecret", TEST_LLM_SECRET);
+    }
+
+    @Test
+    void startTaskDoesNotOverwritePythonQueuedStatusAfterSuccessfulDispatch() {
+        Product product = new Product();
+        product.setId(221L);
+        product.setShopId(2L);
+        product.setCurrentPrice(new BigDecimal("250.06"));
+
+        UserLlmConfig llmConfig = new UserLlmConfig();
+        llmConfig.setUserId(1L);
+        llmConfig.setLlmApiKeyEnc(AesGcmUtil.encrypt("sk-test", TEST_LLM_SECRET));
+        llmConfig.setLlmBaseUrl("https://dashscope.aliyuncs.com/compatible-mode/v1");
+        llmConfig.setLlmModel("qwen3.5-122b-a10b");
+
+        when(shopService.getShopIdsByUser(1L)).thenReturn(List.of(2L));
+        when(productMapper.selectById(221L)).thenReturn(product);
+        when(userLlmConfigMapper.selectOne(any())).thenReturn(llmConfig);
+        when(taskMapper.selectOne(any())).thenReturn(null);
+        doAnswer(invocation -> {
+            PricingTask task = invocation.getArgument(0);
+            task.setId(113L);
+            return 1;
+        }).when(taskMapper).insert(any(PricingTask.class));
+
+        Long taskId = service.startTask(List.of(221L), "MARKET_SHARE", "", 1L);
+
+        assertEquals(113L, taskId);
+        verify(taskMapper).insert(any(PricingTask.class));
+        verify(pythonDispatchClient).dispatchTask(any(), any());
+        verify(taskMapper, never()).updateById(any(PricingTask.class));
     }
 
     @Test
@@ -130,7 +169,7 @@ class DecisionTaskServiceImplTest {
         runLog.setDisplayOrder(1);
         runLog.setThinkingSummary("thinking");
         runLog.setEvidenceJson("[{\"label\":\"x\",\"value\":1}]");
-        runLog.setSuggestionJson("{\"summary\":\"fine\"}");
+        runLog.setSuggestionJson("{\"summary\":\"fine\",\"strategy\":\"DIRECT\"}");
 
         when(shopService.getShopIdsByUser(77L)).thenReturn(List.of(9L));
         when(taskMapper.selectById(20L)).thenReturn(task);
@@ -143,11 +182,14 @@ class DecisionTaskServiceImplTest {
         assertNotNull(snapshot.getDetail());
         assertEquals(20L, snapshot.getDetail().getTaskId());
         assertEquals("测试商品", snapshot.getDetail().getProductTitle());
+        assertEquals("人工审核", snapshot.getDetail().getStrategy());
 
         assertEquals(1, snapshot.getLogs().size());
         assertEquals("DATA_ANALYSIS", snapshot.getLogs().get(0).getAgentCode());
+        assertEquals("人工审核", snapshot.getLogs().get(0).getSuggestion().get("strategy"));
 
         assertEquals(1, snapshot.getComparison().size());
         assertEquals(new BigDecimal("105.00"), snapshot.getComparison().get(0).getSuggestedPrice());
+        assertEquals("人工审核", snapshot.getComparison().get(0).getExecuteStrategy());
     }
 }

@@ -76,3 +76,45 @@ def test_write_final_result_skips_cancelled_task():
 
     assert db.get(PricingTask, task.id).task_status == "CANCELLED"
     assert db.query(PricingResult).count() == 0
+
+
+def test_write_final_result_forces_manual_review_strategy():
+    db = build_session()
+    task = create_task(db, task_id=202, status="RUNNING")
+    db.add(
+        PricingResult(
+            id=1,
+            task_id=task.id,
+            final_price=Decimal("20.00"),
+            expected_sales=100,
+            expected_profit=Decimal("200.00"),
+            profit_growth=Decimal("20.00"),
+            is_pass=1,
+            execute_strategy="直接执行",
+            result_summary="existing",
+            review_required=0,
+        )
+    )
+    db.commit()
+
+    ResultWriterTool(db).write_final_result(
+        TaskFinalResult(
+            taskId=task.id,
+            finalPrice=Decimal("25.50"),
+            expectedSales=120,
+            expectedProfit=Decimal("300.00"),
+            profitGrowth=Decimal("80.00"),
+            isPass=True,
+            executeStrategy="直接执行",
+            resultSummary="requires review",
+            suggestedMinPrice=Decimal("24.00"),
+            suggestedMaxPrice=Decimal("26.00"),
+        )
+    )
+
+    refreshed = db.get(PricingTask, task.id)
+    result = db.query(PricingResult).one()
+
+    assert refreshed.task_status == "MANUAL_REVIEW"
+    assert result.execute_strategy == "人工审核"
+    assert result.review_required == 1

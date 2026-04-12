@@ -59,17 +59,13 @@
 
     <section v-else-if="activeStep === 1" class="panel-card">
       <div class="section-head">
-        <div><h2>多 Agent 决策</h2><p>实时流只通过 Java SSE 下发。</p></div>
+        <div><h2>多 Agent 决策</h2></div>
         <div class="toolbar">
           <el-button v-if="canCancelTask" @click="cancelTask">取消任务</el-button>
           <el-button v-if="canReconfigureTask" @click="resetTask">重新配置任务</el-button>
           <el-button v-if="taskId" @click="refreshSnapshot">刷新进度</el-button>
           <el-button type="primary" :disabled="!canViewReport" @click="activeStep = 2">查看结果报告</el-button>
         </div>
-      </div>
-      <div class="status-bar">
-        <el-tag :type="statusTag">{{ statusLabel }}</el-tag>
-        <span v-if="state.errorMessage" class="error-text">{{ state.errorMessage }}</span>
       </div>
       <div class="agent-list">
         <article v-for="agent in agents" :key="agent.code" class="agent-box">
@@ -175,7 +171,6 @@ const canViewReport = computed(() => ['COMPLETED', 'MANUAL_REVIEW'].includes(sta
 const stepBarActive = computed(() => activeStep.value === 2 ? 3 : activeStep.value === 1 ? 2 : 1)
 const waitingOrder = computed(() => isRunning(state.taskStatus) ? (agents.find((agent) => !state.cards[agent.code])?.order || 0) : 0)
 const statusLabel = computed(() => ({ IDLE: '未开始', PENDING: '待执行', QUEUED: '待执行', RUNNING: '执行中', RETRYING: '重试中', MANUAL_REVIEW: '人工审核', COMPLETED: '已完成', FAILED: '失败', CANCELLED: '已取消' }[state.taskStatus] || state.taskStatus))
-const statusTag = computed(() => state.taskStatus === 'FAILED' ? 'danger' : ['CANCELLED', 'MANUAL_REVIEW'].includes(state.taskStatus) ? 'warning' : state.taskStatus === 'COMPLETED' ? 'success' : 'info')
 const managerSuggestion = computed<Record<string, unknown>>(() => state.cards.MANAGER_COORDINATOR?.suggestion && typeof state.cards.MANAGER_COORDINATOR.suggestion === 'object' ? state.cards.MANAGER_COORDINATOR.suggestion : {})
 const expectedSales = computed(() => numberOf(managerSuggestion.value.expectedSales))
 const expectedProfit = computed(() => numberOf(managerSuggestion.value.expectedProfit))
@@ -220,5 +215,5 @@ onBeforeUnmount(() => stopRealtime())
 </script>
 
 <style scoped>
-.llm-alert{margin-bottom:16px}.alert-link{color:#409eff;text-decoration:underline;margin-left:4px}.pricing-page{display:grid;gap:16px}.panel-card{padding:18px;border-radius:16px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05)}.section-head{display:flex;justify-content:space-between;gap:16px;margin-bottom:16px}.section-head h2{margin:0 0 6px;font-size:28px;color:#172033}.section-head p{margin:0;color:#6b7280}.config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 14px}.full-span{grid-column:1/-1}.toolbar{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.status-bar{display:flex;gap:10px;align-items:center;margin-bottom:16px}.error-text{color:#b42318}.agent-list{display:grid;gap:14px}.agent-box{padding:18px;border-radius:14px;border:1px solid rgba(226,232,240,.9);background:linear-gradient(180deg,#fff 0%,#f8fbff 100%)}.agent-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:12px}.agent-head h3{margin:0;font-size:24px;color:#182236}.thinking{white-space:pre-wrap;line-height:1.8}.waiting{min-height:140px;display:grid;place-items:center;color:#64748b}.report-page,.metric-grid{display:grid;gap:12px}.metric-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.metric-card{padding:18px;border-radius:14px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05);display:grid;gap:8px}.metric-card span{font-size:13px;color:#64748b}.metric-card strong{font-size:24px;color:#172033}@media (max-width:1100px){.config-grid,.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:760px){.config-grid,.metric-grid{grid-template-columns:1fr}.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}}
+.llm-alert{margin-bottom:16px}.alert-link{color:#409eff;text-decoration:underline;margin-left:4px}.pricing-page{display:grid;gap:16px}.panel-card{padding:18px;border-radius:16px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05)}.section-head{display:flex;justify-content:space-between;gap:16px;margin-bottom:16px}.section-head h2{margin:0 0 6px;font-size:28px;color:#172033}.section-head p{margin:0;color:#6b7280}.config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 14px}.full-span{grid-column:1/-1}.toolbar{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.agent-list{display:grid;gap:14px}.agent-box{padding:18px;border-radius:14px;border:1px solid rgba(226,232,240,.9);background:linear-gradient(180deg,#fff 0%,#f8fbff 100%)}.agent-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:12px}.agent-head h3{margin:0;font-size:24px;color:#182236}.thinking{white-space:pre-wrap;line-height:1.8}.waiting{min-height:140px;display:grid;place-items:center;color:#64748b}.report-page,.metric-grid{display:grid;gap:12px}.metric-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.metric-card{padding:18px;border-radius:14px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05);display:grid;gap:8px}.metric-card span{font-size:13px;color:#64748b}.metric-card strong{font-size:24px;color:#172033}@media (max-width:1100px){.config-grid,.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:760px){.config-grid,.metric-grid{grid-template-columns:1fr}.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}}
 </style>

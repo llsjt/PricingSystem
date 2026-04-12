@@ -47,7 +47,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -57,6 +56,8 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Slf4j
 public class DecisionTaskServiceImpl implements DecisionTaskService {
+
+    private static final String MANUAL_REVIEW_STRATEGY = "人工审核";
 
     private final PricingTaskMapper taskMapper;
     private final PricingResultMapper resultMapper;
@@ -145,7 +146,6 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
 
         try {
             dispatchToPython(task.getId(), productId, productIds, normalizedGoal, normalizedConstraints, task.getTraceId(), decryptedApiKey, llmConfig.getLlmBaseUrl(), llmConfig.getLlmModel());
-            taskMapper.updateById(task);
         } catch (Exception e) {
             log.error("Dispatch decision task to python failed, taskId={}", task.getId(), e);
             task.setTaskStatus("FAILED");
@@ -186,6 +186,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
 
             List<Map<String, Object>> evidence = parseJsonArray(logItem.getEvidenceJson());
             Map<String, Object> suggestion = parseJsonObject(logItem.getSuggestionJson());
+            normalizeSuggestionStrategy(suggestion);
             String action = String.valueOf(suggestion.getOrDefault("action", ""));
             boolean needManualReview = "MANUAL_REVIEW".equalsIgnoreCase(action) || "人工审核".equals(action);
 
@@ -576,6 +577,12 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         }
     }
 
+    private void normalizeSuggestionStrategy(Map<String, Object> suggestion) {
+        if (suggestion != null && suggestion.containsKey("strategy")) {
+            suggestion.put("strategy", MANUAL_REVIEW_STRATEGY);
+        }
+    }
+
     /**
      * 统一把金额字段规整为两位小数。
      */
@@ -626,10 +633,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     }
 
     private String resolveExecuteStrategy(PricingResult result) {
-        if (result.getExecuteStrategy() != null && !result.getExecuteStrategy().isBlank()) {
-            return result.getExecuteStrategy();
-        }
-        return Objects.equals(result.getReviewRequired(), 1) ? "MANUAL_REVIEW" : null;
+        return MANUAL_REVIEW_STRATEGY;
     }
 
     private String truncate(String value, int maxLength) {

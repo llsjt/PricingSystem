@@ -19,7 +19,7 @@ from app.schemas.task import (
 from app.services.context_service import ContextService
 from app.services.orchestration_service import OrchestrationService
 from app.utils.crypto_utils import encrypt_api_key, decrypt_api_key
-from app.utils.text_utils import is_manual_review_action, parse_constraints
+from app.utils.text_utils import MANUAL_REVIEW_STRATEGY, is_manual_review_action, parse_constraints
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +148,7 @@ class DispatchService:
                 expectedProfit=result_entity.expected_profit,
                 profitGrowth=result_entity.profit_growth,
                 isPass=(result_entity.is_pass == 1),
-                executeStrategy=result_entity.execute_strategy,
+                executeStrategy=MANUAL_REVIEW_STRATEGY,
                 resultSummary=result_entity.result_summary,
             )
 
@@ -171,6 +171,8 @@ class DispatchService:
         for item in logs:
             order = int(item.display_order or item.speak_order or 0)
             suggestion = item.suggestion_json if isinstance(item.suggestion_json, dict) else {}
+            if "strategy" in suggestion:
+                suggestion = {**suggestion, "strategy": MANUAL_REVIEW_STRATEGY}
             evidence = item.evidence_json if isinstance(item.evidence_json, list) else []
             thinking = item.thinking_summary or item.thought_content or ""
             action = str(suggestion.get("action") or "")

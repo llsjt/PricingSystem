@@ -19,6 +19,8 @@ ACTION_CN = {
     "MANUAL_REVIEW": "人工审核",
 }
 
+MANUAL_REVIEW_STRATEGY = "人工审核"
+
 
 def parse_constraints(raw: str) -> dict:
     text = (raw or "").strip()
