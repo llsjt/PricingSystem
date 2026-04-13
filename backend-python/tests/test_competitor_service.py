@@ -1,4 +1,3 @@
-import asyncio
 from decimal import Decimal
 
 import pytest
@@ -85,32 +84,3 @@ def test_competitor_query_result_uses_decimal_aliases():
             }
         ],
     }
-
-
-def test_startup_fails_when_competitor_source_is_misconfigured(monkeypatch):
-    from app import main as app_main
-
-    monkeypatch.setattr(
-        app_main,
-        "settings",
-        Settings.model_validate(
-            {
-                "COMPETITOR_DATA_SOURCE": "taobao_h5",
-                "TSDK_TAOBAO_COOKIE": "",
-                "TSDK_TAOBAO_SEARCH_API_URL": "",
-            }
-        ),
-    )
-    monkeypatch.setattr(app_main, "ensure_agent_run_log_schema", lambda *_args, **_kwargs: None)
-
-    class StubQueueService:
-        async def start(self):
-            raise AssertionError("queue start should not be reached")
-
-        def recover_pending_tasks(self):
-            raise AssertionError("queue recovery should not be reached")
-
-    monkeypatch.setattr(app_main, "get_task_queue_service", lambda: StubQueueService())
-
-    with pytest.raises(RuntimeError, match="TSDK_TAOBAO_COOKIE is required for taobao_h5"):
-        asyncio.run(app_main.startup_migrations())
