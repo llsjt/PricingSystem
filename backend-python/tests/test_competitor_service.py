@@ -32,6 +32,18 @@ class _FakeProvider:
         return dict(self.result)
 
 
+class _ExplodingProvider:
+    def fetch(
+        self,
+        *,
+        product_id: int,
+        product_title: str | None,
+        category_name: str | None,
+        current_price: Decimal,
+    ) -> dict:
+        raise RuntimeError("boom")
+
+
 def test_competitor_settings_defaults_to_simulation_source():
     settings = Settings.model_validate({})
 
@@ -231,3 +243,23 @@ def test_competitor_service_does_not_fallback_to_snapshot_when_real_source_fails
     assert result["sourceStatus"] == "FAILED"
     assert result["source"] == "TAOBAO_H5"
     assert result["competitors"] == []
+
+
+def test_competitor_service_returns_failed_result_when_provider_raises_exception():
+    service = CompetitorService(
+        data_source="taobao_h5",
+        providers={"taobao_h5": _ExplodingProvider()},
+    )
+
+    result = service.get_competitor_result(
+        product_id=1,
+        product_title="咖啡",
+        category_name="饮品",
+        current_price=Decimal("29.90"),
+    )
+
+    assert result["sourceStatus"] == "FAILED"
+    assert result["source"] == "TAOBAO_H5"
+    assert result["rawItemCount"] == 0
+    assert result["competitors"] == []
+    assert "RuntimeError" in result["message"]

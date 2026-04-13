@@ -114,6 +114,17 @@ class CompetitorService:
             )
         return result.model_dump(by_alias=True)
 
+    def _build_failed_result(self, *, source: str, message: str) -> dict[str, Any]:
+        return CompetitorQueryResult.model_validate(
+            {
+                "sourceStatus": "FAILED",
+                "source": source,
+                "message": message,
+                "rawItemCount": 0,
+                "competitors": [],
+            }
+        ).model_dump(by_alias=True)
+
     def get_competitor_result(
         self,
         product_id: int,
@@ -121,14 +132,23 @@ class CompetitorService:
         category_name: str | None,
         current_price: Decimal,
     ) -> dict[str, Any]:
-        return self._normalize_result(
-            self._resolve_provider().fetch(
+        provider = self._resolve_provider()
+        try:
+            raw_result = provider.fetch(
                 product_id=product_id,
                 product_title=product_title,
                 category_name=category_name,
                 current_price=current_price,
             )
-        )
+        except Exception as exc:
+            source = str(self.data_source).upper()
+            if hasattr(provider, "source"):
+                source = str(getattr(provider, "source") or source)
+            return self._build_failed_result(
+                source=source,
+                message=f"provider exception: {type(exc).__name__}: {exc}",
+            )
+        return self._normalize_result(raw_result)
 
     def get_competitors(
         self,
