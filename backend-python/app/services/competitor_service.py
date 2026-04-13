@@ -84,7 +84,7 @@ class CompetitorService:
                 "price": float((base * Decimal("0.88")).quantize(Decimal("0.01"))),
                 "originalPrice": float((base * Decimal("1.00")).quantize(Decimal("0.01"))),
                 "salesVolumeHint": "近30天销量约5800",
-                "promotionTag": "直播专享价",
+                "promotionTag": "直播专享券",
                 "shopType": None,
                 "sourcePlatform": "抖音",
             },
