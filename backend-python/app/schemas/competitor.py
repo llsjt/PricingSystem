@@ -1,4 +1,5 @@
 from typing import Literal
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -7,8 +8,8 @@ class CompetitorItem(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     competitor_name: str = Field(alias="competitorName")
-    price: float
-    original_price: float | None = Field(default=None, alias="originalPrice")
+    price: Decimal
+    original_price: Decimal | None = Field(default=None, alias="originalPrice")
     sales_volume_hint: str | None = Field(default=None, alias="salesVolumeHint")
     promotion_tag: str | None = Field(default=None, alias="promotionTag")
     shop_type: str | None = Field(default=None, alias="shopType")

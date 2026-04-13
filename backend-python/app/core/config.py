@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,7 +35,7 @@ class Settings(BaseSettings):
     agent_poll_interval_ms: int = Field(default=500, alias="AGENT_POLL_INTERVAL_MS")
     agent_max_retries: int = Field(default=2, alias="AGENT_MAX_RETRIES")
 
-    competitor_data_source: str = Field(default="simulation", alias="COMPETITOR_DATA_SOURCE")
+    competitor_data_source: Literal["simulation", "taobao_h5"] = Field(default="simulation", alias="COMPETITOR_DATA_SOURCE")
     tsdk_taobao_cookie: str = Field(default="", alias="TSDK_TAOBAO_COOKIE")
     tsdk_taobao_search_api_url: str = Field(default="", alias="TSDK_TAOBAO_SEARCH_API_URL")
     tsdk_crawler_timeout_seconds: int = Field(default=8, alias="TSDK_CRAWLER_TIMEOUT_SECONDS")
@@ -82,7 +83,7 @@ class Settings(BaseSettings):
 
     def validate_competitor_source(self) -> list[str]:
         problems: list[str] = []
-        if self.competitor_data_source.strip().lower() != "taobao_h5":
+        if self.competitor_data_source != "taobao_h5":
             return problems
 
         if not self.tsdk_taobao_cookie.strip():

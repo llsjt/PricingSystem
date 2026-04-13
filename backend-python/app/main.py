@@ -47,6 +47,9 @@ async def trace_logging_middleware(request: Request, call_next):
 @app.on_event("startup")
 async def startup_migrations() -> None:
     settings.validate_production_safety()
+    competitor_problems = settings.validate_competitor_source()
+    if competitor_problems:
+        raise RuntimeError("Unsafe competitor configuration: " + ", ".join(competitor_problems))
     ensure_agent_run_log_schema(settings.mysql_db)
     queue_service = get_task_queue_service()
     await queue_service.start()
