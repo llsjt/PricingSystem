@@ -45,6 +45,9 @@ public class AgentRunLog {
     @TableField("display_order")
     private Integer displayOrder;
 
+    @TableField("stage")
+    private String stage;
+
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 }

@@ -7,7 +7,7 @@ from app.models.agent_run_log import AgentRunLog
 
 
 class LogRepo:
-    """Agent 日志仓储：MVP 阶段按“1 条日志 = 1 张完整卡片”写入。"""
+    """Agent 日志仓储：写入 running 占位卡片和 completed 完整卡片。"""
 
     def __init__(self, db: Session):
         self.db = db
@@ -46,6 +46,32 @@ class LogRepo:
             suggestion_json=suggestion or {},
             final_reason=reason_why,
             display_order=order,
+            stage="completed",
+        )
+        self.db.add(log)
+        self.db.commit()
+        self.db.refresh(log)
+        return log
+
+    def append_running_card(
+        self,
+        task_id: int,
+        agent_name: str,
+        display_order: int,
+    ) -> AgentRunLog:
+        """写入 running 占位卡片，表示 Agent 正在工作。"""
+        order = int(display_order or self.get_next_display_order(task_id))
+        log = AgentRunLog(
+            task_id=task_id,
+            role_name=(agent_name or "Agent").strip() or "Agent",
+            speak_order=order,
+            thought_content=None,
+            thinking_summary=None,
+            evidence_json=[],
+            suggestion_json={},
+            final_reason=None,
+            display_order=order,
+            stage="running",
         )
         self.db.add(log)
         self.db.commit()

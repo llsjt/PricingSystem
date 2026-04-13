@@ -19,4 +19,5 @@ class AgentRunLog(Base):
     suggestion_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     final_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     display_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    stage: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'completed'"))
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))

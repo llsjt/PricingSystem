@@ -71,23 +71,36 @@
         <article v-for="agent in agents" :key="agent.code" class="agent-box">
           <div class="agent-head">
             <h3>{{ agent.order }}. {{ agent.name }}</h3>
-            <el-tag size="small" :type="state.cards[agent.code] ? 'success' : waitingOrder === agent.order ? 'warning' : 'info'">
-              {{ state.cards[agent.code] ? '已完成' : waitingOrder === agent.order ? '分析中' : '等待中' }}
+            <el-tag size="small" :type="isCardCompleted(agent.code) ? 'success' : isCardRunning(agent.code) ? 'warning' : 'info'">
+              {{ isCardCompleted(agent.code) ? '已完成' : isCardRunning(agent.code) ? '分析中' : '等待中' }}
             </el-tag>
           </div>
-          <template v-if="state.cards[agent.code]">
+          <template v-if="isCardCompleted(agent.code)">
             <h4>思考过程</h4>
-            <p class="thinking">{{ state.cards[agent.code]?.thinking || '-' }}</p>
-            <h4>依据</h4>
-            <ul><li v-for="(line, index) in evidenceLines(agent.code)" :key="`${agent.code}-e-${index}`">{{ line }}</li></ul>
-            <h4>建议</h4>
-            <ul><li v-for="(line, index) in suggestionLines(agent.code)" :key="`${agent.code}-s-${index}`">{{ line }}</li></ul>
-            <template v-if="agent.code === 'MANAGER_COORDINATOR' && state.cards[agent.code]?.reasonWhy">
+            <TypewriterText v-if="shouldAnimate(agent.code)" :text="state.cards[agent.code]?.thinking || '-'" :speed="typewriterSpeed" class="thinking" @done="markThinkingDone(agent.code)" />
+            <p v-else class="thinking">{{ state.cards[agent.code]?.thinking || '-' }}</p>
+            <h4 v-if="canShowEvidence(agent.code)">依据</h4>
+            <ul v-if="canShowEvidence(agent.code)">
+              <li v-for="(line, index) in visibleEvidenceLines(agent.code)" :key="`${agent.code}-e-${index}`" :class="{ 'fade-in-item': shouldAnimate(agent.code) }">
+                <TypewriterText v-if="isActiveEvidenceLine(agent.code, index)" :text="line" :speed="typewriterSpeed" @done="markEvidenceLineDone(agent.code)" />
+                <span v-else>{{ line }}</span>
+              </li>
+            </ul>
+            <h4 v-if="canShowSuggestion(agent.code)">建议</h4>
+            <ul v-if="canShowSuggestion(agent.code)">
+              <li v-for="(line, index) in visibleSuggestionLines(agent.code)" :key="`${agent.code}-s-${index}`" :class="{ 'fade-in-item': shouldAnimate(agent.code) }">
+                <TypewriterText v-if="isActiveSuggestionLine(agent.code, index)" :text="line" :speed="typewriterSpeed" @done="markSuggestionLineDone(agent.code)" />
+                <span v-else>{{ line }}</span>
+              </li>
+            </ul>
+            <template v-if="canShowSuggestion(agent.code) && agent.code === 'MANAGER_COORDINATOR' && state.cards[agent.code]?.reasonWhy">
               <h4>为什么给出这个建议</h4>
-              <p>{{ state.cards[agent.code]?.reasonWhy }}</p>
+              <TypewriterText v-if="shouldAnimate(agent.code)" :text="state.cards[agent.code]?.reasonWhy || ''" :speed="typewriterSpeed" />
+              <p v-else>{{ state.cards[agent.code]?.reasonWhy }}</p>
             </template>
           </template>
-          <div v-else-if="isRunning(state.taskStatus) && waitingOrder === agent.order" class="waiting">正在分析中，请稍候...</div>
+          <div v-else-if="isCardRunning(agent.code)" class="waiting running-pulse"><span class="pulse-dot"></span> 正在分析中...</div>
+          <div v-else-if="isRunning(state.taskStatus) && waitingOrder === agent.order" class="waiting">等待前序Agent完成...</div>
           <el-empty v-else description="等待该 Agent 输出结果" :image-size="80" />
         </article>
       </div>
@@ -129,6 +142,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { applyDecision, cancelPricingTask, createPricingTask, getPricingTaskSnapshot, getPricingTaskStreamUrl, type AgentCardContent, type DecisionComparisonItem, type DecisionLogItem, type PricingAgentCode, type PricingTaskSnapshot, type PricingTaskStatus, type PricingTaskStreamMessage } from '../api/decision'
 import { getProductList } from '../api/product'
@@ -137,15 +151,22 @@ import { useShopStore } from '../stores/shop'
 import { getAuthToken } from '../utils/authSession'
 import { sanitizeErrorMessage } from '../utils/error'
 import { hasConfiguredLlmApiKey } from '../utils/llmConfigResponse'
+import TypewriterText from '../components/TypewriterText.vue'
 
 interface ApiResponse<T> { code: number; data: T; message?: string }
 interface ProductOption { id: number; productName: string }
+type AgentStage = 'running' | 'completed'
+type AgentRevealStage = 'thinking' | 'evidence' | 'suggestion' | 'done'
+interface RevealLineCounts { evidence: number; suggestion: number }
+type InternalAgentCardContent = AgentCardContent & { __stage?: AgentStage }
 
 const agents = [{ code: 'DATA_ANALYSIS', name: '数据分析Agent', order: 1 }, { code: 'MARKET_INTEL', name: '市场情报Agent', order: 2 }, { code: 'RISK_CONTROL', name: '风险控制Agent', order: 3 }, { code: 'MANAGER_COORDINATOR', name: '经理协调Agent', order: 4 }] as const
 const goalOptions = [{ label: 'MAX_PROFIT', name: '利润优先' }, { label: 'CLEARANCE', name: '清仓促销' }, { label: 'MARKET_SHARE', name: '市场份额优先' }] as const
-const emptyCards = () => ({ DATA_ANALYSIS: null, MARKET_INTEL: null, RISK_CONTROL: null, MANAGER_COORDINATOR: null }) as Record<PricingAgentCode, AgentCardContent | null>
+const emptyCards = () => ({ DATA_ANALYSIS: null, MARKET_INTEL: null, RISK_CONTROL: null, MANAGER_COORDINATOR: null }) as Record<PricingAgentCode, InternalAgentCardContent | null>
+const typewriterSpeed = 45
 
 const shopStore = useShopStore()
+const router = useRouter()
 const taskConfig = reactive({ platform: '', shopId: undefined as number | undefined, productId: undefined as number | undefined, strategyGoal: 'MAX_PROFIT' as typeof goalOptions[number]['label'], constraints: '' })
 const state = reactive({ taskStatus: 'IDLE' as PricingTaskStatus, cards: emptyCards(), finalPrice: null as number | null, strategy: '', finalSummary: '', errorMessage: '' })
 const productOptions = ref<ProductOption[]>([])
@@ -160,6 +181,18 @@ const hasLlmConfig = ref(false)
 let aborter: AbortController | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let loadToken = 0
+const streamArrivedCards = reactive(new Set<PricingAgentCode>())
+const revealStages = reactive({} as Partial<Record<PricingAgentCode, AgentRevealStage>>)
+const revealLineCounts = reactive({} as Partial<Record<PricingAgentCode, RevealLineCounts>>)
+
+const normalizeCard = (card?: AgentCardContent | null): InternalAgentCardContent => ({ thinking: String(card?.thinking || ''), evidence: Array.isArray(card?.evidence) ? card.evidence : [], suggestion: card?.suggestion && typeof card.suggestion === 'object' ? card.suggestion : {}, reasonWhy: card?.reasonWhy || null, __stage: 'completed' })
+const runningCard = (): InternalAgentCardContent => ({ thinking: '', evidence: [], suggestion: {}, reasonWhy: null, __stage: 'running' })
+const isCardRunning = (code: PricingAgentCode) => state.cards[code]?.__stage === 'running'
+const isCardCompleted = (code: PricingAgentCode) => Boolean(state.cards[code] && state.cards[code]?.__stage !== 'running')
+const shouldAnimate = (code: PricingAgentCode) => streamArrivedCards.has(code)
+const canShowEvidence = (code: PricingAgentCode) => !shouldAnimate(code) || revealStages[code] === 'evidence' || revealStages[code] === 'suggestion' || revealStages[code] === 'done'
+const canShowSuggestion = (code: PricingAgentCode) => !shouldAnimate(code) || revealStages[code] === 'suggestion' || revealStages[code] === 'done'
+const completedCardCount = computed(() => agents.filter((agent) => isCardCompleted(agent.code)).length)
 
 const platformOptions = computed(() => Array.from(new Set(shopStore.shops.map((shop) => String(shop.platform || '').trim()).filter(Boolean))))
 const availableShops = computed(() => shopStore.shops.filter((shop) => shop.platform === taskConfig.platform))
@@ -167,7 +200,7 @@ const canSearchProducts = computed(() => Boolean(taskConfig.platform && taskConf
 const productPlaceholder = computed(() => !taskConfig.platform ? '请先选择平台' : !taskConfig.shopId ? '请先选择店铺' : '输入商品名称搜索')
 const canCancelTask = computed(() => Boolean(taskId.value && ['QUEUED', 'RUNNING', 'RETRYING'].includes(state.taskStatus)))
 const canReconfigureTask = computed(() => state.taskStatus === 'CANCELLED')
-const canViewReport = computed(() => ['COMPLETED', 'MANUAL_REVIEW'].includes(state.taskStatus) || Object.values(state.cards).filter(Boolean).length === agents.length)
+const canViewReport = computed(() => ['COMPLETED', 'MANUAL_REVIEW'].includes(state.taskStatus) || completedCardCount.value === agents.length)
 const stepBarActive = computed(() => activeStep.value === 2 ? 3 : activeStep.value === 1 ? 2 : 1)
 const waitingOrder = computed(() => isRunning(state.taskStatus) ? (agents.find((agent) => !state.cards[agent.code])?.order || 0) : 0)
 const statusLabel = computed(() => ({ IDLE: '未开始', PENDING: '待执行', QUEUED: '待执行', RUNNING: '执行中', RETRYING: '重试中', MANUAL_REVIEW: '人工审核', COMPLETED: '已完成', FAILED: '失败', CANCELLED: '已取消' }[state.taskStatus] || state.taskStatus))
@@ -182,12 +215,54 @@ const currency = (value: unknown) => { const n = numberOf(value); return n == nu
 const signedCurrency = (value: unknown) => { const n = numberOf(value); return n == null ? '-' : `${n >= 0 ? '+' : '-'}${currency(Math.abs(n))}` }
 const isRunning = (status: PricingTaskStatus) => ['PENDING', 'QUEUED', 'RUNNING', 'RETRYING'].includes(status)
 const isTerminal = (status: PricingTaskStatus) => ['COMPLETED', 'MANUAL_REVIEW', 'FAILED', 'CANCELLED'].includes(status)
-const normalizeCard = (card?: AgentCardContent | null): AgentCardContent => ({ thinking: String(card?.thinking || ''), evidence: Array.isArray(card?.evidence) ? card.evidence : [], suggestion: card?.suggestion && typeof card.suggestion === 'object' ? card.suggestion : {}, reasonWhy: card?.reasonWhy || null })
+const isArchivedTaskStatus = (status: PricingTaskStatus) => ['COMPLETED', 'MANUAL_REVIEW'].includes(status)
 const stopRealtime = () => { if (aborter) { aborter.abort(); aborter = null } if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
-const resetState = () => { stopRealtime(); taskId.value = null; state.taskStatus = 'IDLE'; state.cards = emptyCards(); state.finalPrice = null; state.strategy = ''; state.finalSummary = ''; state.errorMessage = ''; comparisonData.value = []; archiveReportSummary.value = '' }
+const clearRevealState = () => { agents.forEach((agent) => { delete revealStages[agent.code]; delete revealLineCounts[agent.code] }) }
+const ensureRevealLineCounts = (code: PricingAgentCode) => {
+  if (!revealLineCounts[code]) revealLineCounts[code] = { evidence: 0, suggestion: 0 }
+  return revealLineCounts[code] as RevealLineCounts
+}
+const beginReveal = (code: PricingAgentCode) => { revealStages[code] = 'thinking'; revealLineCounts[code] = { evidence: 0, suggestion: 0 } }
+const markThinkingDone = (code: PricingAgentCode) => {
+  if (!shouldAnimate(code) || revealStages[code] !== 'thinking') return
+  revealStages[code] = 'evidence'
+  ensureRevealLineCounts(code).evidence = 1
+}
+const resetState = () => { stopRealtime(); clearRevealState(); taskId.value = null; state.taskStatus = 'IDLE'; state.cards = emptyCards(); state.finalPrice = null; state.strategy = ''; state.finalSummary = ''; state.errorMessage = ''; comparisonData.value = []; archiveReportSummary.value = ''; streamArrivedCards.clear() }
 const evidenceLines = (code: PricingAgentCode) => (state.cards[code]?.evidence || []).map((item, i) => `${String(item.label || `依据${i + 1}`)}：${item.value == null ? '-' : typeof item.value === 'object' ? JSON.stringify(item.value) : String(item.value)}`).length ? (state.cards[code]?.evidence || []).map((item, i) => `${String(item.label || `依据${i + 1}`)}：${item.value == null ? '-' : typeof item.value === 'object' ? JSON.stringify(item.value) : String(item.value)}`) : ['暂无依据']
 const suggestionKeyMap: Record<string, string> = { summary: '建议说明', recommendedPrice: '建议定价', expectedSales: '预期销量', expectedProfit: '预期利润', expectedProfitRate: '预期利润率', marketScore: '市场接受度评分', pass: '是否自动通过', riskLevel: '风险等级', action: '建议动作', finalPrice: '最终建议价', strategy: '执行策略', error: '是否异常', message: '异常信息' }
 const suggestionLines = (code: PricingAgentCode) => { const s = state.cards[code]?.suggestion || {}; const lines: string[] = []; const range = s.priceRange as Record<string, unknown> | undefined; if (range && numberOf(range.min) != null && numberOf(range.max) != null) lines.push(`建议价格区间：${currency(range.min)} ~ ${currency(range.max)}`); for (const [key, value] of Object.entries(s)) { if (key === 'priceRange' || value == null) continue; const label = suggestionKeyMap[key] || key; const display = typeof value === 'boolean' ? (value ? '是' : '否') : typeof value === 'number' ? (key.includes('Rate') ? `${(value * 100).toFixed(2)}%` : key.includes('Price') || key.includes('Profit') ? `¥${value}` : String(value)) : String(value); lines.push(`${label}：${display}`) } return lines.length ? lines : ['暂无建议'] }
+const visibleEvidenceLines = (code: PricingAgentCode) => {
+  const lines = evidenceLines(code)
+  if (!shouldAnimate(code) || revealStages[code] === 'suggestion' || revealStages[code] === 'done') return lines
+  return lines.slice(0, Math.max(ensureRevealLineCounts(code).evidence, 1))
+}
+const visibleSuggestionLines = (code: PricingAgentCode) => {
+  const lines = suggestionLines(code)
+  if (!shouldAnimate(code) || revealStages[code] === 'done') return lines
+  return lines.slice(0, Math.max(ensureRevealLineCounts(code).suggestion, 1))
+}
+const isActiveEvidenceLine = (code: PricingAgentCode, index: number) => shouldAnimate(code) && revealStages[code] === 'evidence' && index === visibleEvidenceLines(code).length - 1
+const isActiveSuggestionLine = (code: PricingAgentCode, index: number) => shouldAnimate(code) && revealStages[code] === 'suggestion' && index === visibleSuggestionLines(code).length - 1
+const markEvidenceLineDone = (code: PricingAgentCode) => {
+  if (!shouldAnimate(code) || revealStages[code] !== 'evidence') return
+  const counts = ensureRevealLineCounts(code)
+  if (counts.evidence < evidenceLines(code).length) {
+    counts.evidence += 1
+    return
+  }
+  revealStages[code] = 'suggestion'
+  counts.suggestion = 1
+}
+const markSuggestionLineDone = (code: PricingAgentCode) => {
+  if (!shouldAnimate(code) || revealStages[code] !== 'suggestion') return
+  const counts = ensureRevealLineCounts(code)
+  if (counts.suggestion < suggestionLines(code).length) {
+    counts.suggestion += 1
+    return
+  }
+  revealStages[code] = 'done'
+}
 
 const onPlatformChange = async () => { taskConfig.shopId = undefined; taskConfig.productId = undefined; productOptions.value = []; if (availableShops.value.length === 1) { taskConfig.shopId = availableShops.value[0].id; await loadProducts() } }
 const onShopChange = async () => { taskConfig.productId = undefined; productOptions.value = []; if (taskConfig.shopId) await loadProducts() }
@@ -195,25 +270,29 @@ const searchProducts = (keyword: string) => { void loadProducts(keyword) }
 const loadProducts = async (keyword = '') => { const token = ++loadToken; if (!canSearchProducts.value) return; searchLoading.value = true; try { const res = await getProductList({ page: 1, size: 100, keyword, platform: taskConfig.platform || undefined, shopId: taskConfig.shopId }) as ApiResponse<{ records: Array<{ id: number; productName: string }> }>; if (token !== loadToken) return; productOptions.value = Array.isArray(res.data?.records) ? res.data.records.map((item) => ({ id: Number(item.id), productName: String(item.productName || '') })) : [] } finally { if (token === loadToken) searchLoading.value = false } }
 
 const applySnapshotDetail = (detail?: PricingTaskSnapshot['detail'] | null) => { if (!detail) return; state.taskStatus = (detail.taskStatus || 'RUNNING') as PricingTaskStatus; state.finalPrice = detail.finalPrice != null ? Number(detail.finalPrice) : null; state.strategy = String(detail.strategy || ''); state.finalSummary = String(detail.finalSummary || '') }
-const applySnapshotLogs = (logs: DecisionLogItem[]) => { const cards = emptyCards(); logs.sort((a, b) => Number(a.displayOrder || a.runOrder || 0) - Number(b.displayOrder || b.runOrder || 0)).forEach((log) => { const code = String(log.agentCode || '') as PricingAgentCode; if (code in cards) cards[code] = normalizeCard({ thinking: String(log.thinking || log.outputSummary || ''), evidence: log.evidence || [], suggestion: log.suggestion || {}, reasonWhy: log.reasonWhy || null }) }); state.cards = cards }
+const applySnapshotLogs = (logs: DecisionLogItem[]) => { const cards = emptyCards(); logs.sort((a, b) => Number(a.displayOrder || a.runOrder || 0) - Number(b.displayOrder || b.runOrder || 0) || Number(a.id || 0) - Number(b.id || 0)).forEach((log) => { const code = String(log.agentCode || '') as PricingAgentCode; if (!(code in cards)) return; if (log.stage === 'running') { if (!cards[code]) cards[code] = runningCard(); return } cards[code] = normalizeCard({ thinking: String(log.thinking || log.outputSummary || ''), evidence: log.evidence || [], suggestion: log.suggestion || {}, reasonWhy: log.reasonWhy || null }) }); state.cards = cards }
 const applySnapshotComparison = (comparison: DecisionComparisonItem[]) => { comparisonData.value = comparison; archiveReportSummary.value = comparisonData.value.find((row) => String(row.resultSummary || '').trim())?.resultSummary || '' }
 const loadSnapshot = async (id: number) => { const res = await getPricingTaskSnapshot(id) as ApiResponse<PricingTaskSnapshot>; if (res.code !== 200 || !res.data) return; applySnapshotDetail(res.data.detail); applySnapshotLogs(Array.isArray(res.data.logs) ? res.data.logs : []); applySnapshotComparison(Array.isArray(res.data.comparison) ? res.data.comparison : []) }
+const openExistingTaskArchive = async (id: number) => {
+  ElMessage.info('该任务已经执行过，已为你打开决策档案详情')
+  await router.push({ path: '/archive', query: { taskId: String(id) } })
+}
 
-const handleStream = async (payload: PricingTaskStreamMessage) => { if (payload.type === 'task_started') state.taskStatus = (payload.status || 'RUNNING') as PricingTaskStatus; if (payload.type === 'agent_card') { const code = payload.agentCode as PricingAgentCode; if (code in state.cards) state.cards[code] = normalizeCard(payload.card) } if (payload.type === 'task_completed') { state.taskStatus = (payload.status || 'COMPLETED') as PricingTaskStatus; if (payload.result) { state.finalPrice = numberOf(payload.result.finalPrice); state.strategy = String(payload.result.strategy || state.strategy || ''); state.finalSummary = String(payload.result.summary || state.finalSummary || '') } if (taskId.value) await loadSnapshot(taskId.value); stopRealtime(); ElMessage[state.taskStatus === 'MANUAL_REVIEW' ? 'warning' : 'success'](state.taskStatus === 'MANUAL_REVIEW' ? '任务已完成，当前结果需要人工审核' : '智能决策已完成，可以查看结果报告') } if (payload.type === 'task_failed') { state.taskStatus = (payload.status || 'FAILED') as PricingTaskStatus; state.errorMessage = sanitizeErrorMessage(payload.message, state.taskStatus === 'CANCELLED' ? '任务已取消' : '任务执行失败'); if (taskId.value) await loadSnapshot(taskId.value); stopRealtime(); ElMessage[state.taskStatus === 'CANCELLED' || state.taskStatus === 'MANUAL_REVIEW' ? 'warning' : 'error'](state.errorMessage) } }
+const handleStream = async (payload: PricingTaskStreamMessage) => { if (payload.type === 'task_started') state.taskStatus = (payload.status || 'RUNNING') as PricingTaskStatus; if (payload.type === 'agent_card') { const code = payload.agentCode as PricingAgentCode; if (code in state.cards) { if (payload.stage === 'running') { if (!state.cards[code]) state.cards[code] = runningCard() } else { streamArrivedCards.add(code); beginReveal(code); state.cards[code] = normalizeCard(payload.card) } } } if (payload.type === 'task_completed') { state.taskStatus = (payload.status || 'COMPLETED') as PricingTaskStatus; if (payload.result) { state.finalPrice = numberOf(payload.result.finalPrice); state.strategy = String(payload.result.strategy || state.strategy || ''); state.finalSummary = String(payload.result.summary || state.finalSummary || '') } if (taskId.value) await loadSnapshot(taskId.value); stopRealtime(); ElMessage[state.taskStatus === 'MANUAL_REVIEW' ? 'warning' : 'success'](state.taskStatus === 'MANUAL_REVIEW' ? '任务已完成，当前结果需要人工审核' : '智能决策已完成，可以查看结果报告') } if (payload.type === 'task_failed') { state.taskStatus = (payload.status || 'FAILED') as PricingTaskStatus; state.errorMessage = sanitizeErrorMessage(payload.message, state.taskStatus === 'CANCELLED' ? '任务已取消' : '任务执行失败'); if (taskId.value) await loadSnapshot(taskId.value); stopRealtime(); ElMessage[state.taskStatus === 'CANCELLED' || state.taskStatus === 'MANUAL_REVIEW' ? 'warning' : 'error'](state.errorMessage) } }
 
 const startPolling = () => { if (pollTimer || !taskId.value) return; pollTimer = setInterval(async () => { if (!taskId.value) return; if (!isRunning(state.taskStatus)) { stopRealtime(); return } await loadSnapshot(taskId.value); if (isTerminal(state.taskStatus)) stopRealtime() }, 2000) }
 const startStream = async (id: number) => { stopRealtime(); aborter = new AbortController(); try { const response = await fetch(getPricingTaskStreamUrl(id), { method: 'GET', headers: { Accept: 'text/event-stream', Authorization: `Bearer ${getAuthToken()}` }, credentials: 'include', signal: aborter.signal }); if (!response.ok || !response.body) throw new Error('stream failed'); const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = ''; while (true) { const { done, value } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const chunks = buffer.split('\n\n'); buffer = chunks.pop() || ''; for (const chunk of chunks) { const data = chunk.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n'); if (!data) continue; try { await handleStream(JSON.parse(data) as PricingTaskStreamMessage) } catch {} } } } catch { if (taskId.value) await loadSnapshot(taskId.value) } finally { aborter = null } }
 
-const startTask = async () => { if (!taskConfig.platform) return ElMessage.warning('请选择平台'); if (!taskConfig.shopId) return ElMessage.warning('请选择店铺'); if (!taskConfig.productId) return ElMessage.warning('请选择一个商品'); starting.value = true; try { resetState(); state.taskStatus = 'QUEUED'; const res = await createPricingTask({ productId: taskConfig.productId, constraints: taskConfig.constraints, strategyGoal: taskConfig.strategyGoal }) as ApiResponse<number>; if (res.code !== 200 || !res.data) { state.taskStatus = 'FAILED'; state.errorMessage = sanitizeErrorMessage(res.message, '启动任务失败'); return ElMessage.error(state.errorMessage) } taskId.value = Number(res.data); activeStep.value = 1; await loadSnapshot(taskId.value); void startStream(taskId.value); startPolling(); ElMessage.success('任务已启动，进入智能决策阶段') } catch { state.taskStatus = 'FAILED'; state.errorMessage = '启动任务失败'; ElMessage.error(state.errorMessage) } finally { starting.value = false } }
+const startTask = async () => { if (!taskConfig.platform) return ElMessage.warning('请选择平台'); if (!taskConfig.shopId) return ElMessage.warning('请选择店铺'); if (!taskConfig.productId) return ElMessage.warning('请选择一个商品'); starting.value = true; try { resetState(); state.taskStatus = 'QUEUED'; const res = await createPricingTask({ productId: taskConfig.productId, constraints: taskConfig.constraints, strategyGoal: taskConfig.strategyGoal }) as ApiResponse<number>; if (res.code !== 200 || !res.data) { state.taskStatus = 'FAILED'; state.errorMessage = sanitizeErrorMessage(res.message, '启动任务失败'); return ElMessage.error(state.errorMessage) } taskId.value = Number(res.data); await loadSnapshot(taskId.value); if (isArchivedTaskStatus(state.taskStatus)) { await openExistingTaskArchive(taskId.value); return } activeStep.value = 1; void startStream(taskId.value); startPolling(); ElMessage.success('任务已启动，进入智能决策阶段') } catch { state.taskStatus = 'FAILED'; state.errorMessage = '启动任务失败'; ElMessage.error(state.errorMessage) } finally { starting.value = false } }
 const cancelTask = async () => { if (!taskId.value || !canCancelTask.value) return; try { await ElMessageBox.confirm('确认取消当前任务吗？', '取消任务', { type: 'warning', confirmButtonText: '确认取消', cancelButtonText: '继续执行' }); await loadSnapshot(taskId.value); if (!['QUEUED', 'RUNNING', 'RETRYING'].includes(state.taskStatus)) return ElMessage.warning(`当前任务状态为 ${statusLabel.value}，不支持取消`); const res = await cancelPricingTask(taskId.value); if (res.code !== 200) return ElMessage.error(sanitizeErrorMessage(res.message, '取消任务失败')); stopRealtime(); state.taskStatus = 'CANCELLED'; state.errorMessage = '任务已取消'; await loadSnapshot(taskId.value); ElMessage.warning('任务已取消') } catch (error) { if (error !== 'cancel') ElMessage.error('取消任务失败') } }
-const refreshSnapshot = async () => { if (!taskId.value) return; await loadSnapshot(taskId.value); if (isRunning(state.taskStatus) && !aborter) void startStream(taskId.value); if (isRunning(state.taskStatus)) startPolling(); ElMessage.success(`已刷新快照，当前已收到 ${Object.values(state.cards).filter(Boolean).length}/4 条分析结果`) }
+const refreshSnapshot = async () => { if (!taskId.value) return; await loadSnapshot(taskId.value); if (isRunning(state.taskStatus) && !aborter) void startStream(taskId.value); if (isRunning(state.taskStatus)) startPolling(); ElMessage.success(`已刷新快照，当前已完成 ${completedCardCount.value}/4 条分析结果`) }
 const resetTask = () => { resetState(); activeStep.value = 0 }
 const applyPrice = async (row: DecisionComparisonItem) => { const id = Number(row.resultId || 0); if (!id) return ElMessage.error('未找到可应用的结果记录'); try { await ElMessageBox.confirm(`确认将商品“${String(row.productTitle || '-')}”的售价更新为 ${currency(row.suggestedPrice)} 吗？`, '应用价格建议', { type: 'warning', confirmButtonText: '确认应用', cancelButtonText: '取消' }); applyingIds.value.push(id); const res = await applyDecision(id); if (res.code !== 200) return ElMessage.error(sanitizeErrorMessage(res.message, '应用失败')); ElMessage.success('价格建议已应用'); if (taskId.value) await loadSnapshot(taskId.value) } catch (error) { if (error !== 'cancel') ElMessage.error('应用失败') } finally { applyingIds.value = applyingIds.value.filter((item) => item !== id) } }
 
 onMounted(async () => { getLlmConfig().then((response) => { hasLlmConfig.value = hasConfiguredLlmApiKey(response) }).catch(() => { hasLlmConfig.value = false }); const loaded = await shopStore.fetchShops(); if (loaded && platformOptions.value.length === 1) { taskConfig.platform = platformOptions.value[0]; await onPlatformChange() } })
-onBeforeUnmount(() => stopRealtime())
+onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 </script>
 
 <style scoped>
-.llm-alert{margin-bottom:16px}.alert-link{color:#409eff;text-decoration:underline;margin-left:4px}.pricing-page{display:grid;gap:16px}.panel-card{padding:18px;border-radius:16px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05)}.section-head{display:flex;justify-content:space-between;gap:16px;margin-bottom:16px}.section-head h2{margin:0 0 6px;font-size:28px;color:#172033}.section-head p{margin:0;color:#6b7280}.config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 14px}.full-span{grid-column:1/-1}.toolbar{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.agent-list{display:grid;gap:14px}.agent-box{padding:18px;border-radius:14px;border:1px solid rgba(226,232,240,.9);background:linear-gradient(180deg,#fff 0%,#f8fbff 100%)}.agent-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:12px}.agent-head h3{margin:0;font-size:24px;color:#182236}.thinking{white-space:pre-wrap;line-height:1.8}.waiting{min-height:140px;display:grid;place-items:center;color:#64748b}.report-page,.metric-grid{display:grid;gap:12px}.metric-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.metric-card{padding:18px;border-radius:14px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05);display:grid;gap:8px}.metric-card span{font-size:13px;color:#64748b}.metric-card strong{font-size:24px;color:#172033}@media (max-width:1100px){.config-grid,.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:760px){.config-grid,.metric-grid{grid-template-columns:1fr}.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}}
+.llm-alert{margin-bottom:16px}.alert-link{color:#409eff;text-decoration:underline;margin-left:4px}.pricing-page{display:grid;gap:16px}.panel-card{padding:18px;border-radius:16px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05)}.section-head{display:flex;justify-content:space-between;gap:16px;margin-bottom:16px}.section-head h2{margin:0 0 6px;font-size:28px;color:#172033}.section-head p{margin:0;color:#6b7280}.config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 14px}.full-span{grid-column:1/-1}.toolbar{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.agent-list{display:grid;gap:14px}.agent-box{padding:18px;border-radius:14px;border:1px solid rgba(226,232,240,.9);background:linear-gradient(180deg,#fff 0%,#f8fbff 100%)}.agent-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:12px}.agent-head h3{margin:0;font-size:24px;color:#182236}.thinking{white-space:pre-wrap;line-height:1.8}.waiting{min-height:140px;display:grid;place-items:center;color:#64748b}.running-pulse{display:flex;align-items:center;justify-content:center;gap:8px;color:#e6a23c;font-size:15px}.pulse-dot{width:10px;height:10px;border-radius:50%;background:#e6a23c;animation:pulse 1.2s ease-in-out infinite}.fade-in-item{opacity:0;animation:fadeSlideIn .4s ease forwards}@keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.6);opacity:.4}}@keyframes fadeSlideIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}.report-page,.metric-grid{display:grid;gap:12px}.metric-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.metric-card{padding:18px;border-radius:14px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05);display:grid;gap:8px}.metric-card span{font-size:13px;color:#64748b}.metric-card strong{font-size:24px;color:#172033}@media (max-width:1100px){.config-grid,.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:760px){.config-grid,.metric-grid{grid-template-columns:1fr}.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}}
 </style>

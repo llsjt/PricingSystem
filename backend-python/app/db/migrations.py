@@ -61,6 +61,8 @@ def ensure_agent_run_log_schema(schema_name: str) -> None:
         statements.append("ADD COLUMN final_reason TEXT NULL COMMENT '最终建议原因(经理Agent)'")
     if "display_order" not in existing:
         statements.append("ADD COLUMN display_order INT NULL COMMENT '卡片展示顺序(1-4)'")
+    if "stage" not in existing:
+        statements.append("ADD COLUMN stage VARCHAR(20) NOT NULL DEFAULT 'completed' COMMENT '卡片阶段'")
 
     if statements:
         ddl = "ALTER TABLE agent_run_log " + ", ".join(statements)

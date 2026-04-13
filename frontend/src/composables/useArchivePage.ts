@@ -1,7 +1,9 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   applyDecision,
+  getPricingTaskDetail,
   getTaskComparison,
   getTaskList,
   getTaskLogs,
@@ -10,6 +12,7 @@ import {
   type DecisionLogItem,
   type DecisionTaskItem,
   type DecisionTaskStats,
+  type PricingTaskDetail,
   type PricingAgentCode
 } from '../api/decision'
 import { useEChart } from './useEChart'
@@ -110,6 +113,7 @@ const buildComparisonChartOption = (rows: DecisionComparisonItem[]) => ({
 })
 
 export const useArchivePage = () => {
+  const route = useRoute()
   const { width } = useViewport()
   const { chartRef, disposeChart, resizeChart, setChartOption } = useEChart()
 
@@ -124,6 +128,7 @@ export const useArchivePage = () => {
   const currentTask = ref<DecisionTaskItem | null>(null)
   const dateRange = ref<string[]>([])
   const applyingResultIds = ref<number[]>([])
+  const openedRouteTaskId = ref<number | null>(null)
   const stats = ref<DecisionTaskStats>({
     total: 0,
     completed: 0,
@@ -160,6 +165,7 @@ export const useArchivePage = () => {
   const orderedLogs = computed(() =>
     [...agentLogs.value]
       .filter((log) => !isCrewAiLog(log))
+      .filter((log) => log.stage !== 'running')
       .sort((left, right) => {
         const orderDiff = resolveLogOrder(left) - resolveLogOrder(right)
         if (orderDiff !== 0) return orderDiff
@@ -269,6 +275,47 @@ export const useArchivePage = () => {
     await Promise.all([fetchComparison(), fetchLogs()])
   }
 
+  const routeTaskId = () => {
+    const raw = Array.isArray(route.query.taskId) ? route.query.taskId[0] : route.query.taskId
+    const id = Number(raw)
+    return Number.isInteger(id) && id > 0 ? id : null
+  }
+
+  const toDecisionTaskItem = (detail: PricingTaskDetail): DecisionTaskItem => ({
+    id: Number(detail.taskId),
+    taskCode: `TASK-${detail.taskId}`,
+    productId: Number(detail.productId || 0),
+    productTitle: String(detail.productTitle || '-'),
+    currentPrice: Number(detail.currentPrice || 0),
+    suggestedMinPrice: detail.suggestedMinPrice,
+    suggestedMaxPrice: detail.suggestedMaxPrice,
+    finalPrice: detail.finalPrice,
+    taskStatus: String(detail.taskStatus || ''),
+    executeStrategy: detail.strategy,
+    createdAt: String(detail.createdAt || '')
+  })
+
+  const loadTaskItemById = async (taskId: number) => {
+    const existing = tasks.value.find((item) => Number(item.id) === taskId)
+    if (existing) return existing
+    const res: any = await getPricingTaskDetail(taskId)
+    if (res.code !== 200 || !res.data) {
+      ElMessage.error(res.message || '未找到对应的决策档案')
+      return null
+    }
+    return toDecisionTaskItem(res.data)
+  }
+
+  const openTaskFromRoute = async () => {
+    const taskId = routeTaskId()
+    if (!taskId) return
+    if (drawerVisible.value && openedRouteTaskId.value === taskId) return
+    const task = await loadTaskItemById(taskId)
+    if (!task) return
+    openedRouteTaskId.value = taskId
+    await viewDetails(task)
+  }
+
   const handleSearch = () => {
     queryParams.page = 1
     fetchTasks()
@@ -354,8 +401,13 @@ export const useArchivePage = () => {
     resizeChart()
   })
 
-  onMounted(() => {
-    fetchTasks()
+  onMounted(async () => {
+    await fetchTasks()
+    await openTaskFromRoute()
+  })
+
+  watch(() => route.query.taskId, () => {
+    void openTaskFromRoute()
   })
 
   return {

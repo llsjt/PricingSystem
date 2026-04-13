@@ -242,6 +242,17 @@ class OrchestrationService:
         task_outputs: list[dict[str, Any]] = []
         card_counter = [0]  # 使用列表以便在闭包中修改
 
+        def write_next_running_card(completed_idx: int) -> None:
+            next_idx = completed_idx + 1
+            if next_idx >= len(_AGENT_META):
+                return
+            next_meta = _AGENT_META[next_idx]
+            self.log_tool.write_running_card(
+                task_id=payload.task_id,
+                agent_name=next_meta["name"],
+                display_order=next_meta["order"],
+            )
+
         def on_task_done(task_output: Any) -> None:
             """
             Task 完成时的回调函数。
@@ -277,6 +288,7 @@ class OrchestrationService:
                         evidence=[{"label": "原始输出(截断)", "value": raw[:200]}],
                         suggestion={"error": True, "message": "输出解析失败"},
                     )
+                    write_next_running_card(idx)
                     return
 
                 task_outputs.append(parsed)
@@ -315,6 +327,7 @@ class OrchestrationService:
                     reason_why=reason_why,
                 )
                 logger.info("Agent [%s] 卡片已写入数据库", meta["name"])
+                write_next_running_card(idx)
 
             except Exception as exc:
                 # 回调异常不应中断 Crew 执行
@@ -331,6 +344,12 @@ class OrchestrationService:
             on_task_done=on_task_done,
         )
 
+        first_meta = _AGENT_META[0]
+        self.log_tool.write_running_card(
+            task_id=payload.task_id,
+            agent_name=first_meta["name"],
+            display_order=first_meta["order"],
+        )
         logger.info("Crew 启动执行 (task_id=%d)", payload.task_id)
         debug_log(f"[CrewAI] crew kickoff task_id={payload.task_id}")
         try:

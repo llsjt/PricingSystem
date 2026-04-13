@@ -7,7 +7,7 @@ from app.repos.task_repo import TaskRepo
 
 
 class LogWriterTool:
-    """统一日志写入工具：MVP 只写 Agent 卡片。"""
+    """统一日志写入工具：写入 Agent 进度占位和完整卡片。"""
 
     def __init__(self, db: Session):
         self.log_repo = LogRepo(db)
@@ -35,4 +35,20 @@ class LogWriterTool:
             evidence=evidence,
             suggestion=suggestion,
             reason_why=reason_why,
+        )
+
+    def write_running_card(
+        self,
+        task_id: int,
+        agent_name: str,
+        display_order: int,
+    ) -> None:
+        task = self.task_repo.get_by_id(task_id)
+        if task is None or str(task.task_status or "").upper() == "CANCELLED":
+            return
+
+        self.log_repo.append_running_card(
+            task_id=task_id,
+            agent_name=agent_name,
+            display_order=display_order,
         )

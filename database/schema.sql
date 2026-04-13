@@ -192,6 +192,7 @@ CREATE TABLE agent_run_log (
     suggestion_json JSON DEFAULT NULL COMMENT '建议结构化内容',
     final_reason TEXT DEFAULT NULL COMMENT '最终结论原因',
     display_order INT DEFAULT NULL COMMENT '界面展示顺序',
+    stage VARCHAR(20) NOT NULL DEFAULT 'completed' COMMENT '卡片阶段: running=正在分析, completed=已完成',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     KEY idx_agent_run_log_task_id (task_id),
     KEY idx_agent_run_log_task_order (task_id, speak_order),
@@ -256,6 +257,7 @@ INSERT INTO schema_migration_history (version, checksum, description, applied_at
     ('migration_20260329_simplify_agent_run_log', REPEAT('0', 64), 'baseline schema includes simplified agent log model', CURRENT_TIMESTAMP),
     ('migration_20260405_product_status_cn', REPEAT('0', 64), 'baseline schema includes localized product status', CURRENT_TIMESTAMP),
     ('migration_20260407_launch_hardening', REPEAT('0', 64), 'baseline schema includes launch hardening fields', CURRENT_TIMESTAMP),
-    ('migration_20260408_task_recovery', REPEAT('0', 64), 'baseline schema includes persisted task payload for recovery', CURRENT_TIMESTAMP);
+    ('migration_20260408_task_recovery', REPEAT('0', 64), 'baseline schema includes persisted task payload for recovery', CURRENT_TIMESTAMP),
+    ('migration_20260413_agent_stage', REPEAT('0', 64), 'baseline schema includes agent run log stage', CURRENT_TIMESTAMP);
 
 SET FOREIGN_KEY_CHECKS = 1;

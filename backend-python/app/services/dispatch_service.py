@@ -41,6 +41,16 @@ class DispatchService:
         }
         return mapping.get(int(order or 0), "UNKNOWN")
 
+    def _store_llm_config(self, task, req: DispatchTaskRequest) -> None:
+        if not req.llm_api_key:
+            return
+        task.llm_api_key_enc = encrypt_api_key(req.llm_api_key)
+        task.llm_base_url = req.llm_base_url
+        task.llm_model = req.llm_model
+        self.db.add(task)
+        self.db.commit()
+        self.db.refresh(task)
+
     def dispatch(self, req: DispatchTaskRequest, queue_service) -> DispatchTaskResponse:
         task = self.task_repo.get_by_id(req.task_id)
         if task is None:
@@ -50,6 +60,7 @@ class DispatchService:
         if status == "COMPLETED":
             return DispatchTaskResponse(accepted=True, taskId=req.task_id, status="COMPLETED", message="already completed")
         if status in {"RUNNING", "QUEUED", "RETRYING"}:
+            self._store_llm_config(task, req)
             return DispatchTaskResponse(accepted=True, taskId=req.task_id, status=status, message="already accepted")
         if not queue_service.can_accept():
             self.task_repo.update_status(task, "FAILED", failure_reason="worker queue is full")
@@ -57,10 +68,7 @@ class DispatchService:
 
         # 先写入 LLM 配置，再设为 QUEUED —— 保证 worker 领到任务时 Key 已在 DB 中
         # （Java 插入时状态为 PENDING，worker 只认 QUEUED，因此不存在竞态）
-        if req.llm_api_key:
-            task.llm_api_key_enc = encrypt_api_key(req.llm_api_key)
-            task.llm_base_url = req.llm_base_url
-            task.llm_model = req.llm_model
+        self._store_llm_config(task, req)
 
         self.task_repo.mark_queued(task, trace_id=req.trace_id)
 
@@ -188,8 +196,8 @@ class DispatchService:
                     agentName=item.role_name,
                     runOrder=order,
                     displayOrder=order,
-                    stage="completed",
-                    runStatus="success",
+                    stage=item.stage or "completed",
+                    runStatus="running" if item.stage == "running" else "success",
                     outputSummary=thinking,
                     needManualReview=is_manual_review_action(action),
                     thinking=thinking,

@@ -1,8 +1,10 @@
 package com.example.pricing.service;
 
+import com.example.pricing.entity.AgentRunLog;
 import com.example.pricing.entity.PricingResult;
 import com.example.pricing.entity.PricingTask;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Map;
@@ -62,6 +64,44 @@ class PricingTaskStreamServiceTest {
         assertEquals("thinking", payload.get("thinking"));
         assertEquals("人工审核", ((Map<?, ?>) payload.get("suggestion")).get("strategy"));
         assertNull(payload.get("reasonWhy"));
+    }
+
+    @Test
+    void runningAgentLogProducesRunningPayloadWithEmptyCard() {
+        PricingTaskStreamService service = new PricingTaskStreamService(null, null, null, null);
+        AgentRunLog log = new AgentRunLog();
+        log.setTaskId(10L);
+        log.setRoleName("数据分析Agent");
+        log.setDisplayOrder(1);
+        log.setStage("running");
+
+        Map<String, Object> payload = ReflectionTestUtils.invokeMethod(service, "toAgentCard", 10L, log);
+
+        assertEquals("agent_card", payload.get("type"));
+        assertEquals("DATA_ANALYSIS", payload.get("agentCode"));
+        assertEquals("running", payload.get("stage"));
+        Map<?, ?> card = (Map<?, ?>) payload.get("card");
+        assertEquals("", card.get("thinking"));
+        assertEquals(List.of(), card.get("evidence"));
+        assertEquals(Map.of(), card.get("suggestion"));
+    }
+
+    @Test
+    void onlyCompletedAgentLogsCountTowardCompletion() {
+        AgentRunLog running = new AgentRunLog();
+        running.setDisplayOrder(1);
+        running.setStage("running");
+
+        AgentRunLog completed = new AgentRunLog();
+        completed.setDisplayOrder(1);
+        completed.setStage("completed");
+
+        AgentRunLog legacy = new AgentRunLog();
+        legacy.setDisplayOrder(2);
+
+        assertFalse(PricingTaskStreamService.isCompletedAgentCard(running));
+        assertTrue(PricingTaskStreamService.isCompletedAgentCard(completed));
+        assertTrue(PricingTaskStreamService.isCompletedAgentCard(legacy));
     }
 
     @Test

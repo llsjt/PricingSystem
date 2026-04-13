@@ -81,7 +81,7 @@ public class PricingTaskStreamService {
                 for (AgentRunLog logItem : logs) {
                     send(emitter, toAgentCard(taskId, logItem));
                     int order = resolveDisplayOrder(logItem);
-                    if (order >= 1 && order <= EXPECTED_AGENT_CARD_COUNT) {
+                    if (order >= 1 && order <= EXPECTED_AGENT_CARD_COUNT && isCompletedAgentCard(logItem)) {
                         completedOrders.add(order);
                     }
                     lastLogId = logItem.getId() == null ? lastLogId : logItem.getId();
@@ -171,7 +171,16 @@ public class PricingTaskStreamService {
         payload.put("agentCode", agentCode);
         payload.put("agentName", item.getRoleName());
         payload.put("displayOrder", order);
-        payload.put("stage", "completed");
+        String stage = normalizeLogStage(item);
+        payload.put("stage", stage);
+        if ("running".equals(stage)) {
+            payload.put("card", Map.of(
+                    "thinking", "",
+                    "evidence", List.of(),
+                    "suggestion", Map.of()
+            ));
+            return payload;
+        }
         payload.put("card", buildCardPayload(
                 item.getThinkingSummary() == null || item.getThinkingSummary().isBlank() ? nullToEmpty(item.getThoughtContent()) : item.getThinkingSummary(),
                 parseJsonArray(item.getEvidenceJson()),
@@ -179,6 +188,18 @@ public class PricingTaskStreamService {
                 item.getFinalReason()
         ));
         return payload;
+    }
+
+    static boolean isCompletedAgentCard(AgentRunLog item) {
+        return "completed".equals(normalizeLogStage(item));
+    }
+
+    private static String normalizeLogStage(AgentRunLog item) {
+        String stage = item == null ? null : item.getStage();
+        if (stage == null || stage.isBlank()) {
+            return "completed";
+        }
+        return "running".equalsIgnoreCase(stage.trim()) ? "running" : "completed";
     }
 
     static Map<String, Object> buildCardPayload(

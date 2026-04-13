@@ -16,12 +16,14 @@ import com.example.pricing.vo.PricingTaskSnapshotVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -105,6 +107,42 @@ class DecisionTaskServiceImplTest {
     }
 
     @Test
+    void startTaskRefreshesLlmConfigWhenReusingActiveTask() {
+        Product product = new Product();
+        product.setId(221L);
+        product.setShopId(2L);
+        product.setCurrentPrice(new BigDecimal("250.06"));
+
+        UserLlmConfig llmConfig = new UserLlmConfig();
+        llmConfig.setUserId(1L);
+        llmConfig.setLlmApiKeyEnc(AesGcmUtil.encrypt("sk-current", TEST_LLM_SECRET));
+        llmConfig.setLlmBaseUrl("https://dashscope.aliyuncs.com/compatible-mode/v1");
+        llmConfig.setLlmModel("qwen3.5-122b-a10b");
+
+        PricingTask existing = new PricingTask();
+        existing.setId(114L);
+        existing.setShopId(2L);
+        existing.setProductId(221L);
+        existing.setTaskStatus("QUEUED");
+        existing.setTraceId("trace-existing");
+
+        when(shopService.getShopIdsByUser(1L)).thenReturn(List.of(2L));
+        when(productMapper.selectById(221L)).thenReturn(product);
+        when(userLlmConfigMapper.selectOne(any())).thenReturn(llmConfig);
+        when(taskMapper.selectOne(any())).thenReturn(existing);
+
+        Long taskId = service.startTask(List.of(221L), "MARKET_SHARE", "", 1L);
+
+        assertEquals(114L, taskId);
+        verify(taskMapper, never()).insert(any(PricingTask.class));
+        ArgumentCaptor<Map<String, Object>> payloadCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(pythonDispatchClient).dispatchTask(payloadCaptor.capture(), any());
+        assertEquals("sk-current", payloadCaptor.getValue().get("llmApiKey"));
+        assertEquals("https://dashscope.aliyuncs.com/compatible-mode/v1", payloadCaptor.getValue().get("llmBaseUrl"));
+        assertEquals("qwen3.5-122b-a10b", payloadCaptor.getValue().get("llmModel"));
+    }
+
+    @Test
     void cancelTaskMarksQueuedTaskAsCancelled() {
         PricingTask task = new PricingTask();
         task.setId(12L);
@@ -167,6 +205,7 @@ class DecisionTaskServiceImplTest {
         runLog.setTaskId(20L);
         runLog.setRoleName("数据分析Agent");
         runLog.setDisplayOrder(1);
+        runLog.setStage("completed");
         runLog.setThinkingSummary("thinking");
         runLog.setEvidenceJson("[{\"label\":\"x\",\"value\":1}]");
         runLog.setSuggestionJson("{\"summary\":\"fine\",\"strategy\":\"DIRECT\"}");
@@ -186,10 +225,36 @@ class DecisionTaskServiceImplTest {
 
         assertEquals(1, snapshot.getLogs().size());
         assertEquals("DATA_ANALYSIS", snapshot.getLogs().get(0).getAgentCode());
+        assertEquals("completed", snapshot.getLogs().get(0).getStage());
         assertEquals("人工审核", snapshot.getLogs().get(0).getSuggestion().get("strategy"));
 
         assertEquals(1, snapshot.getComparison().size());
         assertEquals(new BigDecimal("105.00"), snapshot.getComparison().get(0).getSuggestedPrice());
         assertEquals("人工审核", snapshot.getComparison().get(0).getExecuteStrategy());
+    }
+
+    @Test
+    void getTaskLogsReturnsRunningStageForRunningAgentPlaceholder() {
+        PricingTask task = new PricingTask();
+        task.setId(30L);
+        task.setShopId(9L);
+
+        AgentRunLog runLog = new AgentRunLog();
+        runLog.setId(2L);
+        runLog.setTaskId(30L);
+        runLog.setRoleName("市场情报Agent");
+        runLog.setDisplayOrder(2);
+        runLog.setStage("running");
+
+        when(shopService.getShopIdsByUser(77L)).thenReturn(List.of(9L));
+        when(taskMapper.selectById(30L)).thenReturn(task);
+        when(logMapper.selectList(any())).thenReturn(List.of(runLog));
+
+        var logs = service.getTaskLogs(30L, 77L);
+
+        assertEquals(1, logs.size());
+        assertEquals("MARKET_INTEL", logs.get(0).getAgentCode());
+        assertEquals("running", logs.get(0).getStage());
+        assertEquals("运行中", logs.get(0).getRunStatus());
     }
 }

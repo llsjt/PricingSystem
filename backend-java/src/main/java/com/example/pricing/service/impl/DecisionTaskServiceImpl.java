@@ -125,6 +125,15 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
 
         PricingTask existingTask = findReusableTask(idempotencyKey, product.getShopId());
         if (existingTask != null) {
+            refreshReusableTaskLlmConfigIfNeeded(
+                    existingTask,
+                    productId,
+                    productIds,
+                    normalizedGoal,
+                    normalizedConstraints,
+                    decryptedApiKey,
+                    llmConfig
+            );
             return existingTask.getId();
         }
 
@@ -199,8 +208,10 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
             vo.setAgentName(logItem.getRoleName());
             vo.setRunOrder(displayOrder);
             vo.setDisplayOrder(displayOrder);
-            vo.setStage("已完成");
-            vo.setRunStatus("成功");
+            String rawStage = logItem.getStage();
+            boolean running = rawStage != null && "running".equalsIgnoreCase(rawStage.trim());
+            vo.setStage(running ? "running" : "completed");
+            vo.setRunStatus(running ? "运行中" : "成功");
             vo.setOutputSummary(thinking);
             vo.setNeedManualReview(needManualReview);
             vo.setThinking(thinking);
@@ -584,8 +595,42 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     }
 
     /**
-     * 统一把金额字段规整为两位小数。
+     * 复用活跃任务时，补发当前用户 LLM 配置，避免旧任务缺少 worker 侧 Key。
      */
+    private void refreshReusableTaskLlmConfigIfNeeded(
+            PricingTask existingTask,
+            Long productId,
+            List<Long> productIds,
+            String strategyGoal,
+            String constraints,
+            String decryptedApiKey,
+            UserLlmConfig llmConfig
+    ) {
+        String status = String.valueOf(existingTask.getTaskStatus()).toUpperCase();
+        if (!List.of("QUEUED", "RUNNING", "RETRYING").contains(status)) {
+            return;
+        }
+        if (existingTask.getLlmApiKeyEnc() != null && !existingTask.getLlmApiKeyEnc().isBlank()) {
+            return;
+        }
+        try {
+            dispatchToPython(
+                    existingTask.getId(),
+                    productId,
+                    productIds,
+                    strategyGoal,
+                    constraints,
+                    existingTask.getTraceId(),
+                    decryptedApiKey,
+                    llmConfig.getLlmBaseUrl(),
+                    llmConfig.getLlmModel()
+            );
+        } catch (Exception e) {
+            log.error("Refresh LLM config for reusable task failed, taskId={}", existingTask.getId(), e);
+            throw new IllegalStateException("刷新复用任务的大模型配置失败: " + e.getMessage(), e);
+        }
+    }
+
     private PricingTask findReusableTask(String idempotencyKey, Long shopId) {
         LambdaQueryWrapper<PricingTask> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(PricingTask::getIdempotencyKey, idempotencyKey)

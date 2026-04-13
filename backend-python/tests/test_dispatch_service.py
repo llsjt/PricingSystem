@@ -8,6 +8,7 @@ from app.models.pricing_task import PricingTask
 from app.repos.task_repo import TaskRepo
 from app.schemas.task import DispatchTaskRequest
 from app.services.dispatch_service import DispatchService
+from app.utils.crypto_utils import decrypt_api_key
 
 
 class StubQueueService:
@@ -133,3 +134,37 @@ def test_handle_worker_failure_requeues_until_retry_budget_then_routes_to_manual
     assert refreshed.task_status == "MANUAL_REVIEW"
     assert refreshed.retry_count == 1
     assert refreshed.failure_reason == "second boom"
+
+
+def test_dispatch_refreshes_llm_config_for_already_queued_task():
+    db = build_session()
+    task = create_task(
+        db,
+        task_id=301,
+        status="QUEUED",
+        strategy_goal="MARKET_SHARE",
+        constraint_text="利润率不低于10%",
+    )
+    request = DispatchTaskRequest(
+        taskId=task.id,
+        productId=task.product_id,
+        productIds=[task.product_id],
+        strategyGoal=task.strategy_goal,
+        constraints=task.constraint_text,
+        traceId=task.trace_id,
+        llmApiKey="sk-current",
+        llmBaseUrl="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        llmModel="qwen3.5-122b-a10b",
+    )
+    service = DispatchService(db)
+
+    response = service.dispatch(request, StubQueueService())
+    refreshed = db.get(PricingTask, task.id)
+
+    assert response.accepted is True
+    assert response.status == "QUEUED"
+    assert refreshed is not None
+    assert refreshed.llm_api_key_enc is not None
+    assert decrypt_api_key(refreshed.llm_api_key_enc) == "sk-current"
+    assert refreshed.llm_base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert refreshed.llm_model == "qwen3.5-122b-a10b"
