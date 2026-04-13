@@ -1,8 +1,15 @@
 from decimal import Decimal
 from typing import Any
 
+from pydantic import ValidationError
+
 from app.core.config import get_settings
-from app.services.competitor_providers import CompetitorProvider, SnapshotCompetitorProvider
+from app.schemas.competitor import CompetitorQueryResult
+from app.services.competitor_providers import (
+    CompetitorProvider,
+    SnapshotCompetitorProvider,
+    UnconfiguredCompetitorProvider,
+)
 
 
 class CompetitorService:
@@ -15,29 +22,19 @@ class CompetitorService:
         providers: dict[str, CompetitorProvider] | None = None,
     ) -> None:
         self.data_source = data_source or get_settings().competitor_data_source
-        self.providers = providers or {
+        default_providers: dict[str, CompetitorProvider] = {
             "simulation": SnapshotCompetitorProvider(
                 normalize_row=self._normalize_row,
                 build_fallback=self._build_price_fallback_static,
-            )
+            ),
+            "taobao_h5": UnconfiguredCompetitorProvider(
+                source="TAOBAO_H5",
+                message="taobao_h5 provider is not configured in Task 2",
+            ),
         }
-
-    @classmethod
-    def for_test(
-        cls,
-        *,
-        data_source: str,
-        provider_result: dict[str, Any] | None = None,
-    ) -> "CompetitorService":
-        providers: dict[str, CompetitorProvider] = {
-            "simulation": SnapshotCompetitorProvider(
-                normalize_row=cls._normalize_row,
-                build_fallback=cls._build_price_fallback_static,
-            )
-        }
-        if provider_result is not None:
-            providers[data_source] = _StaticCompetitorProvider(provider_result)
-        return cls(data_source=data_source, providers=providers)
+        if providers:
+            default_providers.update(providers)
+        self.providers = default_providers
 
     @staticmethod
     def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -93,8 +90,29 @@ class CompetitorService:
     def _resolve_provider(self) -> CompetitorProvider:
         provider = self.providers.get(self.data_source)
         if provider is None:
-            raise ValueError(f"Unsupported competitor data source: {self.data_source}")
+            return UnconfiguredCompetitorProvider(
+                source=str(self.data_source).upper(),
+                message=f"unsupported competitor data source: {self.data_source}",
+            )
         return provider
+
+    def _normalize_result(self, raw_result: Any) -> dict[str, Any]:
+        try:
+            result = CompetitorQueryResult.model_validate(raw_result)
+        except ValidationError:
+            source = "UNKNOWN"
+            if isinstance(raw_result, dict):
+                source = str(raw_result.get("source") or self.data_source).upper()
+            result = CompetitorQueryResult.model_validate(
+                {
+                    "sourceStatus": "FAILED",
+                    "source": source,
+                    "message": "provider returned invalid competitor result",
+                    "rawItemCount": 0,
+                    "competitors": [],
+                }
+            )
+        return result.model_dump(by_alias=True)
 
     def get_competitor_result(
         self,
@@ -103,11 +121,13 @@ class CompetitorService:
         category_name: str | None,
         current_price: Decimal,
     ) -> dict[str, Any]:
-        return self._resolve_provider().fetch(
-            product_id=product_id,
-            product_title=product_title,
-            category_name=category_name,
-            current_price=current_price,
+        return self._normalize_result(
+            self._resolve_provider().fetch(
+                product_id=product_id,
+                product_title=product_title,
+                category_name=category_name,
+                current_price=current_price,
+            )
         )
 
     def get_competitors(
@@ -123,18 +143,3 @@ class CompetitorService:
             category_name=category_name,
             current_price=current_price,
         )["competitors"]
-
-
-class _StaticCompetitorProvider:
-    def __init__(self, result: dict[str, Any]) -> None:
-        self.result = result
-
-    def fetch(
-        self,
-        *,
-        product_id: int,
-        product_title: str | None,
-        category_name: str | None,
-        current_price: Decimal,
-    ) -> dict[str, Any]:
-        return dict(self.result)

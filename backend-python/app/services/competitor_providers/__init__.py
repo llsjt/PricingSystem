@@ -1,4 +1,4 @@
-from app.services.competitor_providers.base import CompetitorProvider
+from app.services.competitor_providers.base import CompetitorProvider, UnconfiguredCompetitorProvider
 from app.services.competitor_providers.snapshot_provider import SnapshotCompetitorProvider
 
-__all__ = ["CompetitorProvider", "SnapshotCompetitorProvider"]
+__all__ = ["CompetitorProvider", "SnapshotCompetitorProvider", "UnconfiguredCompetitorProvider"]

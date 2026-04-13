@@ -5,7 +5,31 @@ from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.schemas.competitor import CompetitorItem, CompetitorQueryResult
+from app.services.competitor_providers.snapshot_provider import SnapshotCompetitorProvider
 from app.services.competitor_service import CompetitorService
+
+
+class _FakeSnapshotRepo:
+    def __init__(self, rows: list[dict]):
+        self.rows = rows
+
+    def list_competitors(self, product_title: str | None, category_name: str | None) -> list[dict]:
+        return list(self.rows)
+
+
+class _FakeProvider:
+    def __init__(self, result: dict):
+        self.result = result
+
+    def fetch(
+        self,
+        *,
+        product_id: int,
+        product_title: str | None,
+        category_name: str | None,
+        current_price: Decimal,
+    ) -> dict:
+        return dict(self.result)
 
 
 def test_competitor_settings_defaults_to_simulation_source():
@@ -87,8 +111,25 @@ def test_competitor_query_result_uses_decimal_aliases():
     }
 
 
-def test_competitor_service_returns_full_result_for_simulation_source():
-    service = CompetitorService.for_test(data_source="simulation")
+def test_competitor_service_returns_snapshot_result_when_snapshot_exists():
+    provider = SnapshotCompetitorProvider(
+        repo=_FakeSnapshotRepo(
+            [
+                {
+                    "competitorName": "晨曦工坊旗舰店",
+                    "price": Decimal("19.80"),
+                    "originalPrice": Decimal("29.90"),
+                    "salesVolumeHint": "近30天销量约3200",
+                    "promotionTag": "店铺满减",
+                    "shopType": "旗舰店",
+                    "sourcePlatform": "淘宝",
+                }
+            ]
+        ),
+        normalize_row=CompetitorService._normalize_row,
+        build_fallback=CompetitorService._build_price_fallback_static,
+    )
+    service = CompetitorService(data_source="simulation", providers={"simulation": provider})
 
     result = service.get_competitor_result(
         product_id=1,
@@ -98,19 +139,85 @@ def test_competitor_service_returns_full_result_for_simulation_source():
     )
 
     assert result["sourceStatus"] == "OK"
-    assert result["source"] in {"SNAPSHOT", "SIMULATION_FALLBACK"}
-    assert result["competitors"]
+    assert result["source"] == "SNAPSHOT"
+    assert result["rawItemCount"] == 1
+    assert result["competitors"][0]["competitorName"] == "晨曦工坊旗舰店"
+
+
+def test_competitor_service_returns_simulation_fallback_when_snapshot_missing():
+    provider = SnapshotCompetitorProvider(
+        repo=_FakeSnapshotRepo([]),
+        normalize_row=CompetitorService._normalize_row,
+        build_fallback=CompetitorService._build_price_fallback_static,
+    )
+    service = CompetitorService(data_source="simulation", providers={"simulation": provider})
+
+    result = service.get_competitor_result(
+        product_id=1,
+        product_title="咖啡",
+        category_name="饮品",
+        current_price=Decimal("29.90"),
+    )
+
+    assert result["sourceStatus"] == "OK"
+    assert result["source"] == "SIMULATION_FALLBACK"
+    assert result["rawItemCount"] == 3
+    assert result["competitors"][0]["promotionTag"] == "店铺满减"
+
+
+def test_competitor_service_returns_structured_result_when_taobao_provider_is_unconfigured():
+    service = CompetitorService(data_source="taobao_h5")
+
+    result = service.get_competitor_result(
+        product_id=1,
+        product_title="咖啡",
+        category_name="饮品",
+        current_price=Decimal("29.90"),
+    )
+
+    assert result["sourceStatus"] == "UNCONFIGURED"
+    assert result["source"] == "TAOBAO_H5"
+    assert result["rawItemCount"] == 0
+    assert result["competitors"] == []
+
+
+def test_competitor_service_normalizes_malformed_provider_result():
+    service = CompetitorService(
+        data_source="taobao_h5",
+        providers={"taobao_h5": _FakeProvider({"source": "TAOBAO_H5"})},
+    )
+
+    result = service.get_competitor_result(
+        product_id=1,
+        product_title="咖啡",
+        category_name="饮品",
+        current_price=Decimal("29.90"),
+    )
+
+    assert result["sourceStatus"] == "FAILED"
+    assert result["source"] == "TAOBAO_H5"
+    assert result["rawItemCount"] == 0
+    assert service.get_competitors(
+        product_id=1,
+        product_title="咖啡",
+        category_name="饮品",
+        current_price=Decimal("29.90"),
+    ) == []
 
 
 def test_competitor_service_does_not_fallback_to_snapshot_when_real_source_fails():
-    service = CompetitorService.for_test(
+    service = CompetitorService(
         data_source="taobao_h5",
-        provider_result={
-            "sourceStatus": "FAILED",
-            "source": "TAOBAO_H5",
-            "message": "token expired",
-            "rawItemCount": 0,
-            "competitors": [],
+        providers={
+            "taobao_h5": _FakeProvider(
+                {
+                    "sourceStatus": "FAILED",
+                    "source": "TAOBAO_H5",
+                    "message": "token expired",
+                    "rawItemCount": 0,
+                    "competitors": [],
+                }
+            )
         },
     )
 
