@@ -103,16 +103,12 @@ class CompetitorService:
         category_name: str | None,
         current_price: Decimal,
     ) -> dict[str, Any]:
-        result = self._resolve_provider().fetch(
+        return self._resolve_provider().fetch(
             product_id=product_id,
             product_title=product_title,
             category_name=category_name,
             current_price=current_price,
         )
-        competitors = result.get("competitors", [])
-        for item in competitors:
-            item["sourceProductId"] = product_id
-        return result
 
     def get_competitors(
         self,
