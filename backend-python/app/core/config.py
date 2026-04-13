@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     agent_poll_interval_ms: int = Field(default=500, alias="AGENT_POLL_INTERVAL_MS")
     agent_max_retries: int = Field(default=2, alias="AGENT_MAX_RETRIES")
 
+    competitor_data_source: str = Field(default="simulation", alias="COMPETITOR_DATA_SOURCE")
+    tsdk_taobao_cookie: str = Field(default="", alias="TSDK_TAOBAO_COOKIE")
+    tsdk_taobao_search_api_url: str = Field(default="", alias="TSDK_TAOBAO_SEARCH_API_URL")
+    tsdk_crawler_timeout_seconds: int = Field(default=8, alias="TSDK_CRAWLER_TIMEOUT_SECONDS")
+    tsdk_crawler_max_results: int = Field(default=5, alias="TSDK_CRAWLER_MAX_RESULTS")
+
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
     llm_base_url: str = Field(default="", alias="LLM_BASE_URL")
     llm_model: str = Field(default="qwen-plus", alias="MODEL")
@@ -73,6 +79,17 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env.strip().lower() == "prod"
+
+    def validate_competitor_source(self) -> list[str]:
+        problems: list[str] = []
+        if self.competitor_data_source.strip().lower() != "taobao_h5":
+            return problems
+
+        if not self.tsdk_taobao_cookie.strip():
+            problems.append("TSDK_TAOBAO_COOKIE is required for taobao_h5")
+        if not self.tsdk_taobao_search_api_url.strip():
+            problems.append("TSDK_TAOBAO_SEARCH_API_URL is required for taobao_h5")
+        return problems
 
     def validate_production_safety(self) -> None:
         if not self.is_production:
