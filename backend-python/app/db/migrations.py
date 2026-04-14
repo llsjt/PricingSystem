@@ -62,7 +62,7 @@ def ensure_agent_run_log_schema(schema_name: str) -> None:
     if "display_order" not in existing:
         statements.append("ADD COLUMN display_order INT NULL COMMENT '卡片展示顺序(1-4)'")
     if "stage" not in existing:
-        statements.append("ADD COLUMN stage VARCHAR(20) NOT NULL DEFAULT 'completed' COMMENT '卡片阶段'")
+        statements.append("ADD COLUMN stage VARCHAR(20) NOT NULL DEFAULT 'completed' COMMENT '卡片阶段: running=正在分析, completed=已完成, failed=执行失败'")
 
     if statements:
         ddl = "ALTER TABLE agent_run_log " + ", ".join(statements)
@@ -84,3 +84,39 @@ def ensure_agent_run_log_schema(schema_name: str) -> None:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE agent_run_log ADD INDEX idx_task_display_order (task_id, display_order)"))
         logger.info("Applied startup migration index idx_task_display_order")
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                UPDATE agent_run_log
+                SET stage = 'failed'
+                WHERE stage <> 'failed'
+                  AND (
+                    JSON_UNQUOTE(JSON_EXTRACT(suggestion_json, '$.error')) = 'true'
+                    OR thinking_summary LIKE 'Agent 执行失败:%'
+                    OR thought_content LIKE 'Agent 执行失败:%'
+                  )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                UPDATE pricing_task t
+                LEFT JOIN pricing_result r ON r.task_id = t.id
+                SET t.task_status = 'FAILED'
+                WHERE t.task_status = 'MANUAL_REVIEW'
+                  AND r.id IS NULL
+                  AND (
+                    t.failure_reason IS NOT NULL
+                    OR EXISTS (
+                      SELECT 1
+                      FROM agent_run_log l
+                      WHERE l.task_id = t.id
+                        AND l.stage = 'failed'
+                    )
+                  )
+                """
+            )
+        )

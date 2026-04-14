@@ -26,12 +26,14 @@ import {
   getLogReason,
   getLogSuggestionLines,
   getLogThinking,
+  getRunStatusType,
   getRunStatusText,
   isSuccessStatus,
   normalizeAgentCode,
   toNaturalChinese
 } from '../utils/decisionDisplay'
 import { resolveRequestErrorMessage } from '../utils/error'
+import { getFailureSummary } from '../utils/failureSummary'
 import { formatCurrency, formatDateTime, formatPercent, formatSignedCurrency } from '../utils/formatters'
 
 const STATUS_MAP: Record<string, string> = {
@@ -172,6 +174,11 @@ export const useArchivePage = () => {
         return Number(left.id || 0) - Number(right.id || 0)
       })
   )
+
+  const isFailedLog = (log: DecisionLogItem) => String(log.stage || '').trim().toLowerCase() === 'failed'
+    || String(log.runStatus || '').trim().toLowerCase() === 'failed'
+
+  const getLogFailureSummary = (log: DecisionLogItem) => getFailureSummary(log, '任务执行失败')
 
   const fetchStats = async () => {
     try {
@@ -428,16 +435,19 @@ export const useArchivePage = () => {
     formatPercent,
     formatRange: formatPriceRange,
     formatSignedCurrency,
+    getLogFailureSummary,
     getLogAgentName,
     getLogEvidenceLines,
     getLogReason,
     getLogSuggestionLines,
     getLogThinking,
+    getRunStatusType,
     getRunStatusText,
     handleDateChange,
     handleSearch,
     handleSortChange,
     isSuccessStatus,
+    isFailedLog,
     loading,
     orderedLogs,
     queryParams,

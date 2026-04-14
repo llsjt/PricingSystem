@@ -22,6 +22,7 @@ class LogWriterTool:
         evidence: list[dict[str, Any]],
         suggestion: dict[str, Any],
         reason_why: str | None = None,
+        stage: str = "completed",
     ) -> None:
         task = self.task_repo.get_by_id(task_id)
         if task is None or str(task.task_status or "").upper() == "CANCELLED":
@@ -35,6 +36,7 @@ class LogWriterTool:
             evidence=evidence,
             suggestion=suggestion,
             reason_why=reason_why,
+            stage=stage,
         )
 
     def write_running_card(

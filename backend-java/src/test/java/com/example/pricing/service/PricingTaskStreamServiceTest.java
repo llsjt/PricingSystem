@@ -92,6 +92,10 @@ class PricingTaskStreamServiceTest {
         running.setDisplayOrder(1);
         running.setStage("running");
 
+        AgentRunLog failed = new AgentRunLog();
+        failed.setDisplayOrder(1);
+        failed.setStage("failed");
+
         AgentRunLog completed = new AgentRunLog();
         completed.setDisplayOrder(1);
         completed.setStage("completed");
@@ -100,8 +104,47 @@ class PricingTaskStreamServiceTest {
         legacy.setDisplayOrder(2);
 
         assertFalse(PricingTaskStreamService.isCompletedAgentCard(running));
+        assertFalse(PricingTaskStreamService.isCompletedAgentCard(failed));
         assertTrue(PricingTaskStreamService.isCompletedAgentCard(completed));
         assertTrue(PricingTaskStreamService.isCompletedAgentCard(legacy));
+    }
+
+    @Test
+    void failedAgentLogProducesFailedPayloadWithErrorCard() {
+        PricingTaskStreamService service = new PricingTaskStreamService(null, null, null, null);
+        AgentRunLog log = new AgentRunLog();
+        log.setTaskId(10L);
+        log.setRoleName("Manager Agent");
+        log.setDisplayOrder(4);
+        log.setStage("failed");
+        log.setThinkingSummary("Agent execution failed: LLM API timeout");
+        log.setEvidenceJson("[{\"label\":\"error\",\"value\":\"LLM API timeout\"}]");
+        log.setSuggestionJson("{\"error\":true,\"message\":\"LLM API timeout\"}");
+
+        Map<String, Object> payload = ReflectionTestUtils.invokeMethod(service, "toAgentCard", 10L, log);
+
+        assertEquals("agent_card", payload.get("type"));
+        assertEquals("MANAGER_COORDINATOR", payload.get("agentCode"));
+        assertEquals("failed", payload.get("stage"));
+        Map<?, ?> card = (Map<?, ?>) payload.get("card");
+        assertEquals("Agent execution failed: LLM API timeout", card.get("thinking"));
+        assertEquals(Boolean.TRUE, ((Map<?, ?>) card.get("suggestion")).get("error"));
+    }
+
+    @Test
+    void legacyErrorSuggestionAlsoProducesFailedPayload() {
+        PricingTaskStreamService service = new PricingTaskStreamService(null, null, null, null);
+        AgentRunLog log = new AgentRunLog();
+        log.setTaskId(11L);
+        log.setRoleName("市场情报Agent");
+        log.setDisplayOrder(2);
+        log.setThinkingSummary("Agent execution failed");
+        log.setSuggestionJson("{\"error\":true,\"message\":\"LLM API timeout\"}");
+
+        Map<String, Object> payload = ReflectionTestUtils.invokeMethod(service, "toAgentCard", 11L, log);
+
+        assertEquals("failed", payload.get("stage"));
+        assertFalse(PricingTaskStreamService.isCompletedAgentCard(log));
     }
 
     @Test

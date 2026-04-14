@@ -96,7 +96,7 @@ def test_recover_pending_tasks_keeps_persisted_payload_available_for_claiming():
     assert "worker restarted" in str(refreshed_running.failure_reason)
 
 
-def test_handle_worker_failure_requeues_until_retry_budget_then_routes_to_manual_review():
+def test_handle_worker_failure_requeues_until_retry_budget_then_marks_failed():
     db = build_session()
     task = create_task(
         db,
@@ -129,11 +129,30 @@ def test_handle_worker_failure_requeues_until_retry_budget_then_routes_to_manual
     refreshed = db.get(PricingTask, task.id)
 
     assert second.accepted is False
-    assert second.status == "MANUAL_REVIEW"
+    assert second.status == "FAILED"
     assert refreshed is not None
-    assert refreshed.task_status == "MANUAL_REVIEW"
+    assert refreshed.task_status == "FAILED"
     assert refreshed.retry_count == 1
     assert refreshed.failure_reason == "second boom"
+
+
+def test_recover_pending_tasks_marks_stale_running_failed_after_retry_budget():
+    db = build_session()
+    task = create_task(
+        db,
+        task_id=202,
+        status="RUNNING",
+        retry_count=2,
+    )
+    service = DispatchService(db)
+
+    recovered = service.recover_pending_tasks(StubQueueService(), max_retries=2)
+    refreshed = db.get(PricingTask, task.id)
+
+    assert recovered == 0
+    assert refreshed is not None
+    assert refreshed.task_status == "FAILED"
+    assert refreshed.failure_reason == "worker restarted after retry budget exhausted"
 
 
 def test_dispatch_refreshes_llm_config_for_already_queued_task():

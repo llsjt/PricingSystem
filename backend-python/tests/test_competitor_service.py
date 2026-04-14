@@ -45,7 +45,13 @@ class _ExplodingProvider:
 
 
 def test_competitor_settings_defaults_to_simulation_source():
-    settings = Settings.model_validate({})
+    settings = Settings.model_validate(
+        {
+            "COMPETITOR_DATA_SOURCE": "simulation",
+            "TSDK_TAOBAO_COOKIE": "",
+            "TSDK_TAOBAO_SEARCH_API_URL": "",
+        }
+    )
 
     assert settings.competitor_data_source == "simulation"
     assert settings.validate_competitor_source() == []
@@ -177,7 +183,20 @@ def test_competitor_service_returns_simulation_fallback_when_snapshot_missing():
     assert result["competitors"][0]["promotionTag"] == "店铺满减"
 
 
-def test_competitor_service_returns_structured_result_when_taobao_provider_is_unconfigured():
+def test_competitor_service_returns_structured_result_when_taobao_provider_is_unconfigured(monkeypatch):
+    from app.services.competitor_providers import taobao_h5_provider
+
+    monkeypatch.setattr(
+        taobao_h5_provider,
+        "get_settings",
+        lambda: Settings.model_validate(
+            {
+                "COMPETITOR_DATA_SOURCE": "taobao_h5",
+                "TSDK_TAOBAO_COOKIE": "",
+                "TSDK_TAOBAO_SEARCH_API_URL": "",
+            }
+        ),
+    )
     service = CompetitorService(data_source="taobao_h5")
 
     result = service.get_competitor_result(

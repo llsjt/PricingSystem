@@ -33,9 +33,11 @@ class LogRepo:
         evidence: list[dict[str, Any]],
         suggestion: dict[str, Any],
         reason_why: str | None = None,
+        stage: str = "completed",
     ) -> AgentRunLog:
         """写入 Agent 卡片日志，兼容旧字段 thought_content/speak_order。"""
         order = int(display_order or self.get_next_display_order(task_id))
+        normalized_stage = "failed" if str(stage or "").strip().lower() == "failed" else "completed"
         log = AgentRunLog(
             task_id=task_id,
             role_name=(agent_name or "Agent").strip() or "Agent",
@@ -46,7 +48,7 @@ class LogRepo:
             suggestion_json=suggestion or {},
             final_reason=reason_why,
             display_order=order,
-            stage="completed",
+            stage=normalized_stage,
         )
         self.db.add(log)
         self.db.commit()

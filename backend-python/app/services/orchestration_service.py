@@ -64,6 +64,32 @@ class OrchestrationService:
         self.log_tool = LogWriterTool(db)
         self.result_tool = ResultWriterTool(db)
 
+    @staticmethod
+    def _summarize_failure_message(error: Any) -> str:
+        text = str(error or "").strip()
+        normalized = text.lower()
+        if not text:
+            return "CrewAI 任务执行失败"
+
+        timeout_tokens = ("timeout", "timed out", "time out", "readtimeout", "connecttimeout")
+        if any(token in normalized for token in timeout_tokens):
+            return "LLM 调用超时"
+
+        parse_tokens = ("json", "parse", "decode", "expecting value", "invalid control character")
+        if any(token in normalized for token in parse_tokens):
+            return "输出解析失败"
+
+        return "CrewAI 任务执行失败"
+
+    @staticmethod
+    def _build_failed_card(summary: str) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+        concise = str(summary or "").strip() or "CrewAI 任务执行失败"
+        return (
+            concise,
+            [{"label": "错误摘要", "value": concise}],
+            {"error": True, "message": concise},
+        )
+
     # ── 从 LLM 输出构建数据分析卡片 ──────────────────────────
     @staticmethod
     def _build_data_card(
@@ -118,7 +144,7 @@ class OrchestrationService:
         thinking = parsed.get("thinking", "基于竞品价格数据分析市场价格带和竞争态势，给出市场可接受的建议价格。")
 
         # 从 LLM 输出中提取竞品样本数
-        sample_count = _safe_int(parsed.get("simulatedSamples"))
+        sample_count = _safe_int(parsed.get("competitorSamples"))
         market_floor = _safe_float(parsed.get("marketFloor"))
         market_ceiling = _safe_float(parsed.get("marketCeiling"))
 
@@ -280,13 +306,15 @@ class OrchestrationService:
                 if not parsed:
                     logger.warning("Agent [%s] 输出解析失败，写入错误卡片", meta["name"])
                     task_outputs.append(parsed)
+                    thinking, evidence, suggestion = self._build_failed_card("输出解析失败")
                     self.log_tool.write_agent_card(
                         task_id=payload.task_id,
                         agent_name=meta["name"],
                         display_order=meta["order"],
-                        thinking_summary=f"Agent 输出解析失败，无法提取有效JSON",
-                        evidence=[{"label": "原始输出(截断)", "value": raw[:200]}],
-                        suggestion={"error": True, "message": "输出解析失败"},
+                        thinking_summary=thinking,
+                        evidence=evidence,
+                        suggestion=suggestion,
+                        stage="failed",
                     )
                     write_next_running_card(idx)
                     return
@@ -362,13 +390,16 @@ class OrchestrationService:
             error_idx = card_counter[0]  # 当前未完成的 Agent 索引
             if error_idx < len(_AGENT_META):
                 meta = _AGENT_META[error_idx]
+                summary = self._summarize_failure_message(crew_exc)
+                thinking, evidence, suggestion = self._build_failed_card(summary)
                 self.log_tool.write_agent_card(
                     task_id=payload.task_id,
                     agent_name=meta["name"],
                     display_order=meta["order"],
-                    thinking_summary=f"Agent 执行失败: {str(crew_exc)[:300]}",
-                    evidence=[{"label": "错误信息", "value": str(crew_exc)[:200]}],
-                    suggestion={"error": True, "message": str(crew_exc)[:300]},
+                    thinking_summary=thinking,
+                    evidence=evidence,
+                    suggestion=suggestion,
+                    stage="failed",
                 )
                 debug_log(f"[CrewAI] wrote error card agent={meta['name']}")
             raise  # 继续向上抛出，让 dispatch_service 标记 task 为 FAILED

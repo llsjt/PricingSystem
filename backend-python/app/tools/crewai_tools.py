@@ -167,7 +167,7 @@ def evaluate_risk_rules(
     return json.dumps(result, ensure_ascii=False, default=_default_serializer)
 
 
-# ── 竞品数据查询工具（模拟数据） ──────────────────────────
+# ── 竞品数据查询工具（结构化结果） ──────────────────────────
 @tool("查询竞品价格数据")
 def search_competitors(
     product_id: int,
@@ -176,19 +176,18 @@ def search_competitors(
     current_price: float,
 ) -> str:
     """
-    获取竞品价格数据（模拟数据，非真实爬虫）。
+    获取竞品查询结果。
     参数:
       - product_id: 商品ID
       - product_title: 商品名称
       - category_name: 品类名称
       - current_price: 当前售价
-    返回: 竞品列表，每条包含 competitorName, price, originalPrice, salesVolumeHint,
-          promotionTag, shopType, sourcePlatform
+    返回: 完整竞品查询结果，包含 sourceStatus/source/message/rawItemCount/competitors
     """
-    competitors = _competitor_service.get_competitors(
+    result = _competitor_service.get_competitor_result(
         product_id=int(product_id),
         product_title=product_title,
         category_name=category_name,
         current_price=Decimal(str(current_price)),
     )
-    return json.dumps({"competitors": competitors}, ensure_ascii=False, default=_default_serializer)
+    return json.dumps(result, ensure_ascii=False, default=_default_serializer)

@@ -8,6 +8,7 @@ from app.schemas.competitor import CompetitorQueryResult
 from app.services.competitor_providers import (
     CompetitorProvider,
     SnapshotCompetitorProvider,
+    TaobaoH5CompetitorProvider,
     UnconfiguredCompetitorProvider,
 )
 
@@ -27,10 +28,7 @@ class CompetitorService:
                 normalize_row=self._normalize_row,
                 build_fallback=self._build_price_fallback_static,
             ),
-            "taobao_h5": UnconfiguredCompetitorProvider(
-                source="TAOBAO_H5",
-                message="taobao_h5 provider is not configured in Task 2",
-            ),
+            "taobao_h5": TaobaoH5CompetitorProvider(),
         }
         if providers:
             default_providers.update(providers)

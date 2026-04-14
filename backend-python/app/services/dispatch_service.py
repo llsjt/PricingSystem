@@ -41,6 +41,15 @@ class DispatchService:
         }
         return mapping.get(int(order or 0), "UNKNOWN")
 
+    @staticmethod
+    def _normalize_log_stage(stage: str | None, suggestion: dict) -> str:
+        normalized = str(stage or "").strip().lower()
+        if normalized == "running":
+            return "running"
+        if normalized == "failed" or suggestion.get("error") is True:
+            return "failed"
+        return "completed"
+
     def _store_llm_config(self, task, req: DispatchTaskRequest) -> None:
         if not req.llm_api_key:
             return
@@ -84,7 +93,7 @@ class DispatchService:
             status = str(task.task_status or "").upper()
             if status == "RUNNING":
                 if int(task.retry_count or 0) >= max(max_retries, 0):
-                    self.task_repo.mark_manual_review(task, "worker restarted after retry budget exhausted")
+                    self.task_repo.update_status(task, "FAILED", failure_reason="worker restarted after retry budget exhausted")
                     continue
                 self.task_repo.mark_retrying(
                     task,
@@ -119,11 +128,11 @@ class DispatchService:
             return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="CANCELLED", message="task cancelled")
 
         if int(task.retry_count or 0) >= max(max_retries, 0):
-            self.task_repo.mark_manual_review(task, reason)
+            self.task_repo.update_status(task, "FAILED", failure_reason=reason)
             return DispatchTaskResponse(
                 accepted=False,
                 taskId=req.task_id,
-                status="MANUAL_REVIEW",
+                status="FAILED",
                 message="retry budget exhausted",
             )
 
@@ -184,6 +193,8 @@ class DispatchService:
             evidence = item.evidence_json if isinstance(item.evidence_json, list) else []
             thinking = item.thinking_summary or item.thought_content or ""
             action = str(suggestion.get("action") or "")
+            stage = self._normalize_log_stage(item.stage, suggestion)
+            run_status = "running" if stage == "running" else "failed" if stage == "failed" else "success"
 
             items.append(
                 AgentLogItem(
@@ -196,8 +207,8 @@ class DispatchService:
                     agentName=item.role_name,
                     runOrder=order,
                     displayOrder=order,
-                    stage=item.stage or "completed",
-                    runStatus="running" if item.stage == "running" else "success",
+                    stage=stage,
+                    runStatus=run_status,
                     outputSummary=thinking,
                     needManualReview=is_manual_review_action(action),
                     thinking=thinking,

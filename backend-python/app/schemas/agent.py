@@ -50,7 +50,7 @@ class MarketAgentOutput(BaseModel):
     market_ceiling: Decimal = Field(alias="marketCeiling")
     confidence: float
     summary: str
-    simulated_samples: int = Field(alias="simulatedSamples")
+    competitor_samples: int = Field(alias="competitorSamples")
 
 
 class RiskAgentOutput(BaseModel):
@@ -72,4 +72,3 @@ class ManagerAgentOutput(BaseModel):
     result_summary: str = Field(alias="resultSummary")
     suggested_min_price: Decimal = Field(alias="suggestedMinPrice")
     suggested_max_price: Decimal = Field(alias="suggestedMaxPrice")
-

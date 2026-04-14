@@ -95,31 +95,60 @@ def _precompute_data_summary(payload: CrewRunPayload) -> str:
 def _precompute_competitor_summary(payload: CrewRunPayload) -> str:
     """预计算竞品数据，转为紧凑文本直接注入 prompt（免去 Agent 调工具）"""
     service = CompetitorService()
-    competitors = service.get_competitors(
+    result = service.get_competitor_result(
         product_id=payload.product.product_id,
         product_title=payload.product.product_name,
         category_name=payload.product.category_name,
         current_price=payload.product.current_price,
     )
-    if not competitors:
-        return "暂无竞品数据"
-
-    # 计算竞品统计
-    prices = [c["price"] for c in competitors if c.get("price")]
-    min_price = min(prices) if prices else 0
-    max_price = max(prices) if prices else 0
-    avg_price = sum(prices) / len(prices) if prices else 0
+    competitors = result.get("competitors", []) or []
+    source = str(result.get("source", "UNKNOWN"))
+    status = str(result.get("sourceStatus", "FAILED"))
+    message = str(result.get("message", ""))
+    raw_item_count = int(result.get("rawItemCount", 0) or 0)
+    competitor_samples = len(competitors)
+    no_real_competitor_data = status.upper() != "OK" or competitor_samples == 0
 
     lines = [
-        f"竞品样本数: {len(competitors)}",
-        f"市场最低价: {min_price:.2f}元",
-        f"市场最高价: {max_price:.2f}元",
-        f"市场均价: {avg_price:.2f}元",
-        "竞品明细:",
+        f"竞品来源: {source}",
+        f"竞品状态: {status}",
+        f"状态说明: {message}",
+        f"原始样本数: {raw_item_count}",
+        f"竞品样本数: {competitor_samples}",
     ]
+    if no_real_competitor_data:
+        lines.extend(
+            [
+                "NO_DATA_RULES:",
+                "- sourceStatus != OK or competitorSamples == 0: do not infer or fabricate market floor/ceiling/average.",
+                "- Output suggestedPrice=0.",
+                "- Output competitorSamples=0.",
+                "- Set marketFloor=0 and marketCeiling=0.",
+                "- Keep confidence <= 0.3.",
+                "- summary must explicitly include provider status and reason.",
+            ]
+        )
+    if not competitors:
+        lines.append("竞品明细: 无")
+        return "\n".join(lines)
+
+    # 计算竞品统计
+    prices = [float(c["price"]) for c in competitors if c.get("price") is not None]
+    min_price = min(prices) if prices else 0.0
+    max_price = max(prices) if prices else 0.0
+    avg_price = sum(prices) / len(prices) if prices else 0.0
+    lines.extend(
+        [
+            f"市场最低价: {min_price:.2f}元",
+            f"市场最高价: {max_price:.2f}元",
+            f"市场均价: {avg_price:.2f}元",
+            "竞品明细:",
+        ]
+    )
     for c in competitors[:5]:  # 最多展示5条，避免 prompt 过长
         line = f"  - {c.get('competitorName', '未知')}"
-        line += f" | 价格{c['price']:.2f}元"
+        if c.get("price") is not None:
+            line += f" | 价格{float(c['price']):.2f}元"
         if c.get("sourcePlatform"):
             line += f" | {c['sourcePlatform']}"
         if c.get("promotionTag"):
@@ -216,7 +245,7 @@ def build_pricing_crew(
             '"confidence": 置信度(0-1之间的小数), '
             '"thinking": "你的分析思路(中文)", '
             '"summary": "市场分析摘要(中文字符串)", '
-            '"simulatedSamples": 竞品样本数(整数)}'
+            '"competitorSamples": 竞品样本数(整数)}'
         ),
         agent=agents["MARKET_INTEL"],
         callback=on_task_done,

@@ -255,6 +255,34 @@ class DecisionTaskServiceImplTest {
         assertEquals(1, logs.size());
         assertEquals("MARKET_INTEL", logs.get(0).getAgentCode());
         assertEquals("running", logs.get(0).getStage());
-        assertEquals("运行中", logs.get(0).getRunStatus());
+        assertEquals("running", logs.get(0).getRunStatus());
+    }
+
+    @Test
+    void getTaskLogsReturnsFailedStageForFailedAgentCard() {
+        PricingTask task = new PricingTask();
+        task.setId(31L);
+        task.setShopId(9L);
+
+        AgentRunLog runLog = new AgentRunLog();
+        runLog.setId(3L);
+        runLog.setTaskId(31L);
+        runLog.setRoleName("Manager Agent");
+        runLog.setDisplayOrder(4);
+        runLog.setStage("failed");
+        runLog.setThinkingSummary("Agent execution failed: LLM API timeout");
+        runLog.setSuggestionJson("{\"error\":true,\"message\":\"LLM API timeout\"}");
+
+        when(shopService.getShopIdsByUser(77L)).thenReturn(List.of(9L));
+        when(taskMapper.selectById(31L)).thenReturn(task);
+        when(logMapper.selectList(any())).thenReturn(List.of(runLog));
+
+        var logs = service.getTaskLogs(31L, 77L);
+
+        assertEquals(1, logs.size());
+        assertEquals("MANAGER_COORDINATOR", logs.get(0).getAgentCode());
+        assertEquals("failed", logs.get(0).getStage());
+        assertEquals("failed", logs.get(0).getRunStatus());
+        assertEquals(Boolean.TRUE, logs.get(0).getSuggestion().get("error"));
     }
 }

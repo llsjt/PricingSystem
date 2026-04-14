@@ -53,6 +53,17 @@ export const isSuccessStatus = (status?: string | null) => {
   return normalized === 'SUCCESS' || normalized === '成功'
 }
 
+export const isFailedStatus = (status?: string | null) => {
+  const normalized = String(status || '').trim().toUpperCase()
+  return normalized === 'FAILED' || normalized === '失败'
+}
+
+export const getRunStatusType = (status?: string | null): 'success' | 'warning' | 'danger' => {
+  if (isSuccessStatus(status)) return 'success'
+  if (isFailedStatus(status)) return 'danger'
+  return 'warning'
+}
+
 export const getRunStatusText = (status?: string | null) => (status ? toNaturalChinese(status) : '-')
 
 const toNumber = (value: unknown) => {

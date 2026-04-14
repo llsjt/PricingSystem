@@ -208,10 +208,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
             vo.setAgentName(logItem.getRoleName());
             vo.setRunOrder(displayOrder);
             vo.setDisplayOrder(displayOrder);
-            String rawStage = logItem.getStage();
-            boolean running = rawStage != null && "running".equalsIgnoreCase(rawStage.trim());
-            vo.setStage(running ? "running" : "completed");
-            vo.setRunStatus(running ? "运行中" : "成功");
+            String stage = normalizeLogStage(logItem.getStage(), suggestion);
+            vo.setStage(stage);
+            vo.setRunStatus(resolveRunStatus(stage));
             vo.setOutputSummary(thinking);
             vo.setNeedManualReview(needManualReview);
             vo.setThinking(thinking);
@@ -592,6 +591,25 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         if (suggestion != null && suggestion.containsKey("strategy")) {
             suggestion.put("strategy", MANUAL_REVIEW_STRATEGY);
         }
+    }
+
+    private String normalizeLogStage(String rawStage, Map<String, Object> suggestion) {
+        String normalized = rawStage == null ? "" : rawStage.trim().toLowerCase();
+        if ("running".equals(normalized)) {
+            return "running";
+        }
+        if ("failed".equals(normalized) || Boolean.TRUE.equals(suggestion.get("error"))) {
+            return "failed";
+        }
+        return "completed";
+    }
+
+    private String resolveRunStatus(String stage) {
+        return switch (stage) {
+            case "running" -> "running";
+            case "failed" -> "failed";
+            default -> "success";
+        };
     }
 
     /**

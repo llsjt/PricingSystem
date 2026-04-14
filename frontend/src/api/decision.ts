@@ -60,8 +60,8 @@ export interface DecisionLogItem {
   agentName?: string
   runOrder?: number
   displayOrder?: number
-  stage?: string
-  runStatus?: string
+  stage?: 'running' | 'completed' | 'failed' | string
+  runStatus?: 'running' | 'success' | 'failed' | string
   outputSummary?: string
   suggestedPrice?: number
   predictedProfit?: number
@@ -150,7 +150,7 @@ export interface PricingAgentCardMessage {
   agentCode: PricingAgentCode
   agentName: string
   displayOrder: number
-  stage: string
+  stage: 'running' | 'completed' | 'failed' | string
   card: AgentCardContent
 }
 

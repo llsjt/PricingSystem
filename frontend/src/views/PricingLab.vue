@@ -64,6 +64,7 @@
           <el-button v-if="canCancelTask" @click="cancelTask">取消任务</el-button>
           <el-button v-if="canReconfigureTask" @click="resetTask">重新配置任务</el-button>
           <el-button v-if="taskId" @click="refreshSnapshot">刷新进度</el-button>
+          <el-button v-if="canSkipReveal" @click="skipRevealAnimation">跳过动画</el-button>
           <el-button type="primary" :disabled="!canViewReport" @click="activeStep = 2">查看结果报告</el-button>
         </div>
       </div>
@@ -71,8 +72,8 @@
         <article v-for="agent in agents" :key="agent.code" class="agent-box">
           <div class="agent-head">
             <h3>{{ agent.order }}. {{ agent.name }}</h3>
-            <el-tag size="small" :type="isCardCompleted(agent.code) ? 'success' : isCardRunning(agent.code) ? 'warning' : 'info'">
-              {{ isCardCompleted(agent.code) ? '已完成' : isCardRunning(agent.code) ? '分析中' : '等待中' }}
+            <el-tag size="small" :type="isCardFailed(agent.code) ? 'danger' : isCardCompleted(agent.code) ? 'success' : isCardRunning(agent.code) ? 'warning' : 'info'">
+              {{ isCardFailed(agent.code) ? '失败' : isCardCompleted(agent.code) ? '已完成' : isCardRunning(agent.code) ? '分析中' : '等待中' }}
             </el-tag>
           </div>
           <template v-if="isCardCompleted(agent.code)">
@@ -93,12 +94,16 @@
                 <span v-else>{{ line }}</span>
               </li>
             </ul>
-            <template v-if="canShowSuggestion(agent.code) && agent.code === 'MANAGER_COORDINATOR' && state.cards[agent.code]?.reasonWhy">
+            <template v-if="canShowReason(agent.code) && agent.code === 'MANAGER_COORDINATOR' && state.cards[agent.code]?.reasonWhy">
               <h4>为什么给出这个建议</h4>
-              <TypewriterText v-if="shouldAnimate(agent.code)" :text="state.cards[agent.code]?.reasonWhy || ''" :speed="typewriterSpeed" />
+              <TypewriterText v-if="isActiveReason(agent.code)" :text="state.cards[agent.code]?.reasonWhy || ''" :speed="typewriterSpeed" @done="markReasonDone(agent.code)" />
               <p v-else>{{ state.cards[agent.code]?.reasonWhy }}</p>
             </template>
           </template>
+          <section v-else-if="isCardFailed(agent.code)" class="failed-card">
+            <div class="failed-card-title">执行失败</div>
+            <p class="failed-card-message">{{ getAgentFailureSummary(agent.code) }}</p>
+          </section>
           <div v-else-if="isCardRunning(agent.code)" class="waiting running-pulse"><span class="pulse-dot"></span> 正在分析中...</div>
           <div v-else-if="isRunning(state.taskStatus) && waitingOrder === agent.order" class="waiting">等待前序Agent完成...</div>
           <el-empty v-else description="等待该 Agent 输出结果" :image-size="80" />
@@ -150,20 +155,25 @@ import { getLlmConfig } from '../api/llmConfig'
 import { useShopStore } from '../stores/shop'
 import { getAuthToken } from '../utils/authSession'
 import { sanitizeErrorMessage } from '../utils/error'
+import { getFailureSummary } from '../utils/failureSummary'
 import { hasConfiguredLlmApiKey } from '../utils/llmConfigResponse'
+import { clearRevealQueue, createRevealQueueState, finishReveal, isActiveReveal, queueRevealCardRequest } from '../utils/agentRevealQueue'
 import TypewriterText from '../components/TypewriterText.vue'
 
 interface ApiResponse<T> { code: number; data: T; message?: string }
 interface ProductOption { id: number; productName: string }
-type AgentStage = 'running' | 'completed'
-type AgentRevealStage = 'thinking' | 'evidence' | 'suggestion' | 'done'
+type AgentStage = 'running' | 'completed' | 'failed'
+type AgentRevealStage = 'thinking' | 'evidence' | 'suggestion' | 'reason' | 'done'
 interface RevealLineCounts { evidence: number; suggestion: number }
 type InternalAgentCardContent = AgentCardContent & { __stage?: AgentStage }
+interface PendingRevealCard { card: AgentCardContent | null; stage: AgentStage }
+interface SnapshotLoadOptions { applyLogs?: boolean }
 
 const agents = [{ code: 'DATA_ANALYSIS', name: '数据分析Agent', order: 1 }, { code: 'MARKET_INTEL', name: '市场情报Agent', order: 2 }, { code: 'RISK_CONTROL', name: '风险控制Agent', order: 3 }, { code: 'MANAGER_COORDINATOR', name: '经理协调Agent', order: 4 }] as const
+const agentRevealOrder = agents.map((agent) => agent.code) as PricingAgentCode[]
 const goalOptions = [{ label: 'MAX_PROFIT', name: '利润优先' }, { label: 'CLEARANCE', name: '清仓促销' }, { label: 'MARKET_SHARE', name: '市场份额优先' }] as const
 const emptyCards = () => ({ DATA_ANALYSIS: null, MARKET_INTEL: null, RISK_CONTROL: null, MANAGER_COORDINATOR: null }) as Record<PricingAgentCode, InternalAgentCardContent | null>
-const typewriterSpeed = 45
+const typewriterSpeed = 24
 
 const shopStore = useShopStore()
 const router = useRouter()
@@ -181,17 +191,25 @@ const hasLlmConfig = ref(false)
 let aborter: AbortController | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let loadToken = 0
+const liveRevealEnabled = ref(false)
 const streamArrivedCards = reactive(new Set<PricingAgentCode>())
+const revealQueue = reactive(createRevealQueueState<PricingAgentCode>())
+const pendingRevealCards = reactive({} as Partial<Record<PricingAgentCode, PendingRevealCard>>)
 const revealStages = reactive({} as Partial<Record<PricingAgentCode, AgentRevealStage>>)
 const revealLineCounts = reactive({} as Partial<Record<PricingAgentCode, RevealLineCounts>>)
 
-const normalizeCard = (card?: AgentCardContent | null): InternalAgentCardContent => ({ thinking: String(card?.thinking || ''), evidence: Array.isArray(card?.evidence) ? card.evidence : [], suggestion: card?.suggestion && typeof card.suggestion === 'object' ? card.suggestion : {}, reasonWhy: card?.reasonWhy || null, __stage: 'completed' })
+const normalizeCard = (card?: AgentCardContent | null, stage: AgentStage = 'completed'): InternalAgentCardContent => ({ thinking: String(card?.thinking || ''), evidence: Array.isArray(card?.evidence) ? card.evidence : [], suggestion: card?.suggestion && typeof card.suggestion === 'object' ? card.suggestion : {}, reasonWhy: card?.reasonWhy || null, __stage: stage })
 const runningCard = (): InternalAgentCardContent => ({ thinking: '', evidence: [], suggestion: {}, reasonWhy: null, __stage: 'running' })
+const failedCard = (card?: AgentCardContent | null): InternalAgentCardContent => normalizeCard(card, 'failed')
 const isCardRunning = (code: PricingAgentCode) => state.cards[code]?.__stage === 'running'
-const isCardCompleted = (code: PricingAgentCode) => Boolean(state.cards[code] && state.cards[code]?.__stage !== 'running')
-const shouldAnimate = (code: PricingAgentCode) => streamArrivedCards.has(code)
-const canShowEvidence = (code: PricingAgentCode) => !shouldAnimate(code) || revealStages[code] === 'evidence' || revealStages[code] === 'suggestion' || revealStages[code] === 'done'
-const canShowSuggestion = (code: PricingAgentCode) => !shouldAnimate(code) || revealStages[code] === 'suggestion' || revealStages[code] === 'done'
+const isCardFailed = (code: PricingAgentCode) => state.cards[code]?.__stage === 'failed'
+const isCardCompleted = (code: PricingAgentCode) => state.cards[code]?.__stage === 'completed'
+const isCardDone = (code: PricingAgentCode) => isCardCompleted(code) || isCardFailed(code)
+const getAgentFailureSummary = (code: PricingAgentCode) => getFailureSummary(state.cards[code], '任务执行失败')
+const shouldAnimate = (code: PricingAgentCode) => streamArrivedCards.has(code) && isActiveReveal(revealQueue, code)
+const canShowEvidence = (code: PricingAgentCode) => !shouldAnimate(code) || revealStages[code] === 'evidence' || revealStages[code] === 'suggestion' || revealStages[code] === 'reason' || revealStages[code] === 'done'
+const canShowSuggestion = (code: PricingAgentCode) => !shouldAnimate(code) || revealStages[code] === 'suggestion' || revealStages[code] === 'reason' || revealStages[code] === 'done'
+const canShowReason = (code: PricingAgentCode) => !shouldAnimate(code) || revealStages[code] === 'reason' || revealStages[code] === 'done'
 const completedCardCount = computed(() => agents.filter((agent) => isCardCompleted(agent.code)).length)
 
 const platformOptions = computed(() => Array.from(new Set(shopStore.shops.map((shop) => String(shop.platform || '').trim()).filter(Boolean))))
@@ -201,6 +219,7 @@ const productPlaceholder = computed(() => !taskConfig.platform ? '请先选择�
 const canCancelTask = computed(() => Boolean(taskId.value && ['QUEUED', 'RUNNING', 'RETRYING'].includes(state.taskStatus)))
 const canReconfigureTask = computed(() => state.taskStatus === 'CANCELLED')
 const canViewReport = computed(() => ['COMPLETED', 'MANUAL_REVIEW'].includes(state.taskStatus) || completedCardCount.value === agents.length)
+const canSkipReveal = computed(() => Boolean(taskId.value && activeStep.value === 1 && (liveRevealEnabled.value || hasRevealInProgress())))
 const stepBarActive = computed(() => activeStep.value === 2 ? 3 : activeStep.value === 1 ? 2 : 1)
 const waitingOrder = computed(() => isRunning(state.taskStatus) ? (agents.find((agent) => !state.cards[agent.code])?.order || 0) : 0)
 const statusLabel = computed(() => ({ IDLE: '未开始', PENDING: '待执行', QUEUED: '待执行', RUNNING: '执行中', RETRYING: '重试中', MANUAL_REVIEW: '人工审核', COMPLETED: '已完成', FAILED: '失败', CANCELLED: '已取消' }[state.taskStatus] || state.taskStatus))
@@ -216,13 +235,51 @@ const signedCurrency = (value: unknown) => { const n = numberOf(value); return n
 const isRunning = (status: PricingTaskStatus) => ['PENDING', 'QUEUED', 'RUNNING', 'RETRYING'].includes(status)
 const isTerminal = (status: PricingTaskStatus) => ['COMPLETED', 'MANUAL_REVIEW', 'FAILED', 'CANCELLED'].includes(status)
 const isArchivedTaskStatus = (status: PricingTaskStatus) => ['COMPLETED', 'MANUAL_REVIEW'].includes(status)
-const stopRealtime = () => { if (aborter) { aborter.abort(); aborter = null } if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
-const clearRevealState = () => { agents.forEach((agent) => { delete revealStages[agent.code]; delete revealLineCounts[agent.code] }) }
+const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
+const stopRealtime = () => { if (aborter) { aborter.abort(); aborter = null } stopPolling() }
+const hasRevealInProgress = () => Boolean(revealQueue.active || revealQueue.queue.length)
+const clearRevealState = () => { liveRevealEnabled.value = false; streamArrivedCards.clear(); clearRevealQueue(revealQueue); agents.forEach((agent) => { delete revealStages[agent.code]; delete revealLineCounts[agent.code]; delete pendingRevealCards[agent.code] }) }
 const ensureRevealLineCounts = (code: PricingAgentCode) => {
   if (!revealLineCounts[code]) revealLineCounts[code] = { evidence: 0, suggestion: 0 }
   return revealLineCounts[code] as RevealLineCounts
 }
 const beginReveal = (code: PricingAgentCode) => { revealStages[code] = 'thinking'; revealLineCounts[code] = { evidence: 0, suggestion: 0 } }
+const showCard = (code: PricingAgentCode, card: AgentCardContent | null, stage: AgentStage) => {
+  state.cards[code] = stage === 'failed' ? failedCard(card) : normalizeCard(card, stage)
+}
+const activateQueuedReveal = (code: PricingAgentCode) => {
+  const pending = pendingRevealCards[code]
+  if (!pending) return
+  delete pendingRevealCards[code]
+  streamArrivedCards.add(code)
+  beginReveal(code)
+  showCard(code, pending.card, pending.stage)
+  if (pending.stage === 'failed') completeReveal(code)
+}
+const queueStreamCard = (code: PricingAgentCode, card: AgentCardContent | null, stage: AgentStage) => {
+  if (!liveRevealEnabled.value) {
+    showCard(code, card, stage)
+    return
+  }
+  const action = queueRevealCardRequest(revealQueue, pendingRevealCards, code, { card, stage }, agentRevealOrder)
+  if (action === 'replace-active') {
+    const pending = pendingRevealCards[code]
+    if (!pending) return
+    delete pendingRevealCards[code]
+    streamArrivedCards.add(code)
+    beginReveal(code)
+    showCard(code, pending.card, pending.stage)
+    if (pending.stage === 'failed') completeReveal(code)
+    return
+  }
+  if (action === 'activate') activateQueuedReveal(code)
+}
+const completeReveal = (code: PricingAgentCode) => {
+  revealStages[code] = 'done'
+  streamArrivedCards.delete(code)
+  const next = finishReveal(revealQueue, code)
+  if (next) activateQueuedReveal(next)
+}
 const markThinkingDone = (code: PricingAgentCode) => {
   if (!shouldAnimate(code) || revealStages[code] !== 'thinking') return
   revealStages[code] = 'evidence'
@@ -261,7 +318,16 @@ const markSuggestionLineDone = (code: PricingAgentCode) => {
     counts.suggestion += 1
     return
   }
-  revealStages[code] = 'done'
+  if (code === 'MANAGER_COORDINATOR' && state.cards[code]?.reasonWhy) {
+    revealStages[code] = 'reason'
+    return
+  }
+  completeReveal(code)
+}
+const isActiveReason = (code: PricingAgentCode) => shouldAnimate(code) && revealStages[code] === 'reason'
+const markReasonDone = (code: PricingAgentCode) => {
+  if (!isActiveReason(code)) return
+  completeReveal(code)
 }
 
 const onPlatformChange = async () => { taskConfig.shopId = undefined; taskConfig.productId = undefined; productOptions.value = []; if (availableShops.value.length === 1) { taskConfig.shopId = availableShops.value[0].id; await loadProducts() } }
@@ -270,22 +336,156 @@ const searchProducts = (keyword: string) => { void loadProducts(keyword) }
 const loadProducts = async (keyword = '') => { const token = ++loadToken; if (!canSearchProducts.value) return; searchLoading.value = true; try { const res = await getProductList({ page: 1, size: 100, keyword, platform: taskConfig.platform || undefined, shopId: taskConfig.shopId }) as ApiResponse<{ records: Array<{ id: number; productName: string }> }>; if (token !== loadToken) return; productOptions.value = Array.isArray(res.data?.records) ? res.data.records.map((item) => ({ id: Number(item.id), productName: String(item.productName || '') })) : [] } finally { if (token === loadToken) searchLoading.value = false } }
 
 const applySnapshotDetail = (detail?: PricingTaskSnapshot['detail'] | null) => { if (!detail) return; state.taskStatus = (detail.taskStatus || 'RUNNING') as PricingTaskStatus; state.finalPrice = detail.finalPrice != null ? Number(detail.finalPrice) : null; state.strategy = String(detail.strategy || ''); state.finalSummary = String(detail.finalSummary || '') }
-const applySnapshotLogs = (logs: DecisionLogItem[]) => { const cards = emptyCards(); logs.sort((a, b) => Number(a.displayOrder || a.runOrder || 0) - Number(b.displayOrder || b.runOrder || 0) || Number(a.id || 0) - Number(b.id || 0)).forEach((log) => { const code = String(log.agentCode || '') as PricingAgentCode; if (!(code in cards)) return; if (log.stage === 'running') { if (!cards[code]) cards[code] = runningCard(); return } cards[code] = normalizeCard({ thinking: String(log.thinking || log.outputSummary || ''), evidence: log.evidence || [], suggestion: log.suggestion || {}, reasonWhy: log.reasonWhy || null }) }); state.cards = cards }
+const applySnapshotLogs = (logs: DecisionLogItem[]) => {
+  clearRevealState()
+  const cards = emptyCards()
+  logs.sort((a, b) => Number(a.displayOrder || a.runOrder || 0) - Number(b.displayOrder || b.runOrder || 0) || Number(a.id || 0) - Number(b.id || 0)).forEach((log) => {
+    const code = String(log.agentCode || '') as PricingAgentCode
+    if (!(code in cards)) return
+    const stage = log.stage === 'running' ? 'running' : log.stage === 'failed' ? 'failed' : 'completed'
+    if (stage === 'running') {
+      if (!cards[code]) cards[code] = runningCard()
+      return
+    }
+    const cardPayload = { thinking: String(log.thinking || log.outputSummary || ''), evidence: log.evidence || [], suggestion: log.suggestion || {}, reasonWhy: log.reasonWhy || null }
+    cards[code] = stage === 'failed' ? failedCard(cardPayload) : normalizeCard(cardPayload)
+  })
+  state.cards = cards
+}
 const applySnapshotComparison = (comparison: DecisionComparisonItem[]) => { comparisonData.value = comparison; archiveReportSummary.value = comparisonData.value.find((row) => String(row.resultSummary || '').trim())?.resultSummary || '' }
-const loadSnapshot = async (id: number) => { const res = await getPricingTaskSnapshot(id) as ApiResponse<PricingTaskSnapshot>; if (res.code !== 200 || !res.data) return; applySnapshotDetail(res.data.detail); applySnapshotLogs(Array.isArray(res.data.logs) ? res.data.logs : []); applySnapshotComparison(Array.isArray(res.data.comparison) ? res.data.comparison : []) }
+const loadSnapshot = async (id: number, options: SnapshotLoadOptions = {}) => {
+  const res = await getPricingTaskSnapshot(id) as ApiResponse<PricingTaskSnapshot>
+  if (res.code !== 200 || !res.data) return
+  applySnapshotDetail(res.data.detail)
+  if (options.applyLogs !== false) applySnapshotLogs(Array.isArray(res.data.logs) ? res.data.logs : [])
+  applySnapshotComparison(Array.isArray(res.data.comparison) ? res.data.comparison : [])
+}
+const skipRevealAnimation = async () => {
+  liveRevealEnabled.value = false
+  if (taskId.value) await loadSnapshot(taskId.value)
+  ElMessage.info('已切换为静态进度快照')
+}
 const openExistingTaskArchive = async (id: number) => {
   ElMessage.info('该任务已经执行过，已为你打开决策档案详情')
   await router.push({ path: '/archive', query: { taskId: String(id) } })
 }
 
-const handleStream = async (payload: PricingTaskStreamMessage) => { if (payload.type === 'task_started') state.taskStatus = (payload.status || 'RUNNING') as PricingTaskStatus; if (payload.type === 'agent_card') { const code = payload.agentCode as PricingAgentCode; if (code in state.cards) { if (payload.stage === 'running') { if (!state.cards[code]) state.cards[code] = runningCard() } else { streamArrivedCards.add(code); beginReveal(code); state.cards[code] = normalizeCard(payload.card) } } } if (payload.type === 'task_completed') { state.taskStatus = (payload.status || 'COMPLETED') as PricingTaskStatus; if (payload.result) { state.finalPrice = numberOf(payload.result.finalPrice); state.strategy = String(payload.result.strategy || state.strategy || ''); state.finalSummary = String(payload.result.summary || state.finalSummary || '') } if (taskId.value) await loadSnapshot(taskId.value); stopRealtime(); ElMessage[state.taskStatus === 'MANUAL_REVIEW' ? 'warning' : 'success'](state.taskStatus === 'MANUAL_REVIEW' ? '任务已完成，当前结果需要人工审核' : '智能决策已完成，可以查看结果报告') } if (payload.type === 'task_failed') { state.taskStatus = (payload.status || 'FAILED') as PricingTaskStatus; state.errorMessage = sanitizeErrorMessage(payload.message, state.taskStatus === 'CANCELLED' ? '任务已取消' : '任务执行失败'); if (taskId.value) await loadSnapshot(taskId.value); stopRealtime(); ElMessage[state.taskStatus === 'CANCELLED' || state.taskStatus === 'MANUAL_REVIEW' ? 'warning' : 'error'](state.errorMessage) } }
+const handleStream = async (payload: PricingTaskStreamMessage) => {
+  if (payload.type === 'task_started') state.taskStatus = (payload.status || 'RUNNING') as PricingTaskStatus
+  if (payload.type === 'agent_card') {
+    const code = payload.agentCode as PricingAgentCode
+    if (code in state.cards) {
+      if (payload.stage === 'running') {
+        if (!state.cards[code]) state.cards[code] = runningCard()
+      } else {
+        queueStreamCard(code, payload.card, payload.stage === 'failed' ? 'failed' : 'completed')
+      }
+    }
+  }
+  if (payload.type === 'task_completed') {
+    state.taskStatus = (payload.status || 'COMPLETED') as PricingTaskStatus
+    liveRevealEnabled.value = false
+    if (payload.result) {
+      state.finalPrice = numberOf(payload.result.finalPrice)
+      state.strategy = String(payload.result.strategy || state.strategy || '')
+      state.finalSummary = String(payload.result.summary || state.finalSummary || '')
+    }
+    if (taskId.value) await loadSnapshot(taskId.value, { applyLogs: !hasRevealInProgress() })
+    stopRealtime()
+    ElMessage[state.taskStatus === 'MANUAL_REVIEW' ? 'warning' : 'success'](state.taskStatus === 'MANUAL_REVIEW' ? '任务已完成，当前结果需要人工审核' : '智能决策已完成，可以查看结果报告')
+  }
+  if (payload.type === 'task_failed') {
+    state.taskStatus = (payload.status || 'FAILED') as PricingTaskStatus
+    liveRevealEnabled.value = false
+    state.errorMessage = sanitizeErrorMessage(payload.message, state.taskStatus === 'CANCELLED' ? '任务已取消' : '任务执行失败')
+    if (taskId.value) await loadSnapshot(taskId.value, { applyLogs: !hasRevealInProgress() })
+    stopRealtime()
+    ElMessage[state.taskStatus === 'CANCELLED' || state.taskStatus === 'MANUAL_REVIEW' ? 'warning' : 'error'](state.errorMessage)
+  }
+}
 
-const startPolling = () => { if (pollTimer || !taskId.value) return; pollTimer = setInterval(async () => { if (!taskId.value) return; if (!isRunning(state.taskStatus)) { stopRealtime(); return } await loadSnapshot(taskId.value); if (isTerminal(state.taskStatus)) stopRealtime() }, 2000) }
-const startStream = async (id: number) => { stopRealtime(); aborter = new AbortController(); try { const response = await fetch(getPricingTaskStreamUrl(id), { method: 'GET', headers: { Accept: 'text/event-stream', Authorization: `Bearer ${getAuthToken()}` }, credentials: 'include', signal: aborter.signal }); if (!response.ok || !response.body) throw new Error('stream failed'); const reader = response.body.getReader(); const decoder = new TextDecoder('utf-8'); let buffer = ''; while (true) { const { done, value } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); const chunks = buffer.split('\n\n'); buffer = chunks.pop() || ''; for (const chunk of chunks) { const data = chunk.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n'); if (!data) continue; try { await handleStream(JSON.parse(data) as PricingTaskStreamMessage) } catch {} } } } catch { if (taskId.value) await loadSnapshot(taskId.value) } finally { aborter = null } }
+const startPolling = () => {
+  if (pollTimer || !taskId.value) return
+  pollTimer = setInterval(async () => {
+    if (!taskId.value) return
+    if (!isRunning(state.taskStatus)) {
+      stopRealtime()
+      return
+    }
+    await loadSnapshot(taskId.value, { applyLogs: !liveRevealEnabled.value && !hasRevealInProgress() })
+    if (isTerminal(state.taskStatus)) {
+      if (liveRevealEnabled.value || hasRevealInProgress()) stopPolling()
+      else stopRealtime()
+    }
+  }, 2000)
+}
+const startStream = async (id: number) => {
+  stopRealtime()
+  const controller = new AbortController()
+  aborter = controller
+  try {
+    const response = await fetch(getPricingTaskStreamUrl(id), { method: 'GET', headers: { Accept: 'text/event-stream', Authorization: `Bearer ${getAuthToken()}` }, credentials: 'include', signal: controller.signal })
+    if (!response.ok || !response.body) throw new Error('stream failed')
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const chunks = buffer.split('\n\n')
+      buffer = chunks.pop() || ''
+      for (const chunk of chunks) {
+        const data = chunk.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n')
+        if (!data) continue
+        try { await handleStream(JSON.parse(data) as PricingTaskStreamMessage) } catch {}
+      }
+    }
+  } catch {
+    if (!controller.signal.aborted && taskId.value) {
+      clearRevealState()
+      await loadSnapshot(taskId.value)
+    }
+  } finally {
+    if (aborter === controller) aborter = null
+  }
+}
 
-const startTask = async () => { if (!taskConfig.platform) return ElMessage.warning('请选择平台'); if (!taskConfig.shopId) return ElMessage.warning('请选择店铺'); if (!taskConfig.productId) return ElMessage.warning('请选择一个商品'); starting.value = true; try { resetState(); state.taskStatus = 'QUEUED'; const res = await createPricingTask({ productId: taskConfig.productId, constraints: taskConfig.constraints, strategyGoal: taskConfig.strategyGoal }) as ApiResponse<number>; if (res.code !== 200 || !res.data) { state.taskStatus = 'FAILED'; state.errorMessage = sanitizeErrorMessage(res.message, '启动任务失败'); return ElMessage.error(state.errorMessage) } taskId.value = Number(res.data); await loadSnapshot(taskId.value); if (isArchivedTaskStatus(state.taskStatus)) { await openExistingTaskArchive(taskId.value); return } activeStep.value = 1; void startStream(taskId.value); startPolling(); ElMessage.success('任务已启动，进入智能决策阶段') } catch { state.taskStatus = 'FAILED'; state.errorMessage = '启动任务失败'; ElMessage.error(state.errorMessage) } finally { starting.value = false } }
+const startTask = async () => {
+  if (!taskConfig.platform) return ElMessage.warning('请选择平台')
+  if (!taskConfig.shopId) return ElMessage.warning('请选择店铺')
+  if (!taskConfig.productId) return ElMessage.warning('请选择一个商品')
+  starting.value = true
+  try {
+    resetState()
+    state.taskStatus = 'QUEUED'
+    const res = await createPricingTask({ productId: taskConfig.productId, constraints: taskConfig.constraints, strategyGoal: taskConfig.strategyGoal }) as ApiResponse<number>
+    if (res.code !== 200 || !res.data) {
+      state.taskStatus = 'FAILED'
+      state.errorMessage = sanitizeErrorMessage(res.message, '启动任务失败')
+      return ElMessage.error(state.errorMessage)
+    }
+    taskId.value = Number(res.data)
+    await loadSnapshot(taskId.value, { applyLogs: false })
+    if (isArchivedTaskStatus(state.taskStatus)) {
+      await openExistingTaskArchive(taskId.value)
+      return
+    }
+    liveRevealEnabled.value = true
+    activeStep.value = 1
+    void startStream(taskId.value)
+    startPolling()
+    ElMessage.success('任务已启动，进入智能决策阶段')
+  } catch {
+    state.taskStatus = 'FAILED'
+    state.errorMessage = '启动任务失败'
+    ElMessage.error(state.errorMessage)
+  } finally {
+    starting.value = false
+  }
+}
 const cancelTask = async () => { if (!taskId.value || !canCancelTask.value) return; try { await ElMessageBox.confirm('确认取消当前任务吗？', '取消任务', { type: 'warning', confirmButtonText: '确认取消', cancelButtonText: '继续执行' }); await loadSnapshot(taskId.value); if (!['QUEUED', 'RUNNING', 'RETRYING'].includes(state.taskStatus)) return ElMessage.warning(`当前任务状态为 ${statusLabel.value}，不支持取消`); const res = await cancelPricingTask(taskId.value); if (res.code !== 200) return ElMessage.error(sanitizeErrorMessage(res.message, '取消任务失败')); stopRealtime(); state.taskStatus = 'CANCELLED'; state.errorMessage = '任务已取消'; await loadSnapshot(taskId.value); ElMessage.warning('任务已取消') } catch (error) { if (error !== 'cancel') ElMessage.error('取消任务失败') } }
-const refreshSnapshot = async () => { if (!taskId.value) return; await loadSnapshot(taskId.value); if (isRunning(state.taskStatus) && !aborter) void startStream(taskId.value); if (isRunning(state.taskStatus)) startPolling(); ElMessage.success(`已刷新快照，当前已完成 ${completedCardCount.value}/4 条分析结果`) }
+const refreshSnapshot = async () => { if (!taskId.value) return; clearRevealState(); await loadSnapshot(taskId.value); if (isRunning(state.taskStatus) && !aborter) void startStream(taskId.value); if (isRunning(state.taskStatus)) startPolling(); ElMessage.success(`已刷新快照，当前已完成 ${completedCardCount.value}/4 条分析结果`) }
 const resetTask = () => { resetState(); activeStep.value = 0 }
 const applyPrice = async (row: DecisionComparisonItem) => { const id = Number(row.resultId || 0); if (!id) return ElMessage.error('未找到可应用的结果记录'); try { await ElMessageBox.confirm(`确认将商品“${String(row.productTitle || '-')}”的售价更新为 ${currency(row.suggestedPrice)} 吗？`, '应用价格建议', { type: 'warning', confirmButtonText: '确认应用', cancelButtonText: '取消' }); applyingIds.value.push(id); const res = await applyDecision(id); if (res.code !== 200) return ElMessage.error(sanitizeErrorMessage(res.message, '应用失败')); ElMessage.success('价格建议已应用'); if (taskId.value) await loadSnapshot(taskId.value) } catch (error) { if (error !== 'cancel') ElMessage.error('应用失败') } finally { applyingIds.value = applyingIds.value.filter((item) => item !== id) } }
 
@@ -294,5 +494,5 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 </script>
 
 <style scoped>
-.llm-alert{margin-bottom:16px}.alert-link{color:#409eff;text-decoration:underline;margin-left:4px}.pricing-page{display:grid;gap:16px}.panel-card{padding:18px;border-radius:16px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05)}.section-head{display:flex;justify-content:space-between;gap:16px;margin-bottom:16px}.section-head h2{margin:0 0 6px;font-size:28px;color:#172033}.section-head p{margin:0;color:#6b7280}.config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 14px}.full-span{grid-column:1/-1}.toolbar{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.agent-list{display:grid;gap:14px}.agent-box{padding:18px;border-radius:14px;border:1px solid rgba(226,232,240,.9);background:linear-gradient(180deg,#fff 0%,#f8fbff 100%)}.agent-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:12px}.agent-head h3{margin:0;font-size:24px;color:#182236}.thinking{white-space:pre-wrap;line-height:1.8}.waiting{min-height:140px;display:grid;place-items:center;color:#64748b}.running-pulse{display:flex;align-items:center;justify-content:center;gap:8px;color:#e6a23c;font-size:15px}.pulse-dot{width:10px;height:10px;border-radius:50%;background:#e6a23c;animation:pulse 1.2s ease-in-out infinite}.fade-in-item{opacity:0;animation:fadeSlideIn .4s ease forwards}@keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.6);opacity:.4}}@keyframes fadeSlideIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}.report-page,.metric-grid{display:grid;gap:12px}.metric-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.metric-card{padding:18px;border-radius:14px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05);display:grid;gap:8px}.metric-card span{font-size:13px;color:#64748b}.metric-card strong{font-size:24px;color:#172033}@media (max-width:1100px){.config-grid,.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:760px){.config-grid,.metric-grid{grid-template-columns:1fr}.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}}
+.llm-alert{margin-bottom:16px}.alert-link{color:#409eff;text-decoration:underline;margin-left:4px}.pricing-page{display:grid;gap:16px}.panel-card{padding:18px;border-radius:16px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05)}.section-head{display:flex;justify-content:space-between;gap:16px;margin-bottom:16px}.section-head h2{margin:0 0 6px;font-size:28px;color:#172033}.section-head p{margin:0;color:#6b7280}.config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 14px}.full-span{grid-column:1/-1}.toolbar{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.agent-list{display:grid;gap:14px}.agent-box{padding:18px;border-radius:14px;border:1px solid rgba(226,232,240,.9);background:linear-gradient(180deg,#fff 0%,#f8fbff 100%)}.agent-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:12px}.agent-head h3{margin:0;font-size:24px;color:#182236}.thinking{white-space:pre-wrap;line-height:1.8}.failed-card{display:grid;gap:8px;padding:14px 16px;border-radius:12px;border:1px solid rgba(239,68,68,.18);background:#fef2f2}.failed-card-title{font-size:14px;font-weight:700;color:#b42318}.failed-card-message{margin:0;line-height:1.7;color:#7a271a}.waiting{min-height:140px;display:grid;place-items:center;color:#64748b}.running-pulse{display:flex;align-items:center;justify-content:center;gap:8px;color:#e6a23c;font-size:15px}.pulse-dot{width:10px;height:10px;border-radius:50%;background:#e6a23c;animation:pulse 1.2s ease-in-out infinite}.fade-in-item{opacity:0;animation:fadeSlideIn .4s ease forwards}@keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.6);opacity:.4}}@keyframes fadeSlideIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}.report-page,.metric-grid{display:grid;gap:12px}.metric-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.metric-card{padding:18px;border-radius:14px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05);display:grid;gap:8px}.metric-card span{font-size:13px;color:#64748b}.metric-card strong{font-size:24px;color:#172033}@media (max-width:1100px){.config-grid,.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:760px){.config-grid,.metric-grid{grid-template-columns:1fr}.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}}
 </style>

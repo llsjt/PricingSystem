@@ -243,13 +243,17 @@
               <div class="log-head">
                 <div class="log-title">
                   <strong>{{ getLogAgentName(log) }}</strong>
-                  <el-tag size="small" :type="isSuccessStatus(log.runStatus) ? 'success' : 'warning'">
+                  <el-tag size="small" :type="getRunStatusType(log.runStatus)">
                     {{ getRunStatusText(log.runStatus) }}
                   </el-tag>
                 </div>
                 <span>{{ formatDateTime(log.createdAt) }}</span>
               </div>
-              <div class="log-content">
+              <section v-if="isFailedLog(log)" class="failed-log-card">
+                <div class="failed-log-title">执行失败</div>
+                <p class="failed-log-message">{{ getLogFailureSummary(log) }}</p>
+              </section>
+              <div v-else class="log-content">
                 <section class="log-section">
                   <h4>思考过程</h4>
                   <p>{{ getLogThinking(log) }}</p>
@@ -270,13 +274,6 @@
                   <h4>为什么给出这个建议</h4>
                   <p>{{ getLogReason(log) }}</p>
                 </section>
-              </div>
-              <div class="log-meta">
-                <span>建议价：{{ formatCurrency(log.suggestedPrice) }}</span>
-                <span>预估利润：{{ formatCurrency(log.predictedProfit) }}</span>
-                <span>置信度：{{ formatPercent(log.confidenceScore) }}</span>
-                <span>风险等级：{{ toNaturalChinese(log.riskLevel) }}</span>
-                <span>人工复核：{{ log.needManualReview ? '需要' : '否' }}</span>
               </div>
             </article>
             <el-empty v-if="orderedLogs.length === 0" description="暂无协同日志" />
@@ -308,16 +305,18 @@ const {
   formatPercent,
   formatRange,
   formatSignedCurrency,
+  getLogFailureSummary,
   getLogAgentName,
   getLogEvidenceLines,
   getLogReason,
   getLogSuggestionLines,
   getLogThinking,
+  getRunStatusType,
   getRunStatusText,
   handleDateChange,
   handleSearch,
   handleSortChange,
-  isSuccessStatus,
+  isFailedLog,
   loading,
   orderedLogs,
   queryParams,
@@ -497,6 +496,27 @@ const {
   gap: 10px;
 }
 
+.failed-log-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(239, 68, 68, 0.18);
+  background: #fef2f2;
+}
+
+.failed-log-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #b42318;
+}
+
+.failed-log-message {
+  margin: 0;
+  line-height: 1.7;
+  color: #7a271a;
+}
+
 .log-section {
   padding: 12px 14px;
   border-radius: 12px;
@@ -522,15 +542,6 @@ const {
   gap: 6px;
   color: var(--text-primary);
   line-height: 1.7;
-}
-
-.log-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 10px;
-  color: var(--text-3);
-  font-size: 12px;
 }
 
 .price-text {

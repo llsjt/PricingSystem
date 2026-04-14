@@ -34,6 +34,7 @@ public class PricingTaskStreamService {
     private static final String CHANNEL = "pricing.task.card";
     private static final String MANUAL_REVIEW_STRATEGY = "人工审核";
     private static final int EXPECTED_AGENT_CARD_COUNT = 4;
+    private static final ObjectMapper STAGE_OBJECT_MAPPER = new ObjectMapper();
     private static final ExecutorService STREAM_EXECUTOR = Executors.newCachedThreadPool(runnable -> {
         Thread thread = new Thread(runnable, "pricing-task-stream");
         thread.setDaemon(true);
@@ -195,11 +196,35 @@ public class PricingTaskStreamService {
     }
 
     private static String normalizeLogStage(AgentRunLog item) {
+        boolean suggestionError = hasSuggestionError(item == null ? null : item.getSuggestionJson());
         String stage = item == null ? null : item.getStage();
         if (stage == null || stage.isBlank()) {
-            return "completed";
+            return suggestionError ? "failed" : "completed";
         }
-        return "running".equalsIgnoreCase(stage.trim()) ? "running" : "completed";
+        String normalized = stage.trim().toLowerCase();
+        if ("running".equals(normalized) || "failed".equals(normalized)) {
+            return normalized;
+        }
+        if (suggestionError) {
+            return "failed";
+        }
+        return "completed";
+    }
+
+    private static boolean hasSuggestionError(String suggestionJson) {
+        if (suggestionJson == null || suggestionJson.isBlank()) {
+            return false;
+        }
+        try {
+            Map<String, Object> suggestion = STAGE_OBJECT_MAPPER.readValue(
+                    suggestionJson,
+                    new TypeReference<Map<String, Object>>() {
+                    }
+            );
+            return Boolean.TRUE.equals(suggestion.get("error"));
+        } catch (Exception ignore) {
+            return false;
+        }
     }
 
     static Map<String, Object> buildCardPayload(
