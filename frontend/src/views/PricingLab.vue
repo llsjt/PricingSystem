@@ -158,6 +158,7 @@ import { sanitizeErrorMessage } from '../utils/error'
 import { getFailureSummary } from '../utils/failureSummary'
 import { hasConfiguredLlmApiKey } from '../utils/llmConfigResponse'
 import { clearRevealQueue, createRevealQueueState, finishReveal, isActiveReveal, queueRevealCardRequest } from '../utils/agentRevealQueue'
+import { formatEvidenceValue, getSuggestionLines, normalizeAgentCode, toNaturalChinese } from '../utils/decisionDisplay'
 import TypewriterText from '../components/TypewriterText.vue'
 
 interface ApiResponse<T> { code: number; data: T; message?: string }
@@ -286,9 +287,28 @@ const markThinkingDone = (code: PricingAgentCode) => {
   ensureRevealLineCounts(code).evidence = 1
 }
 const resetState = () => { stopRealtime(); clearRevealState(); taskId.value = null; state.taskStatus = 'IDLE'; state.cards = emptyCards(); state.finalPrice = null; state.strategy = ''; state.finalSummary = ''; state.errorMessage = ''; comparisonData.value = []; archiveReportSummary.value = ''; streamArrivedCards.clear() }
-const evidenceLines = (code: PricingAgentCode) => (state.cards[code]?.evidence || []).map((item, i) => `${String(item.label || `依据${i + 1}`)}：${item.value == null ? '-' : typeof item.value === 'object' ? JSON.stringify(item.value) : String(item.value)}`).length ? (state.cards[code]?.evidence || []).map((item, i) => `${String(item.label || `依据${i + 1}`)}：${item.value == null ? '-' : typeof item.value === 'object' ? JSON.stringify(item.value) : String(item.value)}`) : ['暂无依据']
-const suggestionKeyMap: Record<string, string> = { summary: '建议说明', recommendedPrice: '建议定价', expectedSales: '预期销量', expectedProfit: '预期利润', expectedProfitRate: '预期利润率', marketScore: '市场接受度评分', pass: '是否自动通过', riskLevel: '风险等级', action: '建议动作', finalPrice: '最终建议价', strategy: '执行策略', error: '是否异常', message: '异常信息' }
-const suggestionLines = (code: PricingAgentCode) => { const s = state.cards[code]?.suggestion || {}; const lines: string[] = []; const range = s.priceRange as Record<string, unknown> | undefined; if (range && numberOf(range.min) != null && numberOf(range.max) != null) lines.push(`建议价格区间：${currency(range.min)} ~ ${currency(range.max)}`); for (const [key, value] of Object.entries(s)) { if (key === 'priceRange' || value == null) continue; const label = suggestionKeyMap[key] || key; const display = typeof value === 'boolean' ? (value ? '是' : '否') : typeof value === 'number' ? (key.includes('Rate') ? `${(value * 100).toFixed(2)}%` : key.includes('Price') || key.includes('Profit') ? `¥${value}` : String(value)) : String(value); lines.push(`${label}：${display}`) } return lines.length ? lines : ['暂无建议'] }
+const evidenceLines = (code: PricingAgentCode) => {
+  const evidence = state.cards[code]?.evidence || []
+  if (!evidence.length) return ['暂无依据']
+  return evidence.map((item, index) => {
+    const label = String(item.label || `依据${index + 1}`)
+    return `${label}：${formatEvidenceValue(label, item.value)}`
+  })
+}
+const suggestionLines = (code: PricingAgentCode) => {
+  const suggestion = state.cards[code]?.suggestion && typeof state.cards[code]?.suggestion === 'object'
+    ? state.cards[code]?.suggestion as Record<string, unknown>
+    : {}
+  const lines = getSuggestionLines(normalizeAgentCode(code), suggestion)
+  if (code !== 'MARKET_INTEL') return lines
+  const sourceStatus = String(suggestion.sourceStatus || '').toUpperCase()
+  const dataQuality = String(suggestion.dataQuality || '').toUpperCase()
+  const extra: string[] = []
+  if (sourceStatus && sourceStatus !== 'OK') extra.push('提示：未获取到可靠竞品，市场建议已降级')
+  else if (dataQuality === 'LOW') extra.push('提示：本次竞品数据不足，仅供参考')
+  if (suggestion.pricingPosition) extra.push(`价格位置：${toNaturalChinese(suggestion.pricingPosition)}`)
+  return [...lines, ...extra]
+}
 const visibleEvidenceLines = (code: PricingAgentCode) => {
   const lines = evidenceLines(code)
   if (!shouldAnimate(code) || revealStages[code] === 'suggestion' || revealStages[code] === 'done') return lines

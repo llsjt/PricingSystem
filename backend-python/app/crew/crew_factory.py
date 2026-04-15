@@ -8,7 +8,6 @@ CrewAI Crew 构建工厂
 减少 Agent 的工具调用次数和 LLM 往返，大幅降低总耗时。
 """
 
-import json
 from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
@@ -16,6 +15,7 @@ from typing import Any
 from crewai import Crew, Process, Task
 
 from app.agents.crewai_agents import build_crewai_agents
+from app.core.config import get_settings
 from app.crew.protocols import CrewRunPayload
 from app.services.competitor_service import CompetitorService
 from app.tools.product_data_tool import ProductDataTool
@@ -106,8 +106,18 @@ def _precompute_competitor_summary(payload: CrewRunPayload) -> str:
     status = str(result.get("sourceStatus", "FAILED"))
     message = str(result.get("message", ""))
     raw_item_count = int(result.get("rawItemCount", 0) or 0)
+    filtered_item_count = int(result.get("filteredItemCount", len(competitors)) or 0)
+    valid_competitor_count = int(result.get("validCompetitorCount", len(competitors)) or 0)
+    market_floor = float(result.get("marketFloor", 0) or 0)
+    market_median = float(result.get("marketMedian", 0) or 0)
+    market_ceiling = float(result.get("marketCeiling", 0) or 0)
+    market_average = float(result.get("marketAverage", 0) or 0)
+    data_quality = str(result.get("dataQuality", "LOW"))
+    quality_reasons = list(result.get("qualityReasons") or [])
     competitor_samples = len(competitors)
     no_real_competitor_data = status.upper() != "OK" or competitor_samples == 0
+    min_valid_count = max(int(get_settings().market_competitor_min_valid_count), 1)
+    low_quality = status.upper() == "OK" and 0 < valid_competitor_count < min_valid_count
 
     lines = [
         f"竞品来源: {source}",
@@ -116,6 +126,16 @@ def _precompute_competitor_summary(payload: CrewRunPayload) -> str:
         f"原始样本数: {raw_item_count}",
         f"竞品样本数: {competitor_samples}",
     ]
+    lines.extend(
+        [
+            f"筛选后样本数: {filtered_item_count}",
+            f"有效样本数: {valid_competitor_count}",
+            f"数据质量: {data_quality}",
+        ]
+    )
+    if quality_reasons:
+        lines.append(f"质量原因: {', '.join(str(item) for item in quality_reasons)}")
+
     if no_real_competitor_data:
         lines.extend(
             [
@@ -133,10 +153,21 @@ def _precompute_competitor_summary(payload: CrewRunPayload) -> str:
         return "\n".join(lines)
 
     # 计算竞品统计
+    if low_quality:
+        lines.extend(
+            [
+                "LOW_DATA_RULES:",
+                f"- validCompetitorCount < {min_valid_count}: do not output an aggressive market conclusion.",
+                "- Prefer a conservative range over a strong single-price recommendation.",
+                "- If suggestedPrice is present, keep confidence <= 0.6.",
+            ]
+        )
+
     prices = [float(c["price"]) for c in competitors if c.get("price") is not None]
-    min_price = min(prices) if prices else 0.0
-    max_price = max(prices) if prices else 0.0
-    avg_price = sum(prices) / len(prices) if prices else 0.0
+    min_price = market_floor or (min(prices) if prices else 0.0)
+    max_price = market_ceiling or (max(prices) if prices else 0.0)
+    avg_price = market_average or (sum(prices) / len(prices) if prices else 0.0)
+    lines.append(f"市场中位价: {market_median:.2f}元")
     lines.extend(
         [
             f"市场最低价: {min_price:.2f}元",
@@ -235,6 +266,11 @@ def build_pricing_crew(
             "   - 利润优先：可略高于市场均价\n"
             "   - 清仓促销：接近市场地板价\n"
             "   - 市场份额优先：接近市场均价\n\n"
+            "硬规则（必须严格执行）：\n"
+            "- sourceStatus != OK 时，不得编造市场价格带，建议价必须保守并在summary中说明原因。\n"
+            "- validCompetitorCount < 3 时，不得输出强建议价；只能输出风险提示和弱建议。\n"
+            "- dataQuality = LOW 时，confidence 不得高于 0.6。\n"
+            "- 所有结论必须引用给定统计值，不允许重新虚构样本。\n\n"
             "最终输出必须是严格的JSON格式："
         ),
         expected_output=(
@@ -242,10 +278,23 @@ def build_pricing_crew(
             '{"suggestedPrice": 市场建议价格(数字), '
             '"marketFloor": 市场最低价(数字), '
             '"marketCeiling": 市场最高价(数字), '
+            '"marketMedian": 市场中位价(数字), '
+            '"marketAverage": 市场均价(数字), '
             '"confidence": 置信度(0-1之间的小数), '
             '"thinking": "你的分析思路(中文)", '
             '"summary": "市场分析摘要(中文字符串)", '
-            '"competitorSamples": 竞品样本数(整数)}'
+            '"competitorSamples": 竞品样本数(整数), '
+            '"rawItemCount": 原始样本数(整数), '
+            '"filteredItemCount": 过滤后样本数(整数), '
+            '"validCompetitorCount": 有效竞品数(整数), '
+            '"dataQuality": "HIGH/MEDIUM/LOW", '
+            '"qualityReasons": ["质量原因"], '
+            '"pricingPosition": "当前价格相对市场位置说明", '
+            '"usedCompetitorCount": 纳入分析的有效竞品数(整数), '
+            '"riskNotes": "风险提示(中文，可空)", '
+            '"evidenceSummary": "证据摘要(中文，可空)", '
+            '"source": "竞品来源", '
+            '"sourceStatus": "竞品状态"}'
         ),
         agent=agents["MARKET_INTEL"],
         callback=on_task_done,

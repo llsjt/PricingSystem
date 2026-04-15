@@ -51,6 +51,17 @@ class MarketAgentOutput(BaseModel):
     confidence: float
     summary: str
     competitor_samples: int = Field(alias="competitorSamples")
+    source: str | None = None
+    source_status: str | None = Field(default=None, alias="sourceStatus")
+    raw_item_count: int | None = Field(default=None, alias="rawItemCount")
+    filtered_item_count: int | None = Field(default=None, alias="filteredItemCount")
+    valid_competitor_count: int | None = Field(default=None, alias="validCompetitorCount")
+    data_quality: str | None = Field(default=None, alias="dataQuality")
+    quality_reasons: list[str] | None = Field(default=None, alias="qualityReasons")
+    pricing_position: str | None = Field(default=None, alias="pricingPosition")
+    used_competitor_count: int | None = Field(default=None, alias="usedCompetitorCount")
+    risk_notes: str | None = Field(default=None, alias="riskNotes")
+    evidence_summary: str | None = Field(default=None, alias="evidenceSummary")
 
 
 class RiskAgentOutput(BaseModel):

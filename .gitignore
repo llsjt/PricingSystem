@@ -16,6 +16,7 @@ backend-python/.pytest_cache/
 backend-python/.mypy_cache/
 backend-python/.ruff_cache/
 backend-python/.env
+backend-python/.env.local
 /.env.public-beta
 backend-python/.claude/
 
@@ -26,6 +27,7 @@ frontend/.idea/
 frontend/.vite/
 frontend/coverage/
 frontend/.eslintcache
+frontend/.env.local
 
 # === IDE ===
 .vscode/

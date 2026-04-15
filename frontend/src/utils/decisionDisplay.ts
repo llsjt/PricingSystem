@@ -1,5 +1,5 @@
 import type { DecisionLogItem, PricingAgentCode } from '../api/decision'
-import { formatCurrency, formatPercent } from './formatters'
+import { formatCurrency, formatPercent } from './formatters.ts'
 
 export type DecisionDisplayLine = string
 
@@ -23,9 +23,9 @@ const TEXT_VALUE_MAP: Record<string, string> = {
   MARKET_SHARE: '市场份额优先',
   AUTO_EXECUTE: '自动执行',
   MANUAL_REVIEW: '人工审核',
-  LOW: '低风险',
-  MEDIUM: '中风险',
-  HIGH: '高风险',
+  LOW: '低',
+  MEDIUM: '中',
+  HIGH: '高',
   QUEUED: '待执行',
   RETRYING: '重试中',
   SUCCESS: '成功',
@@ -33,7 +33,15 @@ const TEXT_VALUE_MAP: Record<string, string> = {
   COMPLETED: '已完成',
   CANCELLED: '已取消',
   FAILED: '失败',
-  PENDING: '待执行'
+  PENDING: '待执行',
+  SNAPSHOT: '历史快照',
+  SIMULATION_FALLBACK: '模拟补全'
+}
+
+const DATA_QUALITY_MAP: Record<string, string> = {
+  HIGH: '高',
+  MEDIUM: '中',
+  LOW: '低'
 }
 
 export const normalizeAgentCode = (code?: string | null): PricingAgentCode | null => {
@@ -65,6 +73,11 @@ export const getRunStatusType = (status?: string | null): 'success' | 'warning' 
 }
 
 export const getRunStatusText = (status?: string | null) => (status ? toNaturalChinese(status) : '-')
+
+const formatDataQualityText = (value: unknown) => {
+  const text = String(value ?? '').trim().toUpperCase()
+  return DATA_QUALITY_MAP[text] || String(value ?? '-')
+}
 
 const toNumber = (value: unknown) => {
   const numeric = Number(value)
@@ -126,6 +139,10 @@ const formatObjectLine = (value: Record<string, unknown>) => {
 export const formatEvidenceValue = (label: unknown, value: unknown): string => {
   if (value == null) return '-'
 
+  if (String(label || '').includes('数据质量')) {
+    return formatDataQualityText(value)
+  }
+
   if (Array.isArray(value)) {
     if (value.length === 0) return '暂无数据'
     const lines = value.map((item) => {
@@ -183,6 +200,22 @@ export const getSuggestionLines = (
     if (recommendedPrice != null) lines.push(`建议定价：${formatCurrency(recommendedPrice)}`)
     const marketScore = toNumber(suggestion.marketScore)
     if (marketScore != null) lines.push(`市场接受度评分：${marketScore.toFixed(1)}`)
+    if (suggestion.dataQuality != null) lines.push(`数据质量：${formatDataQualityText(suggestion.dataQuality)}`)
+    if (suggestion.pricingPosition != null) lines.push(`当前价格位置：${toNaturalChinese(suggestion.pricingPosition)}`)
+    const usedCompetitorCount = toNumber(suggestion.usedCompetitorCount)
+    if (usedCompetitorCount != null) lines.push(`纳入分析竞品：${usedCompetitorCount}`)
+    if (suggestion.source != null) lines.push(`竞品来源：${toNaturalChinese(suggestion.source)}`)
+    if (suggestion.sourceStatus != null) lines.push(`竞品状态：${toNaturalChinese(suggestion.sourceStatus)}`)
+    if (suggestion.evidenceSummary != null) lines.push(`证据摘要：${toNaturalChinese(suggestion.evidenceSummary)}`)
+    if (suggestion.riskNotes != null) lines.push(`风险提示：${toNaturalChinese(suggestion.riskNotes)}`)
+
+    const sourceStatus = String(suggestion.sourceStatus || '').toUpperCase()
+    const dataQuality = String(suggestion.dataQuality || '').toUpperCase()
+    if (sourceStatus && sourceStatus !== 'OK') {
+      lines.push('未获取到可靠竞品，市场建议已降级')
+    } else if (dataQuality === 'LOW') {
+      lines.push('本次竞品数据不足，仅供参考')
+    }
   }
 
   if (code === 'RISK_CONTROL') {
@@ -212,11 +245,21 @@ export const getSuggestionLines = (
   }
 
   const keyMap: Record<string, string> = {
-    summary: '建议说明', recommendedPrice: '建议定价', expectedSales: '预期销量',
-    expectedProfit: '预期利润', expectedProfitRate: '预期利润率', marketScore: '市场接受度评分',
-    pass: '是否自动通过', riskLevel: '风险等级', action: '建议动作',
-    finalPrice: '最终建议价', strategy: '执行策略', error: '是否异常', message: '异常信息'
+    summary: '建议说明',
+    recommendedPrice: '建议定价',
+    expectedSales: '预期销量',
+    expectedProfit: '预期利润',
+    expectedProfitRate: '预期利润率',
+    marketScore: '市场接受度评分',
+    pass: '是否自动通过',
+    riskLevel: '风险等级',
+    action: '建议动作',
+    finalPrice: '最终建议价',
+    strategy: '执行策略',
+    error: '是否异常',
+    message: '异常信息'
   }
+
   return Object.entries(suggestion)
     .filter(([, value]) => value !== null && value !== undefined)
     .map(([key, value]) => `${keyMap[key] || key}：${formatPrimitive(key, value)}`)
@@ -251,4 +294,4 @@ export const formatPriceRange = (min?: number | null, max?: number | null) =>
   `${formatCurrency(min)} - ${formatCurrency(max)}`
 
 export const createApplyDecisionConfirmMessage = (productTitle: unknown, suggestedPrice: unknown) =>
-  `确认将商品“${String(productTitle || '-') }”的售价更新为 ${formatCurrency(suggestedPrice)} 吗？`
+  `确认将商品“${String(productTitle || '-')}”的售价更新为 ${formatCurrency(suggestedPrice)} 吗？`

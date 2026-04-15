@@ -145,19 +145,59 @@ class OrchestrationService:
 
         # 从 LLM 输出中提取竞品样本数
         sample_count = _safe_int(parsed.get("competitorSamples"))
+        raw_count = _safe_int(parsed.get("rawItemCount", sample_count))
+        filtered_count = _safe_int(parsed.get("filteredItemCount", sample_count))
         market_floor = _safe_float(parsed.get("marketFloor"))
+        market_median = _safe_float(parsed.get("marketMedian"))
         market_ceiling = _safe_float(parsed.get("marketCeiling"))
+        market_average = _safe_float(parsed.get("marketAverage"))
+        valid_count = _safe_int(parsed.get("usedCompetitorCount", parsed.get("validCompetitorCount", sample_count)))
+        source = str(parsed.get("source", "UNKNOWN"))
+        source_status = str(parsed.get("sourceStatus", "UNKNOWN"))
+        data_quality = str(parsed.get("dataQuality", "LOW"))
+        quality_reasons = parsed.get("qualityReasons")
+        pricing_position = str(parsed.get("pricingPosition", "")).strip()
+        evidence_summary = str(parsed.get("evidenceSummary", "")).strip()
+
+        risk_notes = parsed.get("riskNotes")
+        degraded = source_status.upper() != "OK" or data_quality.upper() == "LOW" or valid_count < 3
+        if not risk_notes and degraded:
+            risk_notes = "本次竞品数据不足，仅供参考"
 
         evidence = [
+            {"label": "原始样本数", "value": raw_count},
+            {"label": "过滤后样本数", "value": filtered_count},
             {"label": "竞品样本数", "value": sample_count},
+            {"label": "有效样本数", "value": valid_count},
             {"label": "市场最低价", "value": market_floor},
+            {"label": "市场中位价", "value": market_median},
             {"label": "市场最高价", "value": market_ceiling},
+            {"label": "市场均价", "value": market_average},
         ]
+
+        evidence.extend(
+            [
+                {"label": "竞品来源", "value": source},
+                {"label": "竞品状态", "value": source_status},
+                {"label": "数据质量", "value": data_quality},
+            ]
+        )
+        if quality_reasons:
+            evidence.append({"label": "质量原因", "value": quality_reasons})
+        if evidence_summary:
+            evidence.append({"label": "证据摘要", "value": evidence_summary})
 
         suggestion = {
             "priceRange": {"min": market_floor, "max": market_ceiling},
             "recommendedPrice": float(parsed.get("suggestedPrice", 0)),
             "marketScore": round(float(parsed.get("confidence", 0.5)) * 100, 2),
+            "source": source,
+            "sourceStatus": source_status,
+            "dataQuality": data_quality,
+            "pricingPosition": pricing_position,
+            "usedCompetitorCount": valid_count,
+            "riskNotes": risk_notes,
+            "evidenceSummary": evidence_summary or None,
             "summary": parsed.get("summary", "市场情报分析完成"),
         }
 
