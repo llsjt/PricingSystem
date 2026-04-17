@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -12,8 +13,13 @@ from app.models.agent_run_log import AgentRunLog
 from app.models.pricing_task import PricingTask
 from app.repos.log_repo import LogRepo
 from app.services.dispatch_service import DispatchService
+from app.services import orchestration_service as orchestration_module
 from app.services.orchestration_service import OrchestrationService
 from app.tools.log_writer_tool import LogWriterTool
+
+
+def _agent_validation_error_cls():
+    return getattr(orchestration_module, "AgentOutputValidationError", RuntimeError)
 
 
 def build_session(*tables) -> Session:
@@ -60,6 +66,95 @@ def create_running_task(db: Session, task_id: int = 1) -> PricingTask:
     db.commit()
     db.refresh(task)
     return task
+
+
+def _payload(task_id: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        task_id=task_id,
+        strategy_goal="MAX_PROFIT",
+        constraints={},
+        product=SimpleNamespace(
+            current_price=Decimal("29.90"),
+            cost_price=Decimal("16.80"),
+        ),
+        metrics=[],
+        traffic=[],
+        baseline_sales=100,
+        baseline_profit=Decimal("800.00"),
+        llm_api_key=None,
+        llm_base_url=None,
+        llm_model=None,
+    )
+
+
+def _valid_data_output() -> dict:
+    return {
+        "suggestedPrice": "29.90",
+        "suggestedMinPrice": "27.90",
+        "suggestedMaxPrice": "31.90",
+        "expectedSales": 120,
+        "expectedProfit": "980.00",
+        "confidence": 0.82,
+        "thinking": "data-thinking",
+        "summary": "data-summary",
+    }
+
+
+def _valid_market_output() -> dict:
+    return {
+        "suggestedPrice": "30.50",
+        "marketFloor": "26.50",
+        "marketCeiling": "34.80",
+        "marketMedian": "30.10",
+        "marketAverage": "30.20",
+        "confidence": 0.78,
+        "thinking": "market-thinking",
+        "summary": "market-summary",
+        "competitorSamples": 5,
+    }
+
+
+def _valid_risk_output() -> dict:
+    return {
+        "isPass": False,
+        "safeFloorPrice": "21.00",
+        "suggestedPrice": "30.00",
+        "riskLevel": "HIGH",
+        "needManualReview": True,
+        "thinking": "risk-thinking",
+        "summary": "risk-summary",
+    }
+
+
+def _valid_manager_output() -> dict:
+    return {
+        "finalPrice": "30.00",
+        "expectedSales": 118,
+        "expectedProfit": "990.00",
+        "profitGrowth": "190.00",
+        "executeStrategy": "人工审核",
+        "isPass": False,
+        "thinking": "manager-thinking",
+        "resultSummary": "manager-summary",
+        "suggestedMinPrice": "28.00",
+        "suggestedMaxPrice": "32.00",
+    }
+
+
+def _json_output(payload: dict) -> str:
+    return json.dumps(payload, ensure_ascii=False)
+
+
+class _CallbackCrew:
+    def __init__(self, callback, outputs: list[dict], final_output: dict):
+        self.callback = callback
+        self.outputs = outputs
+        self.final_output = final_output
+
+    def kickoff(self):
+        for output in self.outputs:
+            self.callback(SimpleNamespace(raw=_json_output(output)))
+        return _json_output(self.final_output)
 
 
 def test_log_repo_writes_completed_and_running_stage():
@@ -167,6 +262,132 @@ def test_orchestration_service_falls_back_to_generic_failure_summary_for_prompt_
     assert thinking == "CrewAI 任务执行失败"
     assert evidence == [{"label": "错误摘要", "value": "CrewAI 任务执行失败"}]
     assert suggestion == {"error": True, "message": "CrewAI 任务执行失败"}
+
+
+def test_validate_agent_output_rejects_missing_required_data_price():
+    invalid = _valid_data_output()
+    invalid.pop("suggestedPrice")
+
+    with pytest.raises(_agent_validation_error_cls()) as exc_info:
+        OrchestrationService._validate_agent_output("DATA_ANALYSIS", invalid)
+
+    assert "[DATA_ANALYSIS]" in str(exc_info.value)
+    assert "输出结构校验失败" in str(exc_info.value)
+
+
+def test_orchestration_validation_failure_writes_failed_card_and_blocks_result(monkeypatch):
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=5)
+    invalid_data = _valid_data_output()
+    invalid_data.pop("suggestedPrice")
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: _CallbackCrew(kwargs["on_task_done"], [invalid_data], _valid_manager_output()),
+    )
+
+    service = OrchestrationService(db)
+    result_calls = []
+    service.result_tool = SimpleNamespace(write_final_result=result_calls.append)
+
+    with pytest.raises(_agent_validation_error_cls()) as exc_info:
+        service.run(_payload(task.id))
+
+    logs = LogRepo(db).list_by_task_id(task.id)
+
+    assert "[DATA_ANALYSIS]" in str(exc_info.value)
+    assert result_calls == []
+    assert [log.stage for log in logs] == ["running", "failed", "running"]
+    assert logs[1].role_name == "数据分析Agent"
+    assert logs[1].suggestion_json["error"] is True
+    assert logs[1].suggestion_json["message"].startswith("[DATA_ANALYSIS]")
+
+
+def test_validation_failure_keeps_task_outputs_aligned_for_manager(monkeypatch):
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=7)
+    invalid_data = _valid_data_output()
+    invalid_data.pop("suggestedPrice")
+    captured_manager_context = []
+    original_build_manager_card = OrchestrationService._build_manager_card
+
+    def _capture_manager_context(parsed, data_parsed, market_parsed, risk_parsed):
+        captured_manager_context.append((data_parsed, market_parsed, risk_parsed))
+        return original_build_manager_card(parsed, data_parsed, market_parsed, risk_parsed)
+
+    monkeypatch.setattr(
+        OrchestrationService,
+        "_build_manager_card",
+        staticmethod(_capture_manager_context),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: _CallbackCrew(
+            kwargs["on_task_done"],
+            [
+                invalid_data,
+                _valid_market_output(),
+                _valid_risk_output(),
+                _valid_manager_output(),
+            ],
+            _valid_manager_output(),
+        ),
+    )
+
+    service = OrchestrationService(db)
+    service.result_tool = SimpleNamespace(write_final_result=lambda payload: None)
+
+    with pytest.raises(_agent_validation_error_cls()):
+        service.run(_payload(task.id))
+
+    assert captured_manager_context
+    data_parsed, market_parsed, risk_parsed = captured_manager_context[0]
+    assert data_parsed == {}
+    assert market_parsed["suggestedPrice"] == Decimal("30.50")
+    assert risk_parsed["suggestedPrice"] == Decimal("30.00")
+
+
+def test_orchestration_final_manager_output_requires_final_price(monkeypatch):
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=6)
+    final_output = _valid_manager_output()
+    final_output.pop("finalPrice")
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: _CallbackCrew(
+            kwargs["on_task_done"],
+            [
+                _valid_data_output(),
+                _valid_market_output(),
+                _valid_risk_output(),
+                _valid_manager_output(),
+            ],
+            final_output,
+        ),
+    )
+
+    service = OrchestrationService(db)
+    result_calls = []
+    service.result_tool = SimpleNamespace(write_final_result=result_calls.append)
+
+    with pytest.raises(_agent_validation_error_cls()) as exc_info:
+        service.run(_payload(task.id))
+
+    assert "[MANAGER_COORDINATOR]" in str(exc_info.value)
+    assert result_calls == []
 
 
 def test_orchestration_service_writes_failed_stage_when_crew_kickoff_raises(monkeypatch):

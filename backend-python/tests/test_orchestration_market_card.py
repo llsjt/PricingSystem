@@ -5,7 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.crew import crew_factory
-from app.schemas.agent import MarketAgentOutput
+from app.schemas.agent import DataAgentOutput, ManagerAgentOutput, MarketAgentOutput, RiskAgentOutput
 from app.services.orchestration_service import OrchestrationService
 
 
@@ -286,7 +286,10 @@ def test_market_agent_output_accepts_competitor_samples_alias():
             "suggestedPrice": "29.90",
             "marketFloor": "19.90",
             "marketCeiling": "39.90",
+            "marketMedian": "29.15",
+            "marketAverage": "29.15",
             "confidence": 0.88,
+            "thinking": "market-thinking",
             "summary": "ok",
             "competitorSamples": 5,
         }
@@ -301,8 +304,126 @@ def test_market_agent_output_accepts_competitor_samples_alias():
                 "suggestedPrice": "29.90",
                 "marketFloor": "19.90",
                 "marketCeiling": "39.90",
+                "marketMedian": "29.15",
+                "marketAverage": "29.15",
                 "confidence": 0.88,
+                "thinking": "market-thinking",
                 "summary": "ok",
                 old_alias: 5,
+            }
+        )
+
+
+def test_agent_output_models_preserve_runtime_fields_by_alias():
+    data_dumped = DataAgentOutput.model_validate(
+        {
+            "suggestedPrice": "29.90",
+            "suggestedMinPrice": "27.90",
+            "suggestedMaxPrice": "31.90",
+            "expectedSales": 120,
+            "expectedProfit": "980.00",
+            "confidence": 0.82,
+            "thinking": "data-thinking",
+            "summary": "data-summary",
+        }
+    ).model_dump(by_alias=True)
+    assert data_dumped["thinking"] == "data-thinking"
+
+    market_dumped = MarketAgentOutput.model_validate(
+        {
+            "suggestedPrice": "29.90",
+            "marketFloor": "19.90",
+            "marketCeiling": "39.90",
+            "marketMedian": "29.15",
+            "marketAverage": "29.15",
+            "confidence": 0.88,
+            "confidenceScore": 0.75,
+            "marketScore": 75.0,
+            "thinking": "market-thinking",
+            "summary": "market-summary",
+            "competitorSamples": 3,
+            "competitors": [
+                {"competitorName": "A", "price": "29.90", "sourcePlatform": "taobao"},
+            ],
+        }
+    ).model_dump(by_alias=True)
+    assert market_dumped["thinking"] == "market-thinking"
+    assert market_dumped["marketMedian"] == Decimal("29.15")
+    assert market_dumped["marketAverage"] == Decimal("29.15")
+    assert market_dumped["competitors"][0]["competitorName"] == "A"
+    assert market_dumped["confidenceScore"] == 0.75
+    assert market_dumped["marketScore"] == 75.0
+
+    risk_dumped = RiskAgentOutput.model_validate(
+        {
+            "isPass": False,
+            "safeFloorPrice": "21.00",
+            "suggestedPrice": "29.90",
+            "riskLevel": "HIGH",
+            "needManualReview": True,
+            "thinking": "risk-thinking",
+            "summary": "risk-summary",
+        }
+    ).model_dump(by_alias=True)
+    assert risk_dumped["thinking"] == "risk-thinking"
+
+    manager_dumped = ManagerAgentOutput.model_validate(
+        {
+            "finalPrice": "29.90",
+            "expectedSales": 120,
+            "expectedProfit": "980.00",
+            "profitGrowth": "180.00",
+            "executeStrategy": "人工审核",
+            "isPass": False,
+            "thinking": "manager-thinking",
+            "resultSummary": "manager-summary",
+            "suggestedMinPrice": "27.90",
+            "suggestedMaxPrice": "31.90",
+        }
+    ).model_dump(by_alias=True)
+    assert manager_dumped["thinking"] == "manager-thinking"
+
+
+def test_agent_output_models_reject_unsafe_values():
+    with pytest.raises(ValidationError):
+        DataAgentOutput.model_validate(
+            {
+                "suggestedPrice": "29.90",
+                "suggestedMinPrice": "27.90",
+                "suggestedMaxPrice": "31.90",
+                "expectedSales": 120,
+                "expectedProfit": "980.00",
+                "confidence": 95,
+                "thinking": "data-thinking",
+                "summary": "data-summary",
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        RiskAgentOutput.model_validate(
+            {
+                "isPass": False,
+                "safeFloorPrice": "21.00",
+                "suggestedPrice": "29.90",
+                "riskLevel": "MEDIUM",
+                "needManualReview": True,
+                "thinking": "risk-thinking",
+                "summary": "risk-summary",
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        ManagerAgentOutput.model_validate(
+            {
+                "finalPrice": "29.90",
+                "expectedSales": 120,
+                "expectedProfit": "980.00",
+                "profitGrowth": "180.00",
+                "executeStrategy": "AUTO_EXECUTE",
+                "isPass": False,
+                "thinking": "manager-thinking",
+                "resultSummary": "manager-summary",
+                "suggestedMinPrice": "27.90",
+                "suggestedMaxPrice": "31.90",
             }
         )

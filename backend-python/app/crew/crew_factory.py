@@ -10,7 +10,6 @@ CrewAI Crew 构建工厂
 
 from collections.abc import Callable
 from decimal import Decimal
-from typing import Any
 
 from crewai import Crew, Process, Task
 
@@ -21,13 +20,6 @@ from app.services.competitor_service import CompetitorService
 from app.tools.product_data_tool import ProductDataTool
 from app.utils.math_utils import money
 from app.utils.text_utils import MANUAL_REVIEW_STRATEGY, to_strategy_goal_cn
-
-
-def _serialize_decimal(obj: Any) -> Any:
-    """JSON 序列化时将 Decimal 转为 str"""
-    if isinstance(obj, Decimal):
-        return str(obj)
-    return str(obj)
 
 
 def _build_metrics_summary(payload: CrewRunPayload) -> str:

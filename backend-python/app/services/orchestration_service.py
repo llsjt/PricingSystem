@@ -17,11 +17,13 @@ import logging
 from decimal import Decimal
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.crew.crew_factory import build_pricing_crew
 from app.crew.crewai_runtime import build_crewai_llm, debug_log, extract_json_object
 from app.crew.protocols import CrewRunPayload
+from app.schemas.agent import DataAgentOutput, ManagerAgentOutput, MarketAgentOutput, RiskAgentOutput
 from app.schemas.result import TaskFinalResult
 from app.tools.log_writer_tool import LogWriterTool
 from app.tools.result_writer_tool import ResultWriterTool
@@ -54,6 +56,23 @@ _AGENT_META = [
     {"code": "RISK_CONTROL", "name": "风险控制Agent", "order": 3},
     {"code": "MANAGER_COORDINATOR", "name": "经理协调Agent", "order": 4},
 ]
+
+_AGENT_OUTPUT_MODELS = {
+    "DATA_ANALYSIS": DataAgentOutput,
+    "MARKET_INTEL": MarketAgentOutput,
+    "RISK_CONTROL": RiskAgentOutput,
+    "MANAGER_COORDINATOR": ManagerAgentOutput,
+}
+
+
+class AgentOutputValidationError(RuntimeError):
+    def __init__(self, agent_code: str, message: str):
+        super().__init__(message)
+        self.agent_code = agent_code
+        self.message = message
+
+    def __str__(self) -> str:
+        return f"[{self.agent_code}] {self.message}"
 
 
 class OrchestrationService:
@@ -90,6 +109,17 @@ class OrchestrationService:
             {"error": True, "message": concise},
         )
 
+    @staticmethod
+    def _validate_agent_output(agent_code: str, parsed: dict[str, Any]) -> dict[str, Any]:
+        model_cls = _AGENT_OUTPUT_MODELS.get(agent_code)
+        if model_cls is None:
+            return parsed
+        try:
+            model = model_cls.model_validate(parsed)
+        except ValidationError as exc:
+            raise AgentOutputValidationError(agent_code, "输出结构校验失败") from exc
+        return model.model_dump(by_alias=True, exclude_none=True)
+
     # ── 从 LLM 输出构建数据分析卡片 ──────────────────────────
     @staticmethod
     def _build_data_card(
@@ -118,7 +148,6 @@ class OrchestrationService:
         max_price = _safe_float(parsed.get("suggestedMaxPrice"))
         expected_sales = _safe_int(parsed.get("expectedSales"))
         expected_profit = _safe_float(parsed.get("expectedProfit"))
-        confidence = _safe_float(parsed.get("confidence"), 0.5)
 
         suggestion = {
             "priceRange": {"min": min_price, "max": max_price},
@@ -306,6 +335,7 @@ class OrchestrationService:
 
         # ── 用于收集每个 Task 的解析结果 ──────────────────────
         task_outputs: list[dict[str, Any]] = []
+        validation_errors: list[AgentOutputValidationError] = []
         card_counter = [0]  # 使用列表以便在闭包中修改
 
         def write_next_running_card(completed_idx: int) -> None:
@@ -344,9 +374,30 @@ class OrchestrationService:
 
                 # 空输出保护：写入错误卡片而非全零卡片
                 if not parsed:
+                    exc = AgentOutputValidationError(meta["code"], "输出解析失败")
+                    validation_errors.append(exc)
                     logger.warning("Agent [%s] 输出解析失败，写入错误卡片", meta["name"])
-                    task_outputs.append(parsed)
-                    thinking, evidence, suggestion = self._build_failed_card("输出解析失败")
+                    task_outputs.append({})
+                    thinking, evidence, suggestion = self._build_failed_card(str(exc))
+                    self.log_tool.write_agent_card(
+                        task_id=payload.task_id,
+                        agent_name=meta["name"],
+                        display_order=meta["order"],
+                        thinking_summary=thinking,
+                        evidence=evidence,
+                        suggestion=suggestion,
+                        stage="failed",
+                    )
+                    write_next_running_card(idx)
+                    return
+
+                try:
+                    parsed = self._validate_agent_output(meta["code"], parsed)
+                except AgentOutputValidationError as exc:
+                    validation_errors.append(exc)
+                    task_outputs.append({})
+                    logger.warning("Agent [%s] 输出结构校验失败: %s", meta["name"], exc, exc_info=True)
+                    thinking, evidence, suggestion = self._build_failed_card(str(exc))
                     self.log_tool.write_agent_card(
                         task_id=payload.task_id,
                         agent_name=meta["name"],
@@ -442,10 +493,15 @@ class OrchestrationService:
                     stage="failed",
                 )
                 debug_log(f"[CrewAI] wrote error card agent={meta['name']}")
+            if validation_errors:
+                raise validation_errors[0] from crew_exc
             raise  # 继续向上抛出，让 dispatch_service 标记 task 为 FAILED
 
         logger.info("Crew 执行完成 (task_id=%d)", payload.task_id)
         debug_log(f"[CrewAI] crew completed task_id={payload.task_id}")
+
+        if validation_errors:
+            raise validation_errors[0]
 
         # ── 解析最终经理决策 ──────────────────────────────────
         # 从最后一个 Task 的输出中提取最终定价结果
@@ -460,18 +516,20 @@ class OrchestrationService:
             logger.warning("经理 Agent 输出不可用，仅 %d 个 Agent 完成 (task_id=%d)", len(task_outputs), payload.task_id)
             manager_parsed = {}
 
-        # 提取最终定价字段（带默认值兜底）
-        final_price = money(manager_parsed.get("finalPrice", payload.product.current_price))
-        expected_sales = int(manager_parsed.get("expectedSales", payload.baseline_sales))
-        expected_profit = money(manager_parsed.get("expectedProfit", payload.baseline_profit))
+        manager_parsed = self._validate_agent_output("MANAGER_COORDINATOR", manager_parsed)
+
+        # 提取最终定价字段。核心字段必须来自已校验的经理 Agent 输出，不再静默兜底。
+        final_price = money(manager_parsed["finalPrice"])
+        expected_sales = int(manager_parsed["expectedSales"])
+        expected_profit = money(manager_parsed["expectedProfit"])
         profit_growth = money(expected_profit - money(payload.baseline_profit))
         execute_strategy = MANUAL_REVIEW_STRATEGY
-        is_pass = bool(manager_parsed.get("isPass", False))
-        result_summary = str(manager_parsed.get("resultSummary", "定价决策完成"))
+        is_pass = bool(manager_parsed["isPass"])
+        result_summary = str(manager_parsed["resultSummary"])
 
         # 提取建议价格区间
-        suggested_min = money(manager_parsed.get("suggestedMinPrice", final_price * Decimal("0.95")))
-        suggested_max = money(manager_parsed.get("suggestedMaxPrice", final_price * Decimal("1.05")))
+        suggested_min = money(manager_parsed["suggestedMinPrice"])
+        suggested_max = money(manager_parsed["suggestedMaxPrice"])
 
         # ── 强制硬约束校验（Python 代码强制执行，不依赖 LLM 判断） ──
         # 约束1: 最终价格不得低于成本价（不允许亏损）
