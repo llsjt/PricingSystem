@@ -113,7 +113,7 @@ import { login } from '../api/user'
 import { useUserStore } from '../stores/user'
 import { useShopStore } from '../stores/shop'
 import { clearAuthSession } from '../utils/authSession'
-import { resolveRequestErrorMessage } from '../utils/error'
+import { resolveRequestErrorMessage, toUserFacingErrorMessage } from '../utils/error'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -158,10 +158,10 @@ const handleLogin = async () => {
         ElMessage.success('登录成功')
         router.push('/')
       } else {
-        ElMessage.error(res.message || '登录失败')
+        ElMessage.error(toUserFacingErrorMessage(res.message, '登录失败，请检查用户名或密码'))
       }
     } catch (error) {
-      ElMessage.error(await resolveRequestErrorMessage(error, '登录失败'))
+      ElMessage.error(await resolveRequestErrorMessage(error, '登录失败，请检查用户名或密码'))
     } finally {
       loading.value = false
     }
