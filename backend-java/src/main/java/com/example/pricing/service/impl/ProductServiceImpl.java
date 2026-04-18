@@ -209,7 +209,11 @@ public class ProductServiceImpl implements ProductService {
             vo.setPlatform(shopPlatformMap.getOrDefault(product.getShopId(), "-"));
             vo.setExternalProductId(product.getExternalProductId());
             vo.setProductName(product.getTitle());
+            vo.setShortTitle(product.getShortTitle());
+            vo.setSubTitle(product.getSubTitle());
             vo.setCategoryName(product.getCategory());
+            vo.setPrimaryCategoryName(product.getPrimaryCategoryName());
+            vo.setSecondaryCategoryName(product.getSecondaryCategoryName());
             vo.setCostPrice(product.getCostPrice());
             vo.setSalePrice(product.getCurrentPrice());
             vo.setStock(product.getStock());

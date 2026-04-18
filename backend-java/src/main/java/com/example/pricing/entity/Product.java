@@ -28,8 +28,20 @@ public class Product {
     @TableField("product_name")
     private String title;
 
+    @TableField("short_title")
+    private String shortTitle;
+
+    @TableField("sub_title")
+    private String subTitle;
+
     @TableField("category_name")
     private String category;
+
+    @TableField("primary_category_name")
+    private String primaryCategoryName;
+
+    @TableField("secondary_category_name")
+    private String secondaryCategoryName;
 
     @TableField("cost_price")
     private BigDecimal costPrice;

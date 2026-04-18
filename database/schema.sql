@@ -79,7 +79,11 @@ CREATE TABLE product (
     shop_id BIGINT NOT NULL COMMENT '店铺ID',
     external_product_id VARCHAR(64) NOT NULL COMMENT '平台商品ID',
     product_name VARCHAR(255) DEFAULT NULL COMMENT '商品名称',
+    short_title VARCHAR(100) DEFAULT NULL COMMENT '短标题',
+    sub_title VARCHAR(255) DEFAULT NULL COMMENT '副标题',
     category_name VARCHAR(100) DEFAULT NULL COMMENT '类目名称',
+    primary_category_name VARCHAR(100) DEFAULT NULL COMMENT '一级类目名称',
+    secondary_category_name VARCHAR(100) DEFAULT NULL COMMENT '二级类目名称',
     sale_price DECIMAL(10,2) DEFAULT NULL COMMENT '当前售价',
     cost_price DECIMAL(10,2) DEFAULT NULL COMMENT '单位成本价',
     stock INT NOT NULL DEFAULT 0 COMMENT '可售库存',
@@ -259,6 +263,7 @@ INSERT INTO schema_migration_history (version, checksum, description, applied_at
     ('migration_20260407_launch_hardening', REPEAT('0', 64), 'baseline schema includes launch hardening fields', CURRENT_TIMESTAMP),
     ('migration_20260408_task_recovery', REPEAT('0', 64), 'baseline schema includes persisted task payload for recovery', CURRENT_TIMESTAMP),
     ('migration_20260413_agent_stage', REPEAT('0', 64), 'baseline schema includes agent run log stage', CURRENT_TIMESTAMP),
-    ('migration_20260413_stage_failed_backfill', REPEAT('0', 64), 'baseline schema includes failed agent stage backfill', CURRENT_TIMESTAMP);
+    ('migration_20260413_stage_failed_backfill', REPEAT('0', 64), 'baseline schema includes failed agent stage backfill', CURRENT_TIMESTAMP),
+    ('migration_20260418_product_category_titles', REPEAT('0', 64), 'baseline schema includes product category and title profile fields', CURRENT_TIMESTAMP);
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -14,7 +14,11 @@ public class ProductListVO {
     private String platform;
     private String externalProductId;
     private String productName;
+    private String shortTitle;
+    private String subTitle;
     private String categoryName;
+    private String primaryCategoryName;
+    private String secondaryCategoryName;
     private BigDecimal costPrice;
     private BigDecimal salePrice;
     private Integer stock;

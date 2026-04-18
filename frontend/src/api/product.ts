@@ -9,7 +9,11 @@ export interface ProductListVO {
   platform?: string
   externalProductId: string
   productName: string
+  shortTitle?: string
+  subTitle?: string
   categoryName?: string
+  primaryCategoryName?: string
+  secondaryCategoryName?: string
   costPrice: number | null
   salePrice: number | null
   stock?: number

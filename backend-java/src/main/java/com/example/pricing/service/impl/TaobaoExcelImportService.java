@@ -367,8 +367,21 @@ public class TaobaoExcelImportService {
         Product product = getOrCreateProduct(shopId, externalProductId, title);
         product.setExternalProductId(resolveExternalProductId(externalProductId, title));
 
+        String primaryCategoryName = trimToNull(row.getFirst("\u4e00\u7ea7\u7c7b\u76ee\u540d\u79f0", "\u4e00\u7ea7\u7c7b\u76ee", "\u4e00\u7ea7\u76ee\u5f55"));
+        String secondaryCategoryName = trimToNull(row.getFirst("\u4e8c\u7ea7\u7c7b\u76ee\u540d\u79f0", "\u4e8c\u7ea7\u7c7b\u76ee", "\u4e8c\u7ea7\u76ee\u5f55"));
+        String legacyCategory = secondaryCategoryName != null
+                ? secondaryCategoryName
+                : primaryCategoryName;
+        if (legacyCategory == null) {
+            legacyCategory = trimToNull(row.getFirst("\u5546\u54c1\u7c7b\u76ee", "\u7c7b\u76ee\u540d\u79f0", "\u5546\u54c1\u5206\u7c7b", "\u7c7b\u76ee"));
+        }
+
         product.setTitle(title);
-        product.setCategory(row.getFirst("\u5546\u54c1\u7c7b\u76ee", "\u7c7b\u76ee\u540d\u79f0", "\u5546\u54c1\u5206\u7c7b", "\u7c7b\u76ee"));
+        product.setShortTitle(trimToNull(row.getFirst("\u77ed\u6807\u9898")));
+        product.setSubTitle(trimToNull(row.getFirst("\u526f\u6807\u9898")));
+        product.setCategory(legacyCategory);
+        product.setPrimaryCategoryName(primaryCategoryName);
+        product.setSecondaryCategoryName(secondaryCategoryName);
         product.setCostPrice(nullableMoney(parseAmount(row.getFirst("\u6210\u672c\u4ef7", "\u4f9b\u8d27\u4ef7", "\u91c7\u8d2d\u4ef7"))));
         product.setCurrentPrice(nullableMoney(parseAmount(row.getFirst("\u5f53\u524d\u552e\u4ef7", "\u552e\u4ef7", "\u9500\u552e\u4ef7", "\u4e00\u53e3\u4ef7", "\u5546\u54c1\u4ef7\u683c"))));
         product.setStock(defaultInt(parseInteger(row.getFirst("\u5e93\u5b58", "\u53ef\u552e\u5e93\u5b58", "\u603b\u5e93\u5b58"))));
