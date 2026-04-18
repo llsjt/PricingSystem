@@ -253,7 +253,6 @@ class OpenAICompatibleCrewAILLM(BaseLLM):
 
 
 def build_crewai_llm(
-    profile: str = "default",
     api_key: str | None = None,
     base_url: str | None = None,
     model: str | None = None,

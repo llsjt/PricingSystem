@@ -14,8 +14,8 @@ def build_crewai_agents(*, analysis_llm: object, manager_llm: object) -> dict[st
     analysis_kwargs = {
         "llm": analysis_llm,
         "verbose": True,
-        "max_iter": max(settings.fast_agent_max_iter, 2),
-        "max_execution_time": max(settings.fast_agent_max_execution_seconds, 15),
+        "max_iter": max(settings.analysis_agent_max_iter, 2),
+        "max_execution_time": max(settings.analysis_agent_max_execution_seconds, 15),
         "max_retry_limit": settings.crewai_agent_max_retry_limit,
         "allow_delegation": False,
     }

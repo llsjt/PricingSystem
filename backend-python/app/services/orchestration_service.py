@@ -336,13 +336,11 @@ class OrchestrationService:
         """
         # ── 构建 CrewAI LLM 实例 ──────────────────────────────
         analysis_llm = build_crewai_llm(
-            profile="fast",
             api_key=payload.llm_api_key,
             base_url=payload.llm_base_url,
             model=payload.llm_model,
         )
         manager_llm = build_crewai_llm(
-            profile="default",
             api_key=payload.llm_api_key,
             base_url=payload.llm_base_url,
             model=payload.llm_model,

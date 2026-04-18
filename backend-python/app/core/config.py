@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -53,8 +53,14 @@ class Settings(BaseSettings):
     crewai_llm_read_timeout_seconds: int = Field(default=180, alias="CREWAI_LLM_READ_TIMEOUT_SECONDS")
     crewai_llm_max_retries: int = Field(default=1, alias="CREWAI_LLM_MAX_RETRIES")
 
-    fast_agent_max_iter: int = Field(default=4, alias="FAST_AGENT_MAX_ITER")
-    fast_agent_max_execution_seconds: int = Field(default=300, alias="FAST_AGENT_MAX_EXEC_SECONDS")
+    analysis_agent_max_iter: int = Field(
+        default=4,
+        validation_alias=AliasChoices("ANALYSIS_AGENT_MAX_ITER", "FAST_AGENT_MAX_ITER"),
+    )
+    analysis_agent_max_execution_seconds: int = Field(
+        default=300,
+        validation_alias=AliasChoices("ANALYSIS_AGENT_MAX_EXEC_SECONDS", "FAST_AGENT_MAX_EXEC_SECONDS"),
+    )
     manager_agent_max_iter: int = Field(default=6, alias="MANAGER_AGENT_MAX_ITER")
     manager_agent_max_execution_seconds: int = Field(default=180, alias="MANAGER_AGENT_MAX_EXEC_SECONDS")
     crewai_agent_max_retry_limit: int = Field(default=1, alias="CREWAI_AGENT_MAX_RETRY_LIMIT")
