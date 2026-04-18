@@ -34,8 +34,8 @@ const TEXT_VALUE_MAP: Record<string, string> = {
   CANCELLED: '已取消',
   FAILED: '失败',
   PENDING: '待执行',
-  SNAPSHOT: '历史快照',
-  SIMULATION_FALLBACK: '模拟补全'
+  TMALL_CSV: '天猫真实样本',
+  TMALL_CSV_FALLBACK: '天猫样本缺失·模拟补全'
 }
 
 const DATA_QUALITY_MAP: Record<string, string> = {
@@ -118,6 +118,42 @@ const formatObjectLine = (value: Record<string, unknown>) => {
     if (value.salesVolumeHint != null) parts.push(`销量提示：${toNaturalChinese(value.salesVolumeHint)}`)
     if (value.promotionTag != null) parts.push(`促销：${toNaturalChinese(value.promotionTag)}`)
     return parts.join('，')
+  }
+
+  if ('brand' in value && 'averagePrice' in value) {
+    const brand = String(value.brand || '未知品牌')
+    const sample = toNumber(value.sampleCount)
+    const avg = toNumber(value.averagePrice)
+    const min = toNumber(value.minPrice)
+    const max = toNumber(value.maxPrice)
+    const parts: string[] = [brand]
+    if (sample != null) parts.push(`样本${sample}件`)
+    if (avg != null) parts.push(`均价${formatCurrency(avg)}`)
+    if (min != null && max != null) parts.push(`区间${formatCurrency(min)}~${formatCurrency(max)}`)
+    return parts.join('，')
+  }
+
+  if ('shopType' in value && 'share' in value) {
+    const shopType = String(value.shopType || '其他')
+    const share = toNumber(value.share)
+    const sample = toNumber(value.sampleCount)
+    const avg = toNumber(value.averagePrice)
+    const parts: string[] = [shopType]
+    if (share != null) parts.push(`占比${(share * 100).toFixed(1)}%`)
+    if (sample != null) parts.push(`样本${sample}件`)
+    if (avg != null) parts.push(`均价${formatCurrency(avg)}`)
+    return parts.join('，')
+  }
+
+  if ('promotionRate' in value || 'averageDiscount' in value || 'promotedSampleCount' in value) {
+    const rate = toNumber(value.promotionRate)
+    const promoted = toNumber(value.promotedSampleCount)
+    const discount = toNumber(value.averageDiscount)
+    const parts: string[] = []
+    if (rate != null) parts.push(`促销占比${(rate * 100).toFixed(1)}%`)
+    if (promoted != null) parts.push(`在促样本${promoted}件`)
+    if (discount != null) parts.push(`平均折扣率${discount.toFixed(2)}`)
+    return parts.length ? parts.join('，') : '暂无促销数据'
   }
 
   const keyMap: Record<string, string> = {

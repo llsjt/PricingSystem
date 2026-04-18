@@ -165,15 +165,60 @@ def _precompute_competitor_summary(payload: CrewRunPayload) -> str:
             f"市场最低价: {min_price:.2f}元",
             f"市场最高价: {max_price:.2f}元",
             f"市场均价: {avg_price:.2f}元",
-            "竞品明细:",
         ]
     )
+
+    sales_weighted_avg = result.get("salesWeightedAverage")
+    sales_weighted_median = result.get("salesWeightedMedian")
+    if sales_weighted_avg is not None:
+        lines.append(f"销量加权均价: {float(sales_weighted_avg):.2f}元")
+    if sales_weighted_median is not None:
+        lines.append(f"销量加权中位价: {float(sales_weighted_median):.2f}元")
+
+    brand_breakdown = result.get("brandBreakdown") or []
+    if brand_breakdown:
+        lines.append("品牌价格带 (top 5):")
+        for band in brand_breakdown[:5]:
+            lines.append(
+                f"  - {band.get('brand', '未知')} | 样本{int(band.get('sampleCount', 0))}件 | "
+                f"均价{float(band.get('averagePrice', 0)):.2f}元 | "
+                f"价格区间{float(band.get('minPrice', 0)):.2f}-{float(band.get('maxPrice', 0)):.2f}元"
+            )
+
+    shop_type_breakdown = result.get("shopTypeBreakdown") or []
+    if shop_type_breakdown:
+        lines.append("店铺类型分布:")
+        for band in shop_type_breakdown[:5]:
+            share_pct = float(band.get("share", 0)) * 100
+            lines.append(
+                f"  - {band.get('shopType', '其他')} | 占比{share_pct:.1f}% | "
+                f"均价{float(band.get('averagePrice', 0)):.2f}元"
+            )
+
+    promotion_density = result.get("promotionDensity") or {}
+    if promotion_density:
+        rate = promotion_density.get("promotionRate")
+        avg_discount = promotion_density.get("averageDiscount")
+        promoted = promotion_density.get("promotedSampleCount")
+        density_parts = []
+        if rate is not None:
+            density_parts.append(f"促销占比{float(rate) * 100:.1f}%")
+        if promoted is not None:
+            density_parts.append(f"在促样本{int(promoted)}件")
+        if avg_discount is not None:
+            density_parts.append(f"平均折扣率{float(avg_discount):.2f}")
+        if density_parts:
+            lines.append("促销密度: " + " | ".join(density_parts))
+
+    lines.append("竞品明细:")
     for c in competitors[:5]:  # 最多展示5条，避免 prompt 过长
         line = f"  - {c.get('competitorName', '未知')}"
         if c.get("price") is not None:
             line += f" | 价格{float(c['price']):.2f}元"
-        if c.get("sourcePlatform"):
-            line += f" | {c['sourcePlatform']}"
+        if c.get("shopType"):
+            line += f" | {c['shopType']}"
+        if c.get("salesVolumeHint"):
+            line += f" | {c['salesVolumeHint']}"
         if c.get("promotionTag"):
             line += f" | {c['promotionTag']}"
         lines.append(line)

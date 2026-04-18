@@ -215,6 +215,26 @@ class OrchestrationService:
                 {"label": "数据质量", "value": data_quality},
             ]
         )
+
+        sales_weighted_avg = _safe_float(parsed.get("salesWeightedAverage"))
+        sales_weighted_median = _safe_float(parsed.get("salesWeightedMedian"))
+        if sales_weighted_avg is not None:
+            evidence.append({"label": "销量加权均价", "value": sales_weighted_avg})
+        if sales_weighted_median is not None:
+            evidence.append({"label": "销量加权中位价", "value": sales_weighted_median})
+
+        brand_breakdown = parsed.get("brandBreakdown") or []
+        if isinstance(brand_breakdown, list) and brand_breakdown:
+            evidence.append({"label": "品牌价格带", "value": brand_breakdown[:5]})
+
+        shop_type_breakdown = parsed.get("shopTypeBreakdown") or []
+        if isinstance(shop_type_breakdown, list) and shop_type_breakdown:
+            evidence.append({"label": "店铺类型分布", "value": shop_type_breakdown[:5]})
+
+        promotion_density = parsed.get("promotionDensity") or {}
+        if isinstance(promotion_density, dict) and promotion_density:
+            evidence.append({"label": "促销密度", "value": promotion_density})
+
         if quality_reasons:
             evidence.append({"label": "质量原因", "value": quality_reasons})
         if evidence_summary:
@@ -231,6 +251,7 @@ class OrchestrationService:
             "usedCompetitorCount": valid_count,
             "riskNotes": risk_notes,
             "evidenceSummary": evidence_summary or None,
+            "salesWeightedAverage": sales_weighted_avg,
             "summary": parsed.get("summary", "市场情报分析完成"),
         }
 

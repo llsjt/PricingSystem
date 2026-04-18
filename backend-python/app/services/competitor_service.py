@@ -9,7 +9,7 @@ from app.core.config import get_settings
 from app.schemas.competitor import CompetitorQueryResult
 from app.services.competitor_providers import (
     CompetitorProvider,
-    SnapshotCompetitorProvider,
+    TmallCsvCompetitorProvider,
     UnconfiguredCompetitorProvider,
 )
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class CompetitorService:
-    """Market intelligence service backed by simulation/snapshot data only."""
+    """Market intelligence service backed by the Tmall CSV index."""
 
     def __init__(
         self,
@@ -29,8 +29,8 @@ class CompetitorService:
         self.data_source = data_source or settings.competitor_data_source
 
         default_providers: dict[str, CompetitorProvider] = {
-            "simulation": SnapshotCompetitorProvider(
-                normalize_row=self._normalize_row,
+            "tmall_csv": TmallCsvCompetitorProvider(
+                sample_size=settings.competitor_csv_sample_size,
                 build_fallback=self._build_price_fallback_static,
             ),
         }

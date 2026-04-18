@@ -5,94 +5,76 @@ from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.schemas.competitor import CompetitorItem, CompetitorQueryResult
-from app.services.competitor_providers.snapshot_provider import SnapshotCompetitorProvider
+from app.services.competitor_providers.tmall_csv_provider import TmallCsvCompetitorProvider
 from app.services.competitor_service import CompetitorService
 
 
-class _FakeSnapshotRepo:
-    def __init__(self, rows: list[dict]):
-        self.rows = rows
+class _FakeCsvRepo:
+    """In-memory stand-in for CompetitorCsvRepo used by tests."""
 
-    def list_competitors(self, product_title: str | None, category_name: str | None) -> list[dict]:
-        return list(self.rows)
+    def __init__(self, rows: list[dict] | None = None):
+        self.rows = rows or []
+        self.available = True
+
+    def query_by_secondary_category(self, name: str, limit: int) -> list[dict]:
+        return [r for r in self.rows if r.get("secondary_category") == name][:limit]
+
+    def query_by_primary_category(self, name: str, limit: int) -> list[dict]:
+        return [r for r in self.rows if r.get("primary_category") == name][:limit]
+
+    def query_by_keyword(self, keyword: str, limit: int) -> list[dict]:
+        kw = (keyword or "").lower()
+        if not kw:
+            return []
+        return [
+            r for r in self.rows
+            if kw in (r.get("title") or "").lower() or kw in (r.get("short_title") or "").lower()
+        ][:limit]
 
 
 class _FakeProvider:
     def __init__(self, result: dict):
         self.result = result
 
-    def fetch(
-        self,
-        *,
-        product_id: int,
-        product_title: str | None,
-        category_name: str | None,
-        current_price: Decimal,
-    ) -> dict:
+    def fetch(self, **kwargs):
         return dict(self.result)
 
 
 class _ExplodingProvider:
-    def fetch(
-        self,
-        *,
-        product_id: int,
-        product_title: str | None,
-        category_name: str | None,
-        current_price: Decimal,
-    ) -> dict:
+    def fetch(self, **kwargs):
         raise RuntimeError("boom")
 
 
-class _CountingProvider:
-    def __init__(self, result: dict):
-        self.result = result
-        self.calls = 0
-
-    def fetch(
-        self,
-        *,
-        product_id: int,
-        product_title: str | None,
-        category_name: str | None,
-        current_price: Decimal,
-    ) -> dict:
-        self.calls += 1
-        return dict(self.result)
-
-
-def test_competitor_settings_defaults_to_simulation_source():
-    settings = Settings.model_validate({"COMPETITOR_DATA_SOURCE": "simulation"})
-
-    assert settings.competitor_data_source == "simulation"
+def test_competitor_settings_defaults_to_tmall_csv_source():
+    settings = Settings.model_validate({"COMPETITOR_DATA_SOURCE": "tmall_csv"})
+    assert settings.competitor_data_source == "tmall_csv"
     assert settings.validate_competitor_source() == []
 
 
 def test_competitor_settings_rejects_removed_or_unknown_source_value():
     with pytest.raises(ValidationError):
+        Settings.model_validate({"COMPETITOR_DATA_SOURCE": "simulation"})
+    with pytest.raises(ValidationError):
         Settings.model_validate({"COMPETITOR_DATA_SOURCE": "legacy"})
 
-    with pytest.raises(ValidationError):
-        Settings.model_validate({"COMPETITOR_DATA_SOURCE": "simulaton"})
 
-
-def test_competitor_query_result_uses_decimal_aliases():
+def test_competitor_query_result_supports_new_breakdown_fields():
     item = CompetitorItem.model_validate(
         {
-            "competitorName": "Example Competitor A",
+            "competitorName": "天猫超市",
             "price": Decimal("19.80"),
             "originalPrice": Decimal("29.90"),
-            "salesVolumeHint": "paid by 3200 users in 30 days",
-            "promotionTag": "store discount",
-            "shopType": "flagship",
-            "sourcePlatform": "Taobao",
+            "salesVolumeHint": "年销量约1.2万件",
+            "promotionTag": "满减",
+            "shopType": "天猫超市",
+            "sourcePlatform": "天猫",
         }
     )
     result = CompetitorQueryResult.model_validate(
         {
             "sourceStatus": "OK",
-            "source": "SNAPSHOT",
-            "message": "snapshot loaded",
+            "source": "TMALL_CSV",
+            "message": "tmall csv match",
             "rawItemCount": 1,
             "filteredItemCount": 1,
             "validCompetitorCount": 1,
@@ -103,202 +85,164 @@ def test_competitor_query_result_uses_decimal_aliases():
             "dataQuality": "LOW",
             "qualityReasons": ["valid competitors < 3"],
             "competitors": [item.model_dump(by_alias=True)],
+            "brandBreakdown": [
+                {
+                    "brand": "漫花",
+                    "sampleCount": 3,
+                    "averagePrice": 19.8,
+                    "medianPrice": 19.8,
+                    "minPrice": 18.0,
+                    "maxPrice": 21.0,
+                }
+            ],
+            "shopTypeBreakdown": [
+                {"shopType": "天猫超市", "sampleCount": 3, "share": 0.6, "averagePrice": 19.8}
+            ],
+            "salesWeightedAverage": 19.5,
+            "salesWeightedMedian": 19.6,
+            "promotionDensity": {
+                "promotionRate": 0.66,
+                "averageDiscount": 0.7,
+                "promotedSampleCount": 2,
+            },
         }
     )
 
-    assert item.model_dump(by_alias=True)["competitorName"] == "Example Competitor A"
-    assert result.model_dump(by_alias=True)["marketMedian"] == Decimal("19.80")
+    dumped = result.model_dump(by_alias=True)
+    assert dumped["source"] == "TMALL_CSV"
+    assert dumped["brandBreakdown"][0]["brand"] == "漫花"
+    assert dumped["shopTypeBreakdown"][0]["shopType"] == "天猫超市"
+    assert dumped["salesWeightedAverage"] == 19.5
+    assert dumped["promotionDensity"]["promotedSampleCount"] == 2
 
 
-def test_competitor_service_returns_snapshot_result_when_snapshot_exists():
-    provider = SnapshotCompetitorProvider(
-        repo=_FakeSnapshotRepo(
-            [
-                {
-                    "competitorName": "Example Competitor A",
-                    "price": Decimal("19.80"),
-                    "originalPrice": Decimal("29.90"),
-                    "salesVolumeHint": "paid by 3200 users in 30 days",
-                    "promotionTag": "store discount",
-                    "shopType": "flagship",
-                    "sourcePlatform": "Taobao",
-                }
-            ]
-        ),
-        normalize_row=CompetitorService._normalize_row,
-        build_fallback=CompetitorService._build_price_fallback_static,
-    )
-    service = CompetitorService(data_source="simulation", providers={"simulation": provider})
-
-    result = service.get_competitor_result(
-        product_id=1,
-        product_title="coffee",
-        category_name="beverage",
-        current_price=Decimal("29.90"),
-    )
-
-    assert result["sourceStatus"] == "OK"
-    assert result["source"] == "SNAPSHOT"
-    assert result["rawItemCount"] == 1
-    assert result["competitors"][0]["competitorName"] == "Example Competitor A"
-
-
-def test_competitor_service_returns_simulation_fallback_when_snapshot_missing():
-    provider = SnapshotCompetitorProvider(
-        repo=_FakeSnapshotRepo([]),
-        normalize_row=CompetitorService._normalize_row,
-        build_fallback=CompetitorService._build_price_fallback_static,
-    )
-    service = CompetitorService(data_source="simulation", providers={"simulation": provider})
-
-    result = service.get_competitor_result(
-        product_id=1,
-        product_title="coffee",
-        category_name="beverage",
-        current_price=Decimal("29.90"),
-    )
-
-    assert result["sourceStatus"] == "OK"
-    assert result["source"] == "SIMULATION_FALLBACK"
-    assert result["rawItemCount"] == 3
-    assert result["competitors"][0]["promotionTag"] == "店铺满减"
-
-
-def test_competitor_service_normalizes_malformed_provider_result():
-    service = CompetitorService(
-        data_source="simulation",
-        providers={"simulation": _FakeProvider({"source": "SNAPSHOT"})},
-    )
-
-    result = service.get_competitor_result(
-        product_id=1,
-        product_title="coffee",
-        category_name="beverage",
-        current_price=Decimal("29.90"),
-    )
-
-    assert result["sourceStatus"] == "FAILED"
-    assert result["source"] == "SNAPSHOT"
-    assert result["rawItemCount"] == 0
-    assert service.get_competitors(
-        product_id=1,
-        product_title="coffee",
-        category_name="beverage",
-        current_price=Decimal("29.90"),
-    ) == []
-
-
-def test_competitor_service_returns_provider_failure_without_extra_fallback():
-    service = CompetitorService(
-        data_source="simulation",
-        providers={
-            "simulation": _FakeProvider(
-                {
-                    "sourceStatus": "FAILED",
-                    "source": "SNAPSHOT",
-                    "message": "snapshot unavailable",
-                    "rawItemCount": 0,
-                    "competitors": [],
-                }
-            )
+def test_tmall_csv_provider_matches_secondary_category_first():
+    rows = [
+        {
+            "product_id": "p1",
+            "brand": "漫花",
+            "primary_category": "洗护",
+            "secondary_category": "卷筒纸",
+            "shop_name": "漫花官方",
+            "shop_type": "旗舰店",
+            "title": "漫花卷纸",
+            "short_title": "漫花",
+            "original_price": 39.9,
+            "discount_price": 29.9,
+            "final_price": 25.0,
+            "yearly_sales": 7000,
+            "promotion_tag": "满99减20",
         },
+        {
+            "product_id": "p2",
+            "brand": "维达",
+            "primary_category": "洗护",
+            "secondary_category": "卷筒纸",
+            "shop_name": "维达旗舰店",
+            "shop_type": "旗舰店",
+            "title": "维达卷纸",
+            "short_title": "维达",
+            "original_price": 49.9,
+            "discount_price": 39.9,
+            "final_price": 35.0,
+            "yearly_sales": 12000,
+            "promotion_tag": None,
+        },
+    ]
+    provider = TmallCsvCompetitorProvider(repo=_FakeCsvRepo(rows), sample_size=5)
+
+    result = provider.fetch(
+        product_id=1, product_title="家用卷纸", category_name="卷筒纸", current_price=Decimal("30")
     )
 
-    result = service.get_competitor_result(
-        product_id=1,
-        product_title="coffee",
-        category_name="beverage",
-        current_price=Decimal("29.90"),
-    )
+    assert result["source"] == "TMALL_CSV"
+    assert result["sourceStatus"] == "OK"
+    assert result["rawItemCount"] == 2
+    brands = {b["brand"] for b in result["brandBreakdown"]}
+    assert brands == {"漫花", "维达"}
+    assert result["salesWeightedAverage"] is not None
+    assert result["promotionDensity"]["promotedSampleCount"] == 1
+    shop_types = {s["shopType"] for s in result["shopTypeBreakdown"]}
+    assert shop_types == {"旗舰店"}
 
-    assert result["sourceStatus"] == "FAILED"
-    assert result["source"] == "SNAPSHOT"
+
+def test_tmall_csv_provider_falls_back_when_index_missing():
+    repo = _FakeCsvRepo(rows=[])
+    repo.available = False
+    provider = TmallCsvCompetitorProvider(
+        repo=repo,
+        sample_size=3,
+        build_fallback=lambda price: [
+            {"competitorName": "兜底", "price": float(price), "sourcePlatform": "天猫"}
+        ],
+    )
+    result = provider.fetch(
+        product_id=1, product_title="x", category_name="y", current_price=Decimal("30")
+    )
+    assert result["source"] == "TMALL_CSV_FALLBACK"
+    assert result["rawItemCount"] == 1
+
+
+def test_tmall_csv_provider_falls_back_when_no_match():
+    provider = TmallCsvCompetitorProvider(repo=_FakeCsvRepo(rows=[]), sample_size=3)
+    result = provider.fetch(
+        product_id=1, product_title="未匹配标题", category_name="未匹配类目", current_price=Decimal("30")
+    )
+    assert result["source"] == "TMALL_CSV_FALLBACK"
     assert result["competitors"] == []
 
 
 def test_competitor_service_returns_failed_result_when_provider_raises_exception():
     service = CompetitorService(
-        data_source="simulation",
-        providers={"simulation": _ExplodingProvider()},
+        data_source="tmall_csv",
+        providers={"tmall_csv": _ExplodingProvider()},
     )
-
     result = service.get_competitor_result(
         product_id=1,
         product_title="coffee",
         category_name="beverage",
         current_price=Decimal("29.90"),
     )
-
     assert result["sourceStatus"] == "FAILED"
-    assert result["source"] == "SIMULATION"
-    assert result["rawItemCount"] == 0
     assert result["competitors"] == []
     assert "RuntimeError" in result["message"]
 
 
-def test_competitor_service_does_not_cache_simulation_result():
-    provider = _CountingProvider(
-        {
-            "sourceStatus": "OK",
-            "source": "SNAPSHOT",
-            "message": "snapshot loaded",
-            "rawItemCount": 3,
-            "competitors": [
-                {
-                    "competitorName": "Example Black Coffee",
-                    "price": 39.9,
-                    "originalPrice": None,
-                    "salesVolumeHint": "100+ paid orders",
-                    "promotionTag": None,
-                    "shopType": "flagship",
-                    "sourcePlatform": "Taobao",
-                }
-            ],
-        }
+def test_competitor_service_passes_through_breakdown_fields():
+    raw = {
+        "sourceStatus": "OK",
+        "source": "TMALL_CSV",
+        "message": "tmall csv match",
+        "rawItemCount": 2,
+        "competitors": [
+            {
+                "competitorName": "店铺A",
+                "price": 19.9,
+                "originalPrice": 29.9,
+                "salesVolumeHint": "年销量约1万件",
+                "promotionTag": "满减",
+                "shopType": "旗舰店",
+                "sourcePlatform": "天猫",
+            },
+        ],
+        "brandBreakdown": [
+            {"brand": "A", "sampleCount": 1, "averagePrice": 19.9, "medianPrice": 19.9, "minPrice": 19.9, "maxPrice": 19.9}
+        ],
+        "shopTypeBreakdown": [
+            {"shopType": "旗舰店", "sampleCount": 1, "share": 1.0, "averagePrice": 19.9}
+        ],
+        "salesWeightedAverage": 19.9,
+        "salesWeightedMedian": 19.9,
+        "promotionDensity": {"promotionRate": 1.0, "averageDiscount": 0.66, "promotedSampleCount": 1},
+    }
+    service = CompetitorService(
+        data_source="tmall_csv",
+        providers={"tmall_csv": _FakeProvider(raw)},
     )
-    service = CompetitorService(data_source="simulation", providers={"simulation": provider})
-
-    first = service.get_competitor_result(
-        product_id=1,
-        product_title="cache validation keyword",
-        category_name="beverage",
-        current_price=Decimal("29.90"),
+    result = service.get_competitor_result(
+        product_id=1, product_title="coffee", category_name="beverage", current_price=Decimal("29.9")
     )
-    second = service.get_competitor_result(
-        product_id=2,
-        product_title="cache validation keyword",
-        category_name="beverage",
-        current_price=Decimal("30.90"),
-    )
-
-    assert provider.calls == 2
-    assert first["sourceStatus"] == "OK"
-    assert second["sourceStatus"] == "OK"
-
-
-def test_competitor_service_does_not_cache_failed_result():
-    provider = _CountingProvider(
-        {
-            "sourceStatus": "FAILED",
-            "source": "SNAPSHOT",
-            "message": "snapshot unavailable",
-            "rawItemCount": 0,
-            "competitors": [],
-        }
-    )
-    service = CompetitorService(data_source="simulation", providers={"simulation": provider})
-
-    service.get_competitor_result(
-        product_id=1,
-        product_title="failed cache validation keyword",
-        category_name="beverage",
-        current_price=Decimal("29.90"),
-    )
-    service.get_competitor_result(
-        product_id=2,
-        product_title="failed cache validation keyword",
-        category_name="beverage",
-        current_price=Decimal("29.90"),
-    )
-
-    assert provider.calls == 2
+    assert result["source"] == "TMALL_CSV"
+    assert result["brandBreakdown"][0]["brand"] == "A"
+    assert result["salesWeightedAverage"] == 19.9
+    assert result["promotionDensity"]["promotedSampleCount"] == 1

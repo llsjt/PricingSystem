@@ -90,6 +90,11 @@ class MarketAgentOutput(BaseModel):
     used_competitor_count: int | None = Field(default=None, alias="usedCompetitorCount")
     risk_notes: str | None = Field(default=None, alias="riskNotes")
     evidence_summary: str | None = Field(default=None, alias="evidenceSummary")
+    brand_breakdown: list[dict] | None = Field(default=None, alias="brandBreakdown")
+    shop_type_breakdown: list[dict] | None = Field(default=None, alias="shopTypeBreakdown")
+    sales_weighted_average: float | None = Field(default=None, alias="salesWeightedAverage")
+    sales_weighted_median: float | None = Field(default=None, alias="salesWeightedMedian")
+    promotion_density: dict | None = Field(default=None, alias="promotionDensity")
 
 
 class RiskAgentOutput(BaseModel):

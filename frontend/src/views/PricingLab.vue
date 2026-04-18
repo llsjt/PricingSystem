@@ -51,7 +51,49 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item label="约束条件" class="full-span">
-          <el-input v-model="taskConfig.constraints" type="textarea" :rows="4" placeholder="例如：利润率不低于 15%，最低售价不低于成本价。" />
+          <div class="constraint-panel">
+            <div class="constraint-intro">
+              <strong>定价硬约束</strong>
+              <span>未填写的售价区间和降价幅度不会参与限制。</span>
+            </div>
+            <div class="constraint-grid">
+              <div class="constraint-field">
+                <span class="constraint-label">最低利润率</span>
+                <div class="constraint-control">
+                  <el-input-number v-model="constraintForm.minProfitRatePercent" :min="0.01" :max="99.99" :step="1" :precision="2" controls-position="right" />
+                  <span class="constraint-unit">%</span>
+                </div>
+              </div>
+              <div class="constraint-field">
+                <span class="constraint-label">最低售价</span>
+                <div class="constraint-control">
+                  <el-input-number v-model="constraintForm.minPrice" :min="0.01" :step="1" :precision="2" controls-position="right" placeholder="不限制" />
+                  <span class="constraint-unit">元</span>
+                </div>
+              </div>
+              <div class="constraint-field">
+                <span class="constraint-label">最高售价</span>
+                <div class="constraint-control">
+                  <el-input-number v-model="constraintForm.maxPrice" :min="0.01" :step="1" :precision="2" controls-position="right" placeholder="不限制" />
+                  <span class="constraint-unit">元</span>
+                </div>
+              </div>
+              <div class="constraint-field">
+                <span class="constraint-label">最大降价幅度</span>
+                <div class="constraint-control">
+                  <el-input-number v-model="constraintForm.maxDiscountRatePercent" :min="0.01" :max="100" :step="1" :precision="2" controls-position="right" placeholder="不限制" />
+                  <span class="constraint-unit">%</span>
+                </div>
+              </div>
+              <div class="constraint-switch">
+                <div>
+                  <span class="constraint-label">强制人工审核</span>
+                  <small>规则通过后仍进入人工确认。</small>
+                </div>
+                <el-switch v-model="constraintForm.forceManualReview" />
+              </div>
+            </div>
+          </div>
         </el-form-item>
       </el-form>
       <div class="toolbar"><el-button type="primary" :loading="starting" :disabled="!hasLlmConfig" @click="startTask">启动任务</el-button></div>
@@ -180,6 +222,7 @@ import { hasConfiguredLlmApiKey } from '../utils/llmConfigResponse'
 import { clearRevealQueue, createRevealQueueState, finishReveal, isActiveReveal, queueRevealCardRequest } from '../utils/agentRevealQueue'
 import { buildVisibleAgentTimeline, filterLatestAgentRunRound, resolveLatestAgentRunAttempt } from '../utils/agentTimeline'
 import { formatEvidenceValue, getSuggestionLines, normalizeAgentCode, toNaturalChinese } from '../utils/decisionDisplay'
+import { createDefaultPricingConstraintForm, serializePricingConstraints, validatePricingConstraintForm } from '../utils/pricingConstraints'
 import { shouldKeepRevealEnabledAfterRefresh } from '../utils/revealRefresh'
 import TypewriterText from '../components/TypewriterText.vue'
 import CountUp from '../components/CountUp.vue'
@@ -201,7 +244,8 @@ const typewriterSpeed = 24
 
 const shopStore = useShopStore()
 const router = useRouter()
-const taskConfig = reactive({ platform: '', shopId: undefined as number | undefined, productId: undefined as number | undefined, strategyGoal: 'MAX_PROFIT' as typeof goalOptions[number]['label'], constraints: '' })
+const taskConfig = reactive({ platform: '', shopId: undefined as number | undefined, productId: undefined as number | undefined, strategyGoal: 'MAX_PROFIT' as typeof goalOptions[number]['label'] })
+const constraintForm = reactive(createDefaultPricingConstraintForm())
 const state = reactive({ taskStatus: 'IDLE' as PricingTaskStatus, cards: emptyCards(), finalPrice: null as number | null, strategy: '', finalSummary: '', errorMessage: '' })
 const productOptions = ref<ProductOption[]>([])
 const searchLoading = ref(false)
@@ -524,11 +568,14 @@ const startTask = async () => {
   if (!taskConfig.platform) return ElMessage.warning('请选择平台')
   if (!taskConfig.shopId) return ElMessage.warning('请选择店铺')
   if (!taskConfig.productId) return ElMessage.warning('请选择一个商品')
+  const constraintError = validatePricingConstraintForm(constraintForm)
+  if (constraintError) return ElMessage.warning(constraintError)
+  const constraints = serializePricingConstraints(constraintForm)
   starting.value = true
   try {
     resetState()
     state.taskStatus = 'QUEUED'
-    const res = await createPricingTask({ productId: taskConfig.productId, constraints: taskConfig.constraints, strategyGoal: taskConfig.strategyGoal }) as ApiResponse<number>
+    const res = await createPricingTask({ productId: taskConfig.productId, constraints, strategyGoal: taskConfig.strategyGoal }) as ApiResponse<number>
     if (res.code !== 200 || !res.data) {
       state.taskStatus = 'FAILED'
       state.errorMessage = sanitizeErrorMessage(res.message, '启动任务失败')
@@ -582,6 +629,18 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 .config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 14px}
 .full-span{grid-column:1/-1}
 .toolbar{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
+.constraint-panel{width:100%;display:grid;gap:14px;padding:14px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc}
+.constraint-intro{display:flex;justify-content:space-between;align-items:center;gap:12px;color:#64748b;line-height:1.6}
+.constraint-intro strong{font-size:14px;color:#172033}
+.constraint-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.constraint-field,.constraint-switch{min-width:0;padding:12px;border:1px solid #e2e8f0;border-radius:8px;background:#fff}
+.constraint-field{display:grid;gap:8px}
+.constraint-label{display:block;font-size:13px;font-weight:700;color:#334155;line-height:1.4}
+.constraint-control{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px}
+.constraint-control :deep(.el-input-number){width:100%}
+.constraint-unit{font-size:13px;font-weight:700;color:#64748b}
+.constraint-switch{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:16px}
+.constraint-switch small{display:block;margin-top:4px;font-size:12px;color:#64748b;line-height:1.5}
 
 /* ========== Agent decision chat ========== */
 .decision-chat-panel{background:#f8fafc;border-color:#e2e8f0;box-shadow:none}
@@ -644,7 +703,7 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 .metric-card:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(15,23,42,.06),0 16px 40px rgba(15,23,42,.08)}
 .metric-card span{font-size:13px;color:#64748b;font-weight:500}
 .metric-card strong{font-size:26px;color:#0f172a;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
-@media (max-width:1100px){.config-grid,.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:760px){.config-grid,.metric-grid{grid-template-columns:1fr}.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}.agent-box{grid-template-columns:30px minmax(0,1fr);gap:10px}.agent-avatar{width:30px;height:30px}.result-strip{flex-direction:column;align-items:flex-start;gap:4px}}
+@media (max-width:1100px){.config-grid,.metric-grid,.constraint-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:760px){.config-grid,.metric-grid,.constraint-grid{grid-template-columns:1fr}.constraint-intro,.constraint-switch,.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}.agent-box{grid-template-columns:30px minmax(0,1fr);gap:10px}.agent-avatar{width:30px;height:30px}.result-strip{flex-direction:column;align-items:flex-start;gap:4px}}
 @media (prefers-reduced-motion:reduce){.agent-box,.metric-card,.fade-in-item,.pulse-dot,.agent-stream-pulse span{animation:none!important;transition:none!important}.metric-card:hover{transform:none}}
 </style>

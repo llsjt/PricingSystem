@@ -23,7 +23,7 @@ def _build_payload() -> SimpleNamespace:
 def test_build_market_card_uses_competitor_samples():
     parsed = {
         "thinking": "market-thinking",
-        "source": "SNAPSHOT",
+        "source": "TMALL_CSV",
         "sourceStatus": "OK",
         "validCompetitorCount": 7,
         "dataQuality": "HIGH",
@@ -54,7 +54,7 @@ def test_precompute_competitor_summary_includes_failure_metadata(monkeypatch):
             assert kwargs["product_id"] == 1001
             return {
                 "sourceStatus": "FAILED",
-                "source": "SNAPSHOT",
+                "source": "TMALL_CSV",
                 "message": "token expired",
                 "rawItemCount": 0,
                 "competitors": [],
@@ -64,7 +64,7 @@ def test_precompute_competitor_summary_includes_failure_metadata(monkeypatch):
 
     summary = crew_factory._precompute_competitor_summary(payload)
 
-    assert "竞品来源: SNAPSHOT" in summary
+    assert "竞品来源: TMALL_CSV" in summary
     assert "竞品状态: FAILED" in summary
     assert "状态说明: token expired" in summary
     assert "原始样本数: 0" in summary
@@ -84,7 +84,7 @@ def test_precompute_competitor_summary_includes_unconfigured_metadata(monkeypatc
             assert kwargs["category_name"] == "beverage"
             return {
                 "sourceStatus": "UNCONFIGURED",
-                "source": "SNAPSHOT",
+                "source": "TMALL_CSV",
                 "message": "missing cookie",
                 "rawItemCount": 0,
                 "competitors": [],
@@ -94,7 +94,7 @@ def test_precompute_competitor_summary_includes_unconfigured_metadata(monkeypatc
 
     summary = crew_factory._precompute_competitor_summary(payload)
 
-    assert "竞品来源: SNAPSHOT" in summary
+    assert "竞品来源: TMALL_CSV" in summary
     assert "竞品状态: UNCONFIGURED" in summary
     assert "状态说明: missing cookie" in summary
     assert "原始样本数: 0" in summary
@@ -114,7 +114,7 @@ def test_precompute_competitor_summary_adds_no_data_guardrail_when_status_ok_but
             assert kwargs["product_id"] == 1001
             return {
                 "sourceStatus": "OK",
-                "source": "SNAPSHOT",
+                "source": "TMALL_CSV",
                 "message": "empty result",
                 "rawItemCount": 0,
                 "competitors": [],
@@ -155,7 +155,7 @@ def test_build_pricing_crew_threads_no_data_suggested_price_guardrail_into_marke
         def get_competitor_result(self, **kwargs):  # noqa: ANN003
             return {
                 "sourceStatus": "FAILED",
-                "source": "SNAPSHOT",
+                "source": "TMALL_CSV",
                 "message": "token expired",
                 "rawItemCount": 0,
                 "competitors": [],
@@ -208,7 +208,7 @@ def test_precompute_competitor_summary_includes_ok_metadata_and_details(monkeypa
             assert kwargs["product_title"] == "coffee"
             return {
                 "sourceStatus": "OK",
-                "source": "SNAPSHOT",
+                "source": "TMALL_CSV",
                 "message": "ok",
                 "rawItemCount": 2,
                 "filteredItemCount": 2,
@@ -239,7 +239,7 @@ def test_precompute_competitor_summary_includes_ok_metadata_and_details(monkeypa
 
     summary = crew_factory._precompute_competitor_summary(payload)
 
-    assert "竞品来源: SNAPSHOT" in summary
+    assert "竞品来源: TMALL_CSV" in summary
     assert "竞品状态: OK" in summary
     assert "状态说明: ok" in summary
     assert "原始样本数: 2" in summary
@@ -254,7 +254,7 @@ def test_precompute_competitor_summary_adds_low_quality_guardrail(monkeypatch):
         def get_competitor_result(self, **kwargs):  # noqa: ANN003
             return {
                 "sourceStatus": "OK",
-                "source": "SNAPSHOT",
+                "source": "TMALL_CSV",
                 "message": "request succeeded",
                 "rawItemCount": 4,
                 "filteredItemCount": 2,

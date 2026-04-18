@@ -77,6 +77,11 @@ docs/
 .github/
 ops/
 scripts/
+!backend-python/scripts/
+!backend-python/scripts/**
+backend-python/scripts/**/__pycache__/
+backend-python/scripts/**/*.pyc
+backend-python/app/data/competitor_index.sqlite
 数据集/
 README.md
 backend-python/README.md

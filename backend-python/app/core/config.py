@@ -35,28 +35,31 @@ class Settings(BaseSettings):
     agent_poll_interval_ms: int = Field(default=500, alias="AGENT_POLL_INTERVAL_MS")
     agent_max_retries: int = Field(default=2, alias="AGENT_MAX_RETRIES")
 
-    competitor_data_source: Literal["simulation"] = Field(default="simulation", alias="COMPETITOR_DATA_SOURCE")
+    competitor_data_source: Literal["tmall_csv"] = Field(default="tmall_csv", alias="COMPETITOR_DATA_SOURCE")
     market_competitor_min_valid_count: int = Field(default=3, alias="MARKET_COMPETITOR_MIN_VALID_COUNT")
+    competitor_csv_index_path: str = Field(
+        default=str(BASE_DIR / "app" / "data" / "competitor_index.sqlite"),
+        alias="COMPETITOR_CSV_INDEX_PATH",
+    )
+    competitor_csv_sample_size: int = Field(default=8, alias="COMPETITOR_CSV_SAMPLE_SIZE")
 
     llm_api_key: str = Field(default="", alias="LLM_API_KEY")
     llm_base_url: str = Field(default="", alias="LLM_BASE_URL")
     llm_model: str = Field(default="qwen-plus", alias="MODEL")
     llm_retry_backoff_seconds: float = Field(default=1.2, alias="LLM_RETRY_BACKOFF_SECONDS")
 
-    crewai_llm_timeout_seconds: int = Field(default=120, alias="CREWAI_LLM_TIMEOUT_SECONDS")
+    crewai_llm_timeout_seconds: int = Field(default=240, alias="CREWAI_LLM_TIMEOUT_SECONDS")
     crewai_llm_connect_timeout_seconds: int = Field(default=10, alias="CREWAI_LLM_CONNECT_TIMEOUT_SECONDS")
-    crewai_llm_read_timeout_seconds: int = Field(default=90, alias="CREWAI_LLM_READ_TIMEOUT_SECONDS")
+    crewai_llm_read_timeout_seconds: int = Field(default=180, alias="CREWAI_LLM_READ_TIMEOUT_SECONDS")
     crewai_llm_max_retries: int = Field(default=1, alias="CREWAI_LLM_MAX_RETRIES")
 
     fast_agent_max_iter: int = Field(default=4, alias="FAST_AGENT_MAX_ITER")
-    fast_agent_max_execution_seconds: int = Field(default=120, alias="FAST_AGENT_MAX_EXEC_SECONDS")
+    fast_agent_max_execution_seconds: int = Field(default=300, alias="FAST_AGENT_MAX_EXEC_SECONDS")
     manager_agent_max_iter: int = Field(default=6, alias="MANAGER_AGENT_MAX_ITER")
     manager_agent_max_execution_seconds: int = Field(default=180, alias="MANAGER_AGENT_MAX_EXEC_SECONDS")
     crewai_agent_max_retry_limit: int = Field(default=1, alias="CREWAI_AGENT_MAX_RETRY_LIMIT")
     crewai_session_timeout_seconds: int = Field(default=600, alias="CREWAI_SESSION_TIMEOUT_SECONDS")
     crewai_debug_logs: bool = Field(default=False, alias="CREWAI_DEBUG_LOGS")
-
-    market_simulation_enabled: bool = Field(default=True, alias="MARKET_SIMULATION_ENABLED")
 
     @property
     def sqlalchemy_database_uri(self) -> str:
@@ -79,8 +82,6 @@ class Settings(BaseSettings):
         problems: list[str] = []
         if not self.internal_api_token.strip():
             problems.append("blank internal api token")
-        if self.market_simulation_enabled:
-            problems.append("market simulation enabled")
         if not self.mysql_password.strip() or self.mysql_password.strip() == "123456":
             problems.append("unsafe mysql password")
         if problems:

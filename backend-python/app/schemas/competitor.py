@@ -16,6 +16,34 @@ class CompetitorItem(BaseModel):
     source_platform: str = Field(alias="sourcePlatform")
 
 
+class BrandBand(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    brand: str
+    sample_count: int = Field(alias="sampleCount")
+    average_price: float = Field(alias="averagePrice")
+    median_price: float = Field(alias="medianPrice")
+    min_price: float = Field(alias="minPrice")
+    max_price: float = Field(alias="maxPrice")
+
+
+class ShopTypeShare(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    shop_type: str = Field(alias="shopType")
+    sample_count: int = Field(alias="sampleCount")
+    share: float
+    average_price: float = Field(alias="averagePrice")
+
+
+class PromotionDensity(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    promotion_rate: float | None = Field(default=None, alias="promotionRate")
+    average_discount: float | None = Field(default=None, alias="averageDiscount")
+    promoted_sample_count: int = Field(default=0, alias="promotedSampleCount")
+
+
 class CompetitorQueryResult(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -32,3 +60,8 @@ class CompetitorQueryResult(BaseModel):
     data_quality: Literal["HIGH", "MEDIUM", "LOW"] = Field(default="LOW", alias="dataQuality")
     quality_reasons: list[str] = Field(default_factory=list, alias="qualityReasons")
     competitors: list[CompetitorItem] = Field(default_factory=list)
+    brand_breakdown: list[BrandBand] = Field(default_factory=list, alias="brandBreakdown")
+    shop_type_breakdown: list[ShopTypeShare] = Field(default_factory=list, alias="shopTypeBreakdown")
+    sales_weighted_average: float | None = Field(default=None, alias="salesWeightedAverage")
+    sales_weighted_median: float | None = Field(default=None, alias="salesWeightedMedian")
+    promotion_density: PromotionDensity | None = Field(default=None, alias="promotionDensity")
