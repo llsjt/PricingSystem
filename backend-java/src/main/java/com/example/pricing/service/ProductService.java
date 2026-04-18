@@ -2,7 +2,6 @@ package com.example.pricing.service;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.pricing.common.Result;
-import com.example.pricing.dto.MockExcelExportDTO;
 import com.example.pricing.dto.ProductManualDTO;
 import com.example.pricing.vo.ImportResultVO;
 import com.example.pricing.vo.ProductDailyMetricPageVO;
@@ -40,11 +39,6 @@ public interface ProductService {
      * 下载导入模板。
      */
     void downloadTemplate(String dataType, HttpServletResponse response);
-
-    /**
-     * 下载模拟电商平台导出 Excel 压缩包。
-     */
-    void downloadMockExcelBundle(MockExcelExportDTO dto, HttpServletResponse response);
 
     /**
      * 批量删除商品（校验归属）。

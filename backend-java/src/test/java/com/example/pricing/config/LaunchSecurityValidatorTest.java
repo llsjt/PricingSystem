@@ -17,7 +17,6 @@ class LaunchSecurityValidatorTest {
                 "123456",
                 "PricingSystem2024SecretKeyForHS256AlgorithmMustBeLongEnough",
                 "",
-                true,
                 "http://localhost:*,http://127.0.0.1:*,http://[::1]:*"
         ));
     }
@@ -30,7 +29,6 @@ class LaunchSecurityValidatorTest {
                 "db-secret-987",
                 "a-very-long-production-secret-key-for-pricing-system-2026",
                 "internal-token-987",
-                false,
                 "https://pricing.example.com"
         ));
     }

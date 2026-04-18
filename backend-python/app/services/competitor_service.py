@@ -31,63 +31,11 @@ class CompetitorService:
         default_providers: dict[str, CompetitorProvider] = {
             "tmall_csv": TmallCsvCompetitorProvider(
                 sample_size=settings.competitor_csv_sample_size,
-                build_fallback=self._build_price_fallback_static,
             ),
         }
         if providers:
             default_providers.update(providers)
         self.providers = default_providers
-
-    @staticmethod
-    def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "competitorName": str(row.get("competitorName") or "未知竞品"),
-            "price": float(Decimal(str(row.get("price", 0))).quantize(Decimal("0.01"))),
-            "originalPrice": (
-                float(Decimal(str(row["originalPrice"])).quantize(Decimal("0.01")))
-                if row.get("originalPrice") is not None
-                else None
-            ),
-            "salesVolumeHint": str(row.get("salesVolumeHint") or "销量数据暂缺"),
-            "promotionTag": str(row.get("promotionTag") or "常规促销"),
-            "shopType": str(row.get("shopType") or "") or None,
-            "sourcePlatform": str(row.get("sourcePlatform") or "综合平台"),
-        }
-
-    @staticmethod
-    def _build_price_fallback_static(current_price: Decimal) -> list[dict[str, Any]]:
-        base = Decimal(str(current_price or 0))
-        if base <= 0:
-            base = Decimal("99.00")
-        return [
-            {
-                "competitorName": "同类旗舰店A",
-                "price": float((base * Decimal("0.95")).quantize(Decimal("0.01"))),
-                "originalPrice": float((base * Decimal("1.08")).quantize(Decimal("0.01"))),
-                "salesVolumeHint": "近30天销量约3200",
-                "promotionTag": "店铺满减",
-                "shopType": "旗舰店",
-                "sourcePlatform": "天猫",
-            },
-            {
-                "competitorName": "同类优选店B",
-                "price": float((base * Decimal("0.91")).quantize(Decimal("0.01"))),
-                "originalPrice": None,
-                "salesVolumeHint": "近30天销量约4600",
-                "promotionTag": "限时直降",
-                "shopType": "企业店",
-                "sourcePlatform": "京东",
-            },
-            {
-                "competitorName": "同类工厂店C",
-                "price": float((base * Decimal("0.88")).quantize(Decimal("0.01"))),
-                "originalPrice": float((base * Decimal("1.00")).quantize(Decimal("0.01"))),
-                "salesVolumeHint": "近30天销量约5800",
-                "promotionTag": "直播专享价",
-                "shopType": None,
-                "sourcePlatform": "抖音",
-            },
-        ]
 
     def _resolve_provider(self) -> CompetitorProvider:
         provider = self.providers.get(self.data_source)

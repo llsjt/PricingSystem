@@ -34,8 +34,7 @@ const TEXT_VALUE_MAP: Record<string, string> = {
   CANCELLED: '已取消',
   FAILED: '失败',
   PENDING: '待执行',
-  TMALL_CSV: '天猫真实样本',
-  TMALL_CSV_FALLBACK: '天猫样本缺失·模拟补全'
+  TMALL_CSV: '天猫真实样本'
 }
 
 const DATA_QUALITY_MAP: Record<string, string> = {

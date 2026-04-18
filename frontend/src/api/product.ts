@@ -1,6 +1,4 @@
-import axios from 'axios'
 import request from './request'
-import { getAuthToken } from '../utils/authSession'
 
 export type ImportDataType = 'AUTO' | 'PRODUCT_BASE' | 'PRODUCT_SKU' | 'PRODUCT_DAILY_METRIC' | 'TRAFFIC_PROMO_DAILY'
 
@@ -103,16 +101,6 @@ export interface ImportResultVO {
   errors?: string[]
 }
 
-export interface MockExcelExportDTO {
-  productCount: number
-  dailyCount: number
-  skuCount: number
-  trafficCount: number
-  startProductId?: number
-  startDate?: string
-  seed?: number
-}
-
 export const getProductList = (params: { page: number; size: number; keyword?: string; platform?: string; status?: string; shopId?: number }) => {
   return request.get('/products/list', { params })
 }
@@ -141,19 +129,6 @@ export const downloadTemplate = (dataType: Exclude<ImportDataType, 'AUTO'>) => {
   return request.get('/products/template', {
     params: { dataType },
     responseType: 'blob'
-  })
-}
-
-export const downloadMockExcelBundle = (data: MockExcelExportDTO) => {
-  const token = getAuthToken()
-  return axios.post('/api/products/mock-export', data, {
-    responseType: 'blob',
-    timeout: 60000,
-    headers: token
-      ? {
-          Authorization: `Bearer ${token}`
-        }
-      : undefined
   })
 }
 

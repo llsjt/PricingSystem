@@ -17,7 +17,6 @@ class ProductionReadinessCheckerTest {
                 "123456",
                 "PricingSystem2024SecretKeyForHS256AlgorithmMustBeLongEnough",
                 "",
-                true,
                 true
         )));
     }
@@ -33,7 +32,6 @@ class ProductionReadinessCheckerTest {
                         "123456",
                         "PricingSystem2024SecretKeyForHS256AlgorithmMustBeLongEnough",
                         "",
-                        true,
                         true
                 ))
         );
@@ -50,7 +48,6 @@ class ProductionReadinessCheckerTest {
                 "safe-db-password",
                 "this-is-a-production-jwt-secret-with-enough-entropy-123!",
                 "internal-token-value",
-                false,
                 false
         )));
     }

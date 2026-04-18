@@ -4,8 +4,7 @@
 1. 二级类目精确匹配（销量降序 top-N）
 2. 一级类目精确匹配
 3. 商品标题关键词模糊匹配
-4. 全失败 → SQLite 不可用或全无命中：返回 build_fallback 提供的静态兜底，
-   sourceStatus 仍为 OK，但 source 标记为 TMALL_CSV_FALLBACK，便于上游降低 confidence。
+4. SQLite 不可用或全无命中时返回空结果，不生成模拟竞品。
 
 除了基础 competitors 列表外，本 provider 还会在结果里附带新维度统计：
 brandBreakdown / shopTypeBreakdown / salesWeightedAverage / promotionDensity，
@@ -16,7 +15,7 @@ from __future__ import annotations
 from collections import defaultdict
 from decimal import Decimal
 from statistics import median
-from typing import Any, Callable
+from typing import Any
 
 from app.repos.competitor_csv_repo import CompetitorCsvRepo
 
@@ -199,11 +198,9 @@ class TmallCsvCompetitorProvider:
         repo: CompetitorCsvRepo | None = None,
         *,
         sample_size: int = 8,
-        build_fallback: Callable[[Decimal], list[dict[str, Any]]] | None = None,
     ) -> None:
         self.repo = repo or CompetitorCsvRepo()
         self.sample_size = max(int(sample_size), 1)
-        self.build_fallback = build_fallback
 
     # ── 主入口 ───────────────────────────────────────────────
     def fetch(
@@ -215,15 +212,15 @@ class TmallCsvCompetitorProvider:
         current_price: Decimal,
     ) -> dict[str, Any]:
         if not self.repo.available:
-            return self._fallback_result(current_price, message="competitor index missing")
+            return self._empty_result("UNCONFIGURED", message="competitor index missing")
 
         rows = self._lookup(product_title, category_name)
         if not rows:
-            return self._fallback_result(current_price, message="no category/title match")
+            return self._empty_result("EMPTY", message="no category/title match")
 
         competitors = [c for c in (_row_to_competitor(r) for r in rows) if c]
         if not competitors:
-            return self._fallback_result(current_price, message="rows lacked usable price")
+            return self._empty_result("EMPTY", message="rows lacked usable price")
 
         brand_breakdown = _build_brand_breakdown(competitors)
         shop_type_breakdown = _build_shop_type_breakdown(competitors)
@@ -286,21 +283,12 @@ class TmallCsvCompetitorProvider:
             result.append(normalized)
         return result
 
-    # ── Fallback ─────────────────────────────────────────────
-    def _fallback_result(self, current_price: Decimal, *, message: str) -> dict[str, Any]:
-        if self.build_fallback is None:
-            return {
-                "sourceStatus": "OK",
-                "source": "TMALL_CSV_FALLBACK",
-                "message": message,
-                "rawItemCount": 0,
-                "competitors": [],
-            }
-        fallback = self.build_fallback(current_price)
+    # ── Empty result ─────────────────────────────────────────
+    def _empty_result(self, source_status: str, *, message: str) -> dict[str, Any]:
         return {
-            "sourceStatus": "OK",
-            "source": "TMALL_CSV_FALLBACK",
+            "sourceStatus": source_status,
+            "source": self.source,
             "message": message,
-            "rawItemCount": len(fallback),
-            "competitors": fallback,
+            "rawItemCount": 0,
+            "competitors": [],
         }

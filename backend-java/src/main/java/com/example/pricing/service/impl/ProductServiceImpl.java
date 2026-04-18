@@ -3,7 +3,6 @@ package com.example.pricing.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.pricing.common.Result;
-import com.example.pricing.dto.MockExcelExportDTO;
 import com.example.pricing.dto.ProductManualDTO;
 import com.example.pricing.entity.AgentRunLog;
 import com.example.pricing.entity.PricingResult;
@@ -67,7 +66,6 @@ public class ProductServiceImpl implements ProductService {
     private final ShopMapper shopMapper;
     private final ShopService shopService;
     private final TaobaoExcelImportService taobaoExcelImportService;
-    private final MockExcelExportService mockExcelExportService;
 
     // ===== 数据隔离辅助方法 =====
 
@@ -113,11 +111,6 @@ public class ProductServiceImpl implements ProductService {
             log.error("Import excel failed", e);
             return Result.error(e.getMessage());
         }
-    }
-
-    @Override
-    public void downloadMockExcelBundle(MockExcelExportDTO dto, HttpServletResponse response) {
-        mockExcelExportService.downloadBundle(dto, response);
     }
 
     @Override

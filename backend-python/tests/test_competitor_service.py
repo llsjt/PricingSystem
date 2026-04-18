@@ -51,9 +51,7 @@ def test_competitor_settings_defaults_to_tmall_csv_source():
     assert settings.validate_competitor_source() == []
 
 
-def test_competitor_settings_rejects_removed_or_unknown_source_value():
-    with pytest.raises(ValidationError):
-        Settings.model_validate({"COMPETITOR_DATA_SOURCE": "simulation"})
+def test_competitor_settings_rejects_unknown_source_value():
     with pytest.raises(ValidationError):
         Settings.model_validate({"COMPETITOR_DATA_SOURCE": "legacy"})
 
@@ -166,29 +164,26 @@ def test_tmall_csv_provider_matches_secondary_category_first():
     assert shop_types == {"旗舰店"}
 
 
-def test_tmall_csv_provider_falls_back_when_index_missing():
+def test_tmall_csv_provider_returns_unconfigured_when_index_missing():
     repo = _FakeCsvRepo(rows=[])
     repo.available = False
-    provider = TmallCsvCompetitorProvider(
-        repo=repo,
-        sample_size=3,
-        build_fallback=lambda price: [
-            {"competitorName": "兜底", "price": float(price), "sourcePlatform": "天猫"}
-        ],
-    )
+    provider = TmallCsvCompetitorProvider(repo=repo, sample_size=3)
     result = provider.fetch(
         product_id=1, product_title="x", category_name="y", current_price=Decimal("30")
     )
-    assert result["source"] == "TMALL_CSV_FALLBACK"
-    assert result["rawItemCount"] == 1
+    assert result["source"] == "TMALL_CSV"
+    assert result["sourceStatus"] == "UNCONFIGURED"
+    assert result["rawItemCount"] == 0
+    assert result["competitors"] == []
 
 
-def test_tmall_csv_provider_falls_back_when_no_match():
+def test_tmall_csv_provider_returns_empty_when_no_match():
     provider = TmallCsvCompetitorProvider(repo=_FakeCsvRepo(rows=[]), sample_size=3)
     result = provider.fetch(
         product_id=1, product_title="未匹配标题", category_name="未匹配类目", current_price=Decimal("30")
     )
-    assert result["source"] == "TMALL_CSV_FALLBACK"
+    assert result["source"] == "TMALL_CSV"
+    assert result["sourceStatus"] == "EMPTY"
     assert result["competitors"] == []
 
 

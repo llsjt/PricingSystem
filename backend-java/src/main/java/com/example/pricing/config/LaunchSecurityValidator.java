@@ -14,7 +14,6 @@ public class LaunchSecurityValidator {
             String datasourcePassword,
             String jwtSecret,
             String internalToken,
-            boolean marketSimulationEnabled,
             String allowedOrigins
     ) {
         productionReadinessChecker.assertSafe(new ProductionReadinessChecker.Settings(
@@ -22,8 +21,7 @@ public class LaunchSecurityValidator {
                 datasourcePassword,
                 jwtSecret,
                 internalToken,
-                allowDevBootstrap,
-                marketSimulationEnabled
+                allowDevBootstrap
         ));
 
         if (!"prod".equalsIgnoreCase(String.valueOf(appEnv).trim())) {

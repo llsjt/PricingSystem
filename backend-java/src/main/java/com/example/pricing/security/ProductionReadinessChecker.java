@@ -29,10 +29,6 @@ public class ProductionReadinessChecker {
         if (settings.allowDevBootstrap()) {
             problems.add("dev bootstrap enabled");
         }
-        if (settings.marketSimulationEnabled()) {
-            problems.add("market simulation enabled");
-        }
-
         if (!problems.isEmpty()) {
             throw new IllegalStateException("Unsafe production configuration detected in production mode: " + String.join(", ", problems));
         }
@@ -43,8 +39,7 @@ public class ProductionReadinessChecker {
             String datasourcePassword,
             String jwtSecret,
             String internalToken,
-            boolean allowDevBootstrap,
-            boolean marketSimulationEnabled
+            boolean allowDevBootstrap
     ) {
     }
 }

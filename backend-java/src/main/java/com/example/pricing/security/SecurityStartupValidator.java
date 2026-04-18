@@ -27,9 +27,6 @@ public class SecurityStartupValidator {
     @Value("${app.security.allow-dev-bootstrap:true}")
     private boolean allowDevBootstrap;
 
-    @Value("${app.market.allow-simulation:true}")
-    private boolean marketSimulationEnabled;
-
     @Value("${app.security.allowed-origins:http://localhost:*,http://127.0.0.1:*,http://[::1]:*}")
     private String allowedOrigins;
 
@@ -41,7 +38,6 @@ public class SecurityStartupValidator {
                 datasourcePassword,
                 jwtSecret,
                 internalToken,
-                marketSimulationEnabled,
                 allowedOrigins
         );
     }
