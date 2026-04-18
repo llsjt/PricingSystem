@@ -267,8 +267,6 @@ def build_crewai_llm(
         selected_model = model.strip()
     else:
         selected_model = settings.llm_model.strip()
-        if profile.strip().lower() == "fast" and settings.fast_model.strip():
-            selected_model = settings.fast_model.strip()
 
     missing: list[str] = []
     if not effective_api_key:

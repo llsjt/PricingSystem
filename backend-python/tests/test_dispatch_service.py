@@ -4,6 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base
+from app.models.agent_run_log import AgentRunLog
 from app.models.pricing_task import PricingTask
 from app.repos.task_repo import TaskRepo
 from app.schemas.task import DispatchTaskRequest
@@ -21,7 +22,7 @@ class StubQueueService:
 
 def build_session() -> Session:
     engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine, tables=[PricingTask.__table__])
+    Base.metadata.create_all(engine, tables=[PricingTask.__table__, AgentRunLog.__table__])
     return sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)()
 
 

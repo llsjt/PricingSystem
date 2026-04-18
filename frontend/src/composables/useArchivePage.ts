@@ -34,6 +34,7 @@ import {
 } from '../utils/decisionDisplay'
 import { resolveRequestErrorMessage } from '../utils/error'
 import { getFailureSummary } from '../utils/failureSummary'
+import { filterLatestAgentRunRound } from '../utils/agentTimeline'
 import { formatCurrency, formatDateTime, formatPercent, formatSignedCurrency } from '../utils/formatters'
 
 const STATUS_MAP: Record<string, string> = {
@@ -266,7 +267,7 @@ export const useArchivePage = () => {
     try {
       const res: any = await getTaskLogs(currentTask.value.id)
       if (res.code === 200) {
-        agentLogs.value = res.data || []
+        agentLogs.value = filterLatestAgentRunRound(res.data || [])
         return
       }
     } catch {

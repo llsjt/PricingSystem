@@ -197,10 +197,12 @@ CREATE TABLE agent_run_log (
     final_reason TEXT DEFAULT NULL COMMENT '最终结论原因',
     display_order INT DEFAULT NULL COMMENT '界面展示顺序',
     stage VARCHAR(20) NOT NULL DEFAULT 'completed' COMMENT '卡片阶段: running=正在分析, completed=已完成, failed=执行失败',
+    run_attempt INT NOT NULL DEFAULT 0 COMMENT 'Agent执行轮次，从0开始，对应任务retry_count',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     KEY idx_agent_run_log_task_id (task_id),
     KEY idx_agent_run_log_task_order (task_id, speak_order),
     KEY idx_agent_run_log_task_display_order (task_id, display_order),
+    KEY idx_task_run_attempt_display_order (task_id, run_attempt, display_order),
     CONSTRAINT fk_agent_run_log_task FOREIGN KEY (task_id) REFERENCES pricing_task(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Agent运行日志表';
 
@@ -264,6 +266,7 @@ INSERT INTO schema_migration_history (version, checksum, description, applied_at
     ('migration_20260408_task_recovery', REPEAT('0', 64), 'baseline schema includes persisted task payload for recovery', CURRENT_TIMESTAMP),
     ('migration_20260413_agent_stage', REPEAT('0', 64), 'baseline schema includes agent run log stage', CURRENT_TIMESTAMP),
     ('migration_20260413_stage_failed_backfill', REPEAT('0', 64), 'baseline schema includes failed agent stage backfill', CURRENT_TIMESTAMP),
+    ('migration_20260418_agent_run_attempt', REPEAT('0', 64), 'baseline schema includes agent run retry attempt', CURRENT_TIMESTAMP),
     ('migration_20260418_product_category_titles', REPEAT('0', 64), 'baseline schema includes product category and title profile fields', CURRENT_TIMESTAMP);
 
 SET FOREIGN_KEY_CHECKS = 1;

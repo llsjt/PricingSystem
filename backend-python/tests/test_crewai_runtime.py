@@ -8,19 +8,8 @@ def _set_minimal_llm_env(monkeypatch) -> None:
     monkeypatch.setenv("MODEL", "default-model")
 
 
-def test_build_crewai_llm_uses_fast_model_for_fast_profile(monkeypatch):
+def test_build_crewai_llm_uses_configured_model_for_fast_profile(monkeypatch):
     _set_minimal_llm_env(monkeypatch)
-    monkeypatch.setenv("FAST_MODEL", "fast-model")
-    get_settings.cache_clear()
-
-    llm = build_crewai_llm(profile="fast")
-
-    assert llm.model == "fast-model"
-
-
-def test_build_crewai_llm_falls_back_to_default_model_when_fast_model_missing(monkeypatch):
-    _set_minimal_llm_env(monkeypatch)
-    monkeypatch.setenv("FAST_MODEL", "")
     get_settings.cache_clear()
 
     llm = build_crewai_llm(profile="fast")

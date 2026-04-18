@@ -136,6 +136,7 @@ class DispatchService:
                 message="retry budget exhausted",
             )
 
+        self.log_repo.delete_running_and_failed_by_task_id(task.id)
         self.task_repo.mark_retrying(task, trace_id=req.trace_id, failure_reason=reason)
         return DispatchTaskResponse(
             accepted=True,
@@ -205,6 +206,7 @@ class DispatchService:
                     thoughtContent=item.thought_content,
                     agentCode=self._agent_code_by_order(order),
                     agentName=item.role_name,
+                    runAttempt=max(int(item.run_attempt or 0), 0),
                     runOrder=order,
                     displayOrder=order,
                     stage=stage,

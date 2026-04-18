@@ -54,5 +54,8 @@ onBeforeUnmount(stop)
 </script>
 
 <style scoped>
-.typewriter-text{margin:0;white-space:pre-wrap;line-height:1.8}.typewriter-text:not(.typewriter-done)::after{content:'\25cc';animation:blink .7s step-end infinite;color:#409eff}@keyframes blink{50%{opacity:0}}
+.typewriter-text{margin:0;white-space:pre-wrap;line-height:1.8}
+.typewriter-text:not(.typewriter-done)::after{content:'';display:inline-block;width:2px;height:1em;margin-left:3px;vertical-align:-2px;background:var(--agent-color,#409eff);border-radius:1px;animation:tw-blink 1s steps(1) infinite;box-shadow:0 0 6px var(--agent-color,#409eff)}
+@keyframes tw-blink{50%{opacity:0}}
+@media (prefers-reduced-motion: reduce){.typewriter-text:not(.typewriter-done)::after{animation:none}}
 </style>

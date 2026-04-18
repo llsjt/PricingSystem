@@ -205,6 +205,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
             vo.setThoughtContent(logItem.getThoughtContent());
             vo.setAgentCode(resolveAgentCode(displayOrder));
             vo.setAgentName(logItem.getRoleName());
+            vo.setRunAttempt(logItem.getRunAttempt() == null ? 0 : logItem.getRunAttempt());
             vo.setRunOrder(displayOrder);
             vo.setDisplayOrder(displayOrder);
             String stage = normalizeLogStage(logItem.getStage(), suggestion);

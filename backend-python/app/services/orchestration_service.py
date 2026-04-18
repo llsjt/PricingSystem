@@ -90,6 +90,10 @@ class OrchestrationService:
         if not text:
             return "CrewAI 任务执行失败"
 
+        agent_timeout_tokens = ("execution timed out", "max_execution_time")
+        if any(token in normalized for token in agent_timeout_tokens):
+            return "Agent 执行超时"
+
         timeout_tokens = ("timeout", "timed out", "time out", "readtimeout", "connecttimeout")
         if any(token in normalized for token in timeout_tokens):
             return "LLM 调用超时"

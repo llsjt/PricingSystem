@@ -74,11 +74,13 @@ class PricingTaskStreamServiceTest {
         log.setRoleName("数据分析Agent");
         log.setDisplayOrder(1);
         log.setStage("running");
+        log.setRunAttempt(2);
 
         Map<String, Object> payload = ReflectionTestUtils.invokeMethod(service, "toAgentCard", 10L, log);
 
         assertEquals("agent_card", payload.get("type"));
         assertEquals("DATA_ANALYSIS", payload.get("agentCode"));
+        assertEquals(2, payload.get("runAttempt"));
         assertEquals("running", payload.get("stage"));
         Map<?, ?> card = (Map<?, ?>) payload.get("card");
         assertEquals("", card.get("thinking"));

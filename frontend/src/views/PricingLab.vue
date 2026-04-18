@@ -57,10 +57,14 @@
       <div class="toolbar"><el-button type="primary" :loading="starting" :disabled="!hasLlmConfig" @click="startTask">启动任务</el-button></div>
     </section>
 
-    <section v-else-if="activeStep === 1" class="panel-card">
-      <div class="section-head">
-        <div><h2>多 Agent 决策</h2></div>
-        <div class="toolbar">
+    <section v-else-if="activeStep === 1" class="panel-card decision-chat-panel">
+      <div class="section-head decision-chat-head">
+        <div class="decision-chat-title">
+          <span class="decision-chat-kicker">AI 决策流</span>
+          <h2>多 Agent 决策</h2>
+          <p>各 Agent 会按执行顺序生成分析消息。</p>
+        </div>
+        <div class="toolbar decision-toolbar">
           <el-button v-if="canCancelTask" @click="cancelTask">取消任务</el-button>
           <el-button v-if="canReconfigureTask" @click="resetTask">重新配置任务</el-button>
           <el-button v-if="taskId" @click="refreshSnapshot">刷新进度</el-button>
@@ -68,28 +72,44 @@
           <el-button type="primary" :disabled="!canViewReport" @click="activeStep = 2">查看结果报告</el-button>
         </div>
       </div>
-      <div class="agent-list">
-        <article v-for="agent in agents" :key="agent.code" class="agent-box">
+      <div v-if="visibleAgents.length === 0" class="agent-stream-empty">
+        <div class="agent-stream-pulse"><span></span><span></span><span></span></div>
+        <h3>智能定价任务已启动</h3>
+        <p>正在准备商品上下文，首个 Agent 开始分析后会生成决策消息。</p>
+      </div>
+      <div v-else class="agent-list">
+        <article v-for="agent in visibleAgents" :key="agent.code" class="agent-box" :class="{ 'is-streaming': isCardRunning(agent.code) || shouldAnimate(agent.code) }">
+          <div class="agent-avatar" aria-hidden="true">{{ agentIcon[agent.code] }}</div>
+          <div class="agent-message">
           <div class="agent-head">
-            <h3>{{ agent.order }}. {{ agent.name }}</h3>
+            <div class="agent-identity">
+              <div class="agent-title">
+                <h3>{{ agent.order }}. {{ agent.name }}</h3>
+                <span class="agent-role">{{ agentRoleLabel[agent.code] }}</span>
+              </div>
+            </div>
             <el-tag size="small" :type="isCardFailed(agent.code) ? 'danger' : isCardCompleted(agent.code) ? 'success' : isCardRunning(agent.code) ? 'warning' : 'info'">
               {{ isCardFailed(agent.code) ? '失败' : isCardCompleted(agent.code) ? '已完成' : isCardRunning(agent.code) ? '分析中' : '等待中' }}
             </el-tag>
           </div>
           <template v-if="isCardCompleted(agent.code)">
-            <h4>思考过程</h4>
+            <h4>分析摘要</h4>
             <TypewriterText v-if="shouldAnimate(agent.code)" :text="state.cards[agent.code]?.thinking || '-'" :speed="typewriterSpeed" class="thinking" @done="markThinkingDone(agent.code)" />
             <p v-else class="thinking">{{ state.cards[agent.code]?.thinking || '-' }}</p>
             <h4 v-if="canShowEvidence(agent.code)">依据</h4>
-            <ul v-if="canShowEvidence(agent.code)">
-              <li v-for="(line, index) in visibleEvidenceLines(agent.code)" :key="`${agent.code}-e-${index}`" :class="{ 'fade-in-item': shouldAnimate(agent.code) }">
+            <ul v-if="canShowEvidence(agent.code)" class="evidence-list">
+              <li v-for="(line, index) in visibleEvidenceLines(agent.code)" :key="`${agent.code}-e-${index}`" :class="{ 'fade-in-item': shouldAnimate(agent.code) }" :style="{ '--i': index }">
                 <TypewriterText v-if="isActiveEvidenceLine(agent.code, index)" :text="line" :speed="typewriterSpeed" @done="markEvidenceLineDone(agent.code)" />
                 <span v-else>{{ line }}</span>
               </li>
             </ul>
             <h4 v-if="canShowSuggestion(agent.code)">建议</h4>
-            <ul v-if="canShowSuggestion(agent.code)">
-              <li v-for="(line, index) in visibleSuggestionLines(agent.code)" :key="`${agent.code}-s-${index}`" :class="{ 'fade-in-item': shouldAnimate(agent.code) }">
+            <div v-if="canShowSuggestion(agent.code) && getHighlightPrice(agent.code) != null" class="result-strip">
+              <span class="price-label">{{ getHighlightLabel(agent.code) }}</span>
+              <span class="price-value"><span class="price-unit">¥</span><CountUp :value="getHighlightPrice(agent.code)" :duration="700" /></span>
+            </div>
+            <ul v-if="canShowSuggestion(agent.code)" class="suggestion-list">
+              <li v-for="(line, index) in visibleSuggestionLines(agent.code)" :key="`${agent.code}-s-${index}`" :class="{ 'fade-in-item': shouldAnimate(agent.code) }" :style="{ '--i': index }">
                 <TypewriterText v-if="isActiveSuggestionLine(agent.code, index)" :text="line" :speed="typewriterSpeed" @done="markSuggestionLineDone(agent.code)" />
                 <span v-else>{{ line }}</span>
               </li>
@@ -105,17 +125,17 @@
             <p class="failed-card-message">{{ getAgentFailureSummary(agent.code) }}</p>
           </section>
           <div v-else-if="isCardRunning(agent.code)" class="waiting running-pulse"><span class="pulse-dot"></span> 正在分析中...</div>
-          <div v-else-if="isRunning(state.taskStatus) && waitingOrder === agent.order" class="waiting">等待前序Agent完成...</div>
-          <el-empty v-else description="等待该 Agent 输出结果" :image-size="80" />
+          <div v-else class="waiting">正在同步 Agent 输出...</div>
+          </div>
         </article>
       </div>
     </section>
 
     <section v-else class="report-page">
       <div class="metric-grid">
-        <div class="metric-card"><span>最终价格</span><strong>{{ currency(state.finalPrice) }}</strong></div>
-        <div class="metric-card"><span>预期销量</span><strong>{{ expectedSales ?? '-' }}</strong></div>
-        <div class="metric-card"><span>预期利润</span><strong>{{ currency(expectedProfit) }}</strong></div>
+        <div class="metric-card"><span>最终价格</span><strong><span class="price-unit">¥</span><CountUp :value="state.finalPrice" :duration="800" /></strong></div>
+        <div class="metric-card"><span>预期销量</span><strong><CountUp v-if="expectedSales != null" :value="expectedSales" :decimals="0" :duration="700" /><template v-else>-</template></strong></div>
+        <div class="metric-card"><span>预期利润</span><strong><span class="price-unit">¥</span><CountUp :value="expectedProfit" :duration="800" /></strong></div>
         <div class="metric-card"><span>执行策略</span><strong>{{ strategyText || '-' }}</strong></div>
       </div>
       <section class="panel-card">
@@ -158,8 +178,11 @@ import { sanitizeErrorMessage } from '../utils/error'
 import { getFailureSummary } from '../utils/failureSummary'
 import { hasConfiguredLlmApiKey } from '../utils/llmConfigResponse'
 import { clearRevealQueue, createRevealQueueState, finishReveal, isActiveReveal, queueRevealCardRequest } from '../utils/agentRevealQueue'
+import { buildVisibleAgentTimeline, filterLatestAgentRunRound, resolveLatestAgentRunAttempt } from '../utils/agentTimeline'
 import { formatEvidenceValue, getSuggestionLines, normalizeAgentCode, toNaturalChinese } from '../utils/decisionDisplay'
+import { shouldKeepRevealEnabledAfterRefresh } from '../utils/revealRefresh'
 import TypewriterText from '../components/TypewriterText.vue'
+import CountUp from '../components/CountUp.vue'
 
 interface ApiResponse<T> { code: number; data: T; message?: string }
 interface ProductOption { id: number; productName: string }
@@ -189,6 +212,7 @@ const comparisonData = ref<DecisionComparisonItem[]>([])
 const archiveReportSummary = ref('')
 const applyingIds = ref<number[]>([])
 const hasLlmConfig = ref(false)
+const currentRunAttempt = ref<number | null>(null)
 let aborter: AbortController | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let loadToken = 0
@@ -222,7 +246,6 @@ const canReconfigureTask = computed(() => state.taskStatus === 'CANCELLED')
 const canViewReport = computed(() => ['COMPLETED', 'MANUAL_REVIEW'].includes(state.taskStatus) || completedCardCount.value === agents.length)
 const canSkipReveal = computed(() => Boolean(taskId.value && activeStep.value === 1 && (liveRevealEnabled.value || hasRevealInProgress())))
 const stepBarActive = computed(() => activeStep.value === 2 ? 3 : activeStep.value === 1 ? 2 : 1)
-const waitingOrder = computed(() => isRunning(state.taskStatus) ? (agents.find((agent) => !state.cards[agent.code])?.order || 0) : 0)
 const statusLabel = computed(() => ({ IDLE: '未开始', PENDING: '待执行', QUEUED: '待执行', RUNNING: '执行中', RETRYING: '重试中', MANUAL_REVIEW: '人工审核', COMPLETED: '已完成', FAILED: '失败', CANCELLED: '已取消' }[state.taskStatus] || state.taskStatus))
 const managerSuggestion = computed<Record<string, unknown>>(() => state.cards.MANAGER_COORDINATOR?.suggestion && typeof state.cards.MANAGER_COORDINATOR.suggestion === 'object' ? state.cards.MANAGER_COORDINATOR.suggestion : {})
 const expectedSales = computed(() => numberOf(managerSuggestion.value.expectedSales))
@@ -240,6 +263,19 @@ const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer
 const stopRealtime = () => { if (aborter) { aborter.abort(); aborter = null } stopPolling() }
 const hasRevealInProgress = () => Boolean(revealQueue.active || revealQueue.queue.length)
 const clearRevealState = () => { liveRevealEnabled.value = false; streamArrivedCards.clear(); clearRevealQueue(revealQueue); agents.forEach((agent) => { delete revealStages[agent.code]; delete revealLineCounts[agent.code]; delete pendingRevealCards[agent.code] }) }
+const clearAgentRevealProgress = () => { streamArrivedCards.clear(); clearRevealQueue(revealQueue); agents.forEach((agent) => { delete revealStages[agent.code]; delete revealLineCounts[agent.code]; delete pendingRevealCards[agent.code] }) }
+const toRunAttempt = (value: unknown): number | null => { const n = Number(value); return Number.isFinite(n) && n >= 0 ? n : null }
+const syncStreamRunAttempt = (value: unknown) => {
+  const attempt = toRunAttempt(value)
+  if (attempt === null) return true
+  if (currentRunAttempt.value !== null && attempt < currentRunAttempt.value) return false
+  if (currentRunAttempt.value !== null && attempt > currentRunAttempt.value) {
+    state.cards = emptyCards()
+    clearAgentRevealProgress()
+  }
+  currentRunAttempt.value = attempt
+  return true
+}
 const ensureRevealLineCounts = (code: PricingAgentCode) => {
   if (!revealLineCounts[code]) revealLineCounts[code] = { evidence: 0, suggestion: 0 }
   return revealLineCounts[code] as RevealLineCounts
@@ -286,7 +322,7 @@ const markThinkingDone = (code: PricingAgentCode) => {
   revealStages[code] = 'evidence'
   ensureRevealLineCounts(code).evidence = 1
 }
-const resetState = () => { stopRealtime(); clearRevealState(); taskId.value = null; state.taskStatus = 'IDLE'; state.cards = emptyCards(); state.finalPrice = null; state.strategy = ''; state.finalSummary = ''; state.errorMessage = ''; comparisonData.value = []; archiveReportSummary.value = ''; streamArrivedCards.clear() }
+const resetState = () => { stopRealtime(); clearRevealState(); taskId.value = null; currentRunAttempt.value = null; state.taskStatus = 'IDLE'; state.cards = emptyCards(); state.finalPrice = null; state.strategy = ''; state.finalSummary = ''; state.errorMessage = ''; comparisonData.value = []; archiveReportSummary.value = ''; streamArrivedCards.clear() }
 const evidenceLines = (code: PricingAgentCode) => {
   const evidence = state.cards[code]?.evidence || []
   if (!evidence.length) return ['暂无依据']
@@ -344,6 +380,16 @@ const markSuggestionLineDone = (code: PricingAgentCode) => {
   }
   completeReveal(code)
 }
+const agentRoleLabel: Record<PricingAgentCode, string> = { DATA_ANALYSIS: '数据判断', MARKET_INTEL: '市场判断', RISK_CONTROL: '风险校验', MANAGER_COORDINATOR: '最终协调' }
+const visibleAgents = computed(() => buildVisibleAgentTimeline(agents, state.cards))
+const agentIcon: Record<PricingAgentCode, string> = { DATA_ANALYSIS: '数', MARKET_INTEL: '市', RISK_CONTROL: '控', MANAGER_COORDINATOR: '协' }
+const getHighlightPrice = (code: PricingAgentCode): number | null => {
+  const s = state.cards[code]?.suggestion && typeof state.cards[code]?.suggestion === 'object' ? state.cards[code]!.suggestion as Record<string, unknown> : {}
+  const raw = code === 'MANAGER_COORDINATOR' ? s.finalPrice : s.recommendedPrice
+  const n = Number(raw)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+const getHighlightLabel = (code: PricingAgentCode) => code === 'MANAGER_COORDINATOR' ? '最终建议价' : code === 'RISK_CONTROL' ? '风控建议价' : '建议定价'
 const isActiveReason = (code: PricingAgentCode) => shouldAnimate(code) && revealStages[code] === 'reason'
 const markReasonDone = (code: PricingAgentCode) => {
   if (!isActiveReason(code)) return
@@ -359,7 +405,9 @@ const applySnapshotDetail = (detail?: PricingTaskSnapshot['detail'] | null) => {
 const applySnapshotLogs = (logs: DecisionLogItem[]) => {
   clearRevealState()
   const cards = emptyCards()
-  logs.sort((a, b) => Number(a.displayOrder || a.runOrder || 0) - Number(b.displayOrder || b.runOrder || 0) || Number(a.id || 0) - Number(b.id || 0)).forEach((log) => {
+  const latestLogs = filterLatestAgentRunRound(logs)
+  currentRunAttempt.value = resolveLatestAgentRunAttempt(latestLogs)
+  latestLogs.sort((a, b) => Number(a.displayOrder || a.runOrder || 0) - Number(b.displayOrder || b.runOrder || 0) || Number(a.id || 0) - Number(b.id || 0)).forEach((log) => {
     const code = String(log.agentCode || '') as PricingAgentCode
     if (!(code in cards)) return
     const stage = log.stage === 'running' ? 'running' : log.stage === 'failed' ? 'failed' : 'completed'
@@ -394,6 +442,7 @@ const handleStream = async (payload: PricingTaskStreamMessage) => {
   if (payload.type === 'task_started') state.taskStatus = (payload.status || 'RUNNING') as PricingTaskStatus
   if (payload.type === 'agent_card') {
     const code = payload.agentCode as PricingAgentCode
+    if (!syncStreamRunAttempt(payload.runAttempt)) return
     if (code in state.cards) {
       if (payload.stage === 'running') {
         if (!state.cards[code]) state.cards[code] = runningCard()
@@ -505,7 +554,16 @@ const startTask = async () => {
   }
 }
 const cancelTask = async () => { if (!taskId.value || !canCancelTask.value) return; try { await ElMessageBox.confirm('确认取消当前任务吗？', '取消任务', { type: 'warning', confirmButtonText: '确认取消', cancelButtonText: '继续执行' }); await loadSnapshot(taskId.value); if (!['QUEUED', 'RUNNING', 'RETRYING'].includes(state.taskStatus)) return ElMessage.warning(`当前任务状态为 ${statusLabel.value}，不支持取消`); const res = await cancelPricingTask(taskId.value); if (res.code !== 200) return ElMessage.error(sanitizeErrorMessage(res.message, '取消任务失败')); stopRealtime(); state.taskStatus = 'CANCELLED'; state.errorMessage = '任务已取消'; await loadSnapshot(taskId.value); ElMessage.warning('任务已取消') } catch (error) { if (error !== 'cancel') ElMessage.error('取消任务失败') } }
-const refreshSnapshot = async () => { if (!taskId.value) return; clearRevealState(); await loadSnapshot(taskId.value); if (isRunning(state.taskStatus) && !aborter) void startStream(taskId.value); if (isRunning(state.taskStatus)) startPolling(); ElMessage.success(`已刷新快照，当前已完成 ${completedCardCount.value}/4 条分析结果`) }
+const refreshSnapshot = async () => {
+  if (!taskId.value) return
+  const wasRevealEnabled = liveRevealEnabled.value
+  clearRevealState()
+  await loadSnapshot(taskId.value)
+  liveRevealEnabled.value = shouldKeepRevealEnabledAfterRefresh(state.taskStatus, wasRevealEnabled)
+  if (isRunning(state.taskStatus) && !aborter) void startStream(taskId.value)
+  if (isRunning(state.taskStatus)) startPolling()
+  ElMessage.success(`已刷新快照，当前已完成 ${completedCardCount.value}/4 条分析结果`)
+}
 const resetTask = () => { resetState(); activeStep.value = 0 }
 const applyPrice = async (row: DecisionComparisonItem) => { const id = Number(row.resultId || 0); if (!id) return ElMessage.error('未找到可应用的结果记录'); try { await ElMessageBox.confirm(`确认将商品“${String(row.productTitle || '-')}”的售价更新为 ${currency(row.suggestedPrice)} 吗？`, '应用价格建议', { type: 'warning', confirmButtonText: '确认应用', cancelButtonText: '取消' }); applyingIds.value.push(id); const res = await applyDecision(id); if (res.code !== 200) return ElMessage.error(sanitizeErrorMessage(res.message, '应用失败')); ElMessage.success('价格建议已应用'); if (taskId.value) await loadSnapshot(taskId.value) } catch (error) { if (error !== 'cancel') ElMessage.error('应用失败') } finally { applyingIds.value = applyingIds.value.filter((item) => item !== id) } }
 
@@ -514,5 +572,79 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 </script>
 
 <style scoped>
-.llm-alert{margin-bottom:16px}.alert-link{color:#409eff;text-decoration:underline;margin-left:4px}.pricing-page{display:grid;gap:16px}.panel-card{padding:18px;border-radius:16px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05)}.section-head{display:flex;justify-content:space-between;gap:16px;margin-bottom:16px}.section-head h2{margin:0 0 6px;font-size:28px;color:#172033}.section-head p{margin:0;color:#6b7280}.config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 14px}.full-span{grid-column:1/-1}.toolbar{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}.agent-list{display:grid;gap:14px}.agent-box{padding:18px;border-radius:14px;border:1px solid rgba(226,232,240,.9);background:linear-gradient(180deg,#fff 0%,#f8fbff 100%)}.agent-head{display:flex;justify-content:space-between;gap:12px;margin-bottom:12px}.agent-head h3{margin:0;font-size:24px;color:#182236}.thinking{white-space:pre-wrap;line-height:1.8}.failed-card{display:grid;gap:8px;padding:14px 16px;border-radius:12px;border:1px solid rgba(239,68,68,.18);background:#fef2f2}.failed-card-title{font-size:14px;font-weight:700;color:#b42318}.failed-card-message{margin:0;line-height:1.7;color:#7a271a}.waiting{min-height:140px;display:grid;place-items:center;color:#64748b}.running-pulse{display:flex;align-items:center;justify-content:center;gap:8px;color:#e6a23c;font-size:15px}.pulse-dot{width:10px;height:10px;border-radius:50%;background:#e6a23c;animation:pulse 1.2s ease-in-out infinite}.fade-in-item{opacity:0;animation:fadeSlideIn .4s ease forwards}@keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.6);opacity:.4}}@keyframes fadeSlideIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}.report-page,.metric-grid{display:grid;gap:12px}.metric-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.metric-card{padding:18px;border-radius:14px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05);display:grid;gap:8px}.metric-card span{font-size:13px;color:#64748b}.metric-card strong{font-size:24px;color:#172033}@media (max-width:1100px){.config-grid,.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:760px){.config-grid,.metric-grid{grid-template-columns:1fr}.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}}
+.llm-alert{margin-bottom:16px}
+.alert-link{color:#409eff;text-decoration:underline;margin-left:4px}
+.pricing-page{display:grid;gap:16px}
+.panel-card{padding:18px;border-radius:16px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05)}
+.section-head{display:flex;justify-content:space-between;gap:16px;margin-bottom:16px}
+.section-head h2{margin:0 0 6px;font-size:28px;color:#172033}
+.section-head p{margin:0;color:#6b7280}
+.config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 14px}
+.full-span{grid-column:1/-1}
+.toolbar{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
+
+/* ========== Agent decision chat ========== */
+.decision-chat-panel{background:#f8fafc;border-color:#e2e8f0;box-shadow:none}
+.decision-chat-head{align-items:flex-start;padding-bottom:14px;margin-bottom:16px;border-bottom:1px solid #e2e8f0}
+.decision-chat-title{display:grid;gap:4px;min-width:0}
+.decision-chat-title h2{margin:0;font-size:24px;color:#0f172a}
+.decision-chat-title p{margin:0;color:#64748b;line-height:1.6}
+.decision-chat-kicker{width:fit-content;font-size:12px;font-weight:700;color:#1f6feb;background:rgba(31,111,235,.09);border:1px solid rgba(31,111,235,.12);border-radius:8px;padding:3px 8px}
+.decision-toolbar{align-items:center}
+
+.agent-stream-empty{min-height:220px;display:grid;place-items:center;text-align:center;padding:34px 18px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;color:#475569}
+.agent-stream-empty h3{margin:14px 0 6px;font-size:19px;color:#0f172a}
+.agent-stream-empty p{margin:0;line-height:1.7;color:#64748b}
+.agent-stream-pulse{display:flex;align-items:center;justify-content:center;gap:6px;height:26px}
+.agent-stream-pulse span{width:6px;height:6px;border-radius:50%;background:#1f6feb;animation:typing-dot 1s ease-in-out infinite}
+.agent-stream-pulse span:nth-child(2){animation-delay:.12s}
+.agent-stream-pulse span:nth-child(3){animation-delay:.24s}
+
+.agent-list{display:grid;gap:14px}
+.agent-box{--agent-color:#1f6feb;display:grid;grid-template-columns:34px minmax(0,1fr);gap:12px;align-items:start;animation:agent-enter .26s ease-out both}
+.agent-message{min-width:0;padding:16px 18px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.agent-box.is-streaming .agent-message{border-color:rgba(31,111,235,.22)}
+.agent-avatar{width:34px;height:34px;border-radius:8px;background:#eff6ff;color:#1d4ed8;border:1px solid #dbeafe;display:grid;place-items:center;font-size:14px;font-weight:700;line-height:1;flex-shrink:0}
+
+.agent-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}
+.agent-identity{display:flex;align-items:flex-start;gap:12px;min-width:0}
+.agent-title{display:flex;flex-direction:column;gap:4px;min-width:0}
+.agent-title h3{margin:0;font-size:16px;font-weight:700;color:#0f172a;letter-spacing:0}
+.agent-role{display:inline-block;width:fit-content;font-size:12px;font-weight:600;color:#64748b;background:#f8fafc;border:1px solid #e2e8f0;padding:2px 8px;border-radius:8px;line-height:1.5}
+
+.agent-box h4{margin:14px 0 8px;font-size:13px;font-weight:700;color:#334155;letter-spacing:0}
+.thinking{white-space:pre-wrap;line-height:1.8;color:#475569;font-size:14px;margin:0}
+
+.evidence-list,.suggestion-list{margin:0;padding:0;list-style:none;display:grid;gap:8px}
+.evidence-list li,.suggestion-list li{padding:9px 11px;background:#f8fafc;border:1px solid #edf2f7;border-radius:8px;line-height:1.65;color:#334155;font-size:14px}
+
+.result-strip{margin:6px 0 10px;padding:12px 14px;border-radius:8px;background:#f8fafc;border:1px solid #dbeafe;display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.price-label{font-size:13px;color:#64748b;font-weight:600}
+.price-value{font-size:26px;font-weight:800;color:#1f6feb;letter-spacing:0;font-variant-numeric:tabular-nums;line-height:1}
+.price-unit{font-size:16px;font-weight:600;opacity:.7;margin-right:3px}
+
+.failed-card{display:grid;gap:8px;padding:12px 14px;border-radius:8px;border:1px solid #fecaca;background:#fef2f2}
+.failed-card-title{font-size:14px;font-weight:700;color:#b42318}
+.failed-card-message{margin:0;line-height:1.7;color:#7a271a}
+.waiting{min-height:104px;display:grid;place-items:center;color:#94a3b8}
+.running-pulse{display:flex;align-items:center;justify-content:center;gap:10px;color:#1f6feb;font-size:14px;font-weight:600}
+.pulse-dot{width:8px;height:8px;border-radius:50%;background:#1f6feb;animation:pulse 1.2s ease-in-out infinite}
+
+.fade-in-item{opacity:0;animation:fadeSlideIn .38s cubic-bezier(.16,1,.3,1) forwards;animation-delay:calc(var(--i, 0) * 60ms)}
+
+@keyframes agent-enter{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.6);opacity:.4}}
+@keyframes fadeSlideIn{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:translateX(0)}}
+@keyframes typing-dot{0%,80%,100%{opacity:.35;transform:translateY(0)}40%{opacity:1;transform:translateY(-4px)}}
+
+/* ========== Report page ========== */
+.report-page,.metric-grid{display:grid;gap:14px}
+.metric-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
+.metric-card{padding:20px;border-radius:14px;background:#fff;border:1px solid rgba(15,23,42,.06);box-shadow:0 1px 2px rgba(15,23,42,.04),0 10px 30px rgba(15,23,42,.05);display:grid;gap:10px;transition:box-shadow .25s ease,transform .25s ease}
+.metric-card:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(15,23,42,.06),0 16px 40px rgba(15,23,42,.08)}
+.metric-card span{font-size:13px;color:#64748b;font-weight:500}
+.metric-card strong{font-size:26px;color:#0f172a;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+@media (max-width:1100px){.config-grid,.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:760px){.config-grid,.metric-grid{grid-template-columns:1fr}.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}.agent-box{grid-template-columns:30px minmax(0,1fr);gap:10px}.agent-avatar{width:30px;height:30px}.result-strip{flex-direction:column;align-items:flex-start;gap:4px}}
+@media (prefers-reduced-motion:reduce){.agent-box,.metric-card,.fade-in-item,.pulse-dot,.agent-stream-pulse span{animation:none!important;transition:none!important}.metric-card:hover{transform:none}}
 </style>

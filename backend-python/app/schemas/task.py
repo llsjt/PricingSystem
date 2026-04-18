@@ -63,6 +63,7 @@ class AgentLogItem(BaseModel):
     # Legacy compatibility fields for current consumers.
     agent_code: str | None = Field(default=None, alias="agentCode")
     agent_name: str | None = Field(default=None, alias="agentName")
+    run_attempt: int | None = Field(default=None, alias="runAttempt")
     run_order: int | None = Field(default=None, alias="runOrder")
     display_order: int | None = Field(default=None, alias="displayOrder")
     stage: str | None = None

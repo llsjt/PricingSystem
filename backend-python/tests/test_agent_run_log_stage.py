@@ -44,6 +44,7 @@ def build_session(*tables) -> Session:
                         final_reason TEXT DEFAULT NULL,
                         display_order INT DEFAULT NULL,
                         stage VARCHAR(20) NOT NULL DEFAULT 'completed',
+                        run_attempt INT NOT NULL DEFAULT 0,
                         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
                     )
                     """
@@ -176,7 +177,9 @@ def test_log_repo_writes_completed_and_running_stage():
     )
 
     assert completed.stage == "completed"
+    assert completed.run_attempt == 0
     assert running.stage == "running"
+    assert running.run_attempt == 0
     assert running.display_order == 2
     assert running.thinking_summary is None
     assert running.evidence_json == []
@@ -195,11 +198,54 @@ def test_log_repo_writes_failed_stage_for_error_card():
         evidence=[{"label": "error", "value": "LLM API timeout"}],
         suggestion={"error": True, "message": "LLM API timeout"},
         stage="failed",
+        run_attempt=2,
     )
 
     assert failed.stage == "failed"
+    assert failed.run_attempt == 2
     assert failed.display_order == 4
     assert failed.suggestion_json == {"error": True, "message": "LLM API timeout"}
+
+
+def test_worker_failure_before_retry_clears_previous_running_and_failed_cards():
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=22)
+    repo = LogRepo(db)
+    repo.append_card(
+        task_id=task.id,
+        agent_name="数据分析Agent",
+        display_order=1,
+        thinking_summary="ok",
+        evidence=[],
+        suggestion={"summary": "ok"},
+        run_attempt=0,
+    )
+    repo.append_running_card(
+        task_id=task.id,
+        agent_name="市场情报Agent",
+        display_order=2,
+        run_attempt=0,
+    )
+    repo.append_card(
+        task_id=task.id,
+        agent_name="市场情报Agent",
+        display_order=2,
+        thinking_summary="LLM 调用超时",
+        evidence=[{"label": "错误摘要", "value": "LLM 调用超时"}],
+        suggestion={"error": True, "message": "LLM 调用超时"},
+        stage="failed",
+        run_attempt=0,
+    )
+
+    req = SimpleNamespace(task_id=task.id, trace_id="trace-22")
+    response = DispatchService(db).handle_worker_failure(req, "timeout", max_retries=2)
+    logs = LogRepo(db).list_by_task_id(task.id)
+
+    assert response.status == "RETRYING"
+    assert [log.stage for log in logs] == ["completed"]
+    assert logs[0].run_attempt == 0
+    db.refresh(task)
+    assert task.retry_count == 1
 
 
 def test_log_writer_skips_running_card_for_cancelled_task():
@@ -248,6 +294,21 @@ def test_orchestration_service_summarizes_timeout_failure_without_leaking_raw_de
     assert thinking == "LLM 调用超时"
     assert evidence == [{"label": "错误摘要", "value": "LLM 调用超时"}]
     assert suggestion == {"error": True, "message": "LLM 调用超时"}
+
+
+def test_orchestration_service_summarizes_agent_execution_timeout_separately():
+    raw_error = RuntimeError(
+        "Task '你正在为商品制定定价策略' execution timed out after 45 seconds. "
+        "Consider increasing max_execution_time or optimizing the task."
+    )
+
+    summary = OrchestrationService._summarize_failure_message(raw_error)
+    thinking, evidence, suggestion = OrchestrationService._build_failed_card(summary)
+
+    assert summary == "Agent 执行超时"
+    assert thinking == "Agent 执行超时"
+    assert evidence == [{"label": "错误摘要", "value": "Agent 执行超时"}]
+    assert suggestion == {"error": True, "message": "Agent 执行超时"}
 
 
 def test_orchestration_service_falls_back_to_generic_failure_summary_for_prompt_like_errors():

@@ -20,4 +20,5 @@ class AgentRunLog(Base):
     final_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     display_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
     stage: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'completed'"))
+    run_attempt: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))

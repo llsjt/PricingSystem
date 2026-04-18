@@ -63,6 +63,8 @@ def ensure_agent_run_log_schema(schema_name: str) -> None:
         statements.append("ADD COLUMN display_order INT NULL COMMENT '卡片展示顺序(1-4)'")
     if "stage" not in existing:
         statements.append("ADD COLUMN stage VARCHAR(20) NOT NULL DEFAULT 'completed' COMMENT '卡片阶段: running=正在分析, completed=已完成, failed=执行失败'")
+    if "run_attempt" not in existing:
+        statements.append("ADD COLUMN run_attempt INT NOT NULL DEFAULT 0 COMMENT 'Agent 执行轮次，从0开始，对应任务 retry_count'")
 
     if statements:
         ddl = "ALTER TABLE agent_run_log " + ", ".join(statements)
@@ -84,6 +86,16 @@ def ensure_agent_run_log_schema(schema_name: str) -> None:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE agent_run_log ADD INDEX idx_task_display_order (task_id, display_order)"))
         logger.info("Applied startup migration index idx_task_display_order")
+
+    if not _has_index(table_name, schema_name, "idx_task_run_attempt_display_order"):
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE agent_run_log ADD INDEX idx_task_run_attempt_display_order "
+                    "(task_id, run_attempt, display_order)"
+                )
+            )
+        logger.info("Applied startup migration index idx_task_run_attempt_display_order")
 
     with engine.begin() as conn:
         conn.execute(

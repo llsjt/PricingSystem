@@ -245,6 +245,7 @@ class DecisionTaskServiceImplTest {
         runLog.setRoleName("市场情报Agent");
         runLog.setDisplayOrder(2);
         runLog.setStage("running");
+        runLog.setRunAttempt(3);
 
         when(shopService.getShopIdsByUser(77L)).thenReturn(List.of(9L));
         when(taskMapper.selectById(30L)).thenReturn(task);
@@ -254,6 +255,7 @@ class DecisionTaskServiceImplTest {
 
         assertEquals(1, logs.size());
         assertEquals("MARKET_INTEL", logs.get(0).getAgentCode());
+        assertEquals(3, logs.get(0).getRunAttempt());
         assertEquals("running", logs.get(0).getStage());
         assertEquals("running", logs.get(0).getRunStatus());
     }

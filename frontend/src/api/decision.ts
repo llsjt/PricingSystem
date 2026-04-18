@@ -58,6 +58,7 @@ export interface DecisionLogItem {
   thoughtContent?: string
   agentCode?: string
   agentName?: string
+  runAttempt?: number
   runOrder?: number
   displayOrder?: number
   stage?: 'running' | 'completed' | 'failed' | string
@@ -150,6 +151,7 @@ export interface PricingAgentCardMessage {
   agentCode: PricingAgentCode
   agentName: string
   displayOrder: number
+  runAttempt?: number
   stage: 'running' | 'completed' | 'failed' | string
   card: AgentCardContent
 }

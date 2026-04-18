@@ -172,6 +172,7 @@ public class PricingTaskStreamService {
         payload.put("agentCode", agentCode);
         payload.put("agentName", item.getRoleName());
         payload.put("displayOrder", order);
+        payload.put("runAttempt", item.getRunAttempt() == null ? 0 : item.getRunAttempt());
         String stage = normalizeLogStage(item);
         payload.put("stage", stage);
         if ("running".equals(stage)) {

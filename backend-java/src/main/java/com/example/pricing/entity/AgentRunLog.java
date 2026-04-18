@@ -48,6 +48,9 @@ public class AgentRunLog {
     @TableField("stage")
     private String stage;
 
+    @TableField("run_attempt")
+    private Integer runAttempt;
+
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 }

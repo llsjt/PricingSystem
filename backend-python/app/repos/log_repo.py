@@ -1,6 +1,6 @@
 from typing import Any
 
-from sqlalchemy import asc, desc, func, select
+from sqlalchemy import asc, delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.models.agent_run_log import AgentRunLog
@@ -34,6 +34,7 @@ class LogRepo:
         suggestion: dict[str, Any],
         reason_why: str | None = None,
         stage: str = "completed",
+        run_attempt: int = 0,
     ) -> AgentRunLog:
         """写入 Agent 卡片日志，兼容旧字段 thought_content/speak_order。"""
         order = int(display_order or self.get_next_display_order(task_id))
@@ -49,6 +50,7 @@ class LogRepo:
             final_reason=reason_why,
             display_order=order,
             stage=normalized_stage,
+            run_attempt=max(int(run_attempt or 0), 0),
         )
         self.db.add(log)
         self.db.commit()
@@ -60,6 +62,7 @@ class LogRepo:
         task_id: int,
         agent_name: str,
         display_order: int,
+        run_attempt: int = 0,
     ) -> AgentRunLog:
         """写入 running 占位卡片，表示 Agent 正在工作。"""
         order = int(display_order or self.get_next_display_order(task_id))
@@ -74,6 +77,7 @@ class LogRepo:
             final_reason=None,
             display_order=order,
             stage="running",
+            run_attempt=max(int(run_attempt or 0), 0),
         )
         self.db.add(log)
         self.db.commit()
@@ -85,6 +89,7 @@ class LogRepo:
             select(AgentRunLog)
             .where(AgentRunLog.task_id == task_id)
             .order_by(
+                asc(AgentRunLog.run_attempt),
                 asc(func.coalesce(AgentRunLog.display_order, AgentRunLog.speak_order, 999)),
                 asc(AgentRunLog.id),
             )
@@ -92,11 +97,24 @@ class LogRepo:
         )
         return list(self.db.scalars(stmt).all())
 
+    def delete_running_and_failed_by_task_id(self, task_id: int) -> int:
+        result = self.db.execute(
+            delete(AgentRunLog)
+            .where(AgentRunLog.task_id == task_id)
+            .where(AgentRunLog.stage.in_(("running", "failed")))
+        )
+        self.db.commit()
+        return int(result.rowcount or 0)
+
     def list_latest_by_task_id(self, task_id: int, limit: int = 200) -> list[AgentRunLog]:
         stmt = (
             select(AgentRunLog)
             .where(AgentRunLog.task_id == task_id)
-            .order_by(desc(func.coalesce(AgentRunLog.display_order, AgentRunLog.speak_order, 0)), desc(AgentRunLog.id))
+            .order_by(
+                desc(AgentRunLog.run_attempt),
+                desc(func.coalesce(AgentRunLog.display_order, AgentRunLog.speak_order, 0)),
+                desc(AgentRunLog.id),
+            )
             .limit(limit)
         )
         return list(self.db.scalars(stmt).all())

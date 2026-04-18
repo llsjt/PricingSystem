@@ -23,6 +23,7 @@ public class DecisionLogVO {
      */
     private String agentCode;
     private String agentName;
+    private Integer runAttempt;
     private Integer runOrder;
     private Integer displayOrder;
     private String stage;
