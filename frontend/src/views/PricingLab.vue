@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="pricing-page">
     <el-alert
       v-if="!hasLlmConfig"
@@ -84,13 +84,6 @@
                   <el-input-number v-model="constraintForm.maxDiscountRatePercent" :min="0.01" :max="100" :step="1" :precision="2" controls-position="right" placeholder="不限制" />
                   <span class="constraint-unit">%</span>
                 </div>
-              </div>
-              <div class="constraint-switch">
-                <div>
-                  <span class="constraint-label">强制人工审核</span>
-                  <small>规则通过后仍进入人工确认。</small>
-                </div>
-                <el-switch v-model="constraintForm.forceManualReview" />
               </div>
             </div>
           </div>
@@ -643,14 +636,12 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 .constraint-intro{display:flex;justify-content:space-between;align-items:center;gap:12px;color:#64748b;font-size:14px;line-height:1.7}
 .constraint-intro strong{font-size:15px;color:#172033}
 .constraint-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
-.constraint-field,.constraint-switch{min-width:0;padding:12px;border:1px solid #e2e8f0;border-radius:8px;background:#fff}
+.constraint-field{min-width:0;padding:12px;border:1px solid #e2e8f0;border-radius:8px;background:#fff}
 .constraint-field{display:grid;gap:8px}
 .constraint-label{display:block;font-size:14px;font-weight:700;color:#334155;line-height:1.45}
 .constraint-control{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px}
 .constraint-control :deep(.el-input-number){width:100%}
 .constraint-unit{font-size:14px;font-weight:700;color:#64748b}
-.constraint-switch{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:16px}
-.constraint-switch small{display:block;margin-top:4px;font-size:13px;color:#64748b;line-height:1.6}
 
 /* ========== Agent decision chat ========== */
 .decision-chat-panel{background:#f8fafc;border-color:#e2e8f0;box-shadow:none}
@@ -733,6 +724,6 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 .report-table :deep(.el-button.is-link){font-size:15px;font-weight:700}
 .report-table :deep(.cell){line-height:1.5}
 @media (max-width:1100px){.config-grid,.metric-grid,.constraint-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:760px){.config-grid,.metric-grid,.constraint-grid{grid-template-columns:1fr}.constraint-intro,.constraint-switch,.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}.workflow-copy p,.report-copy{max-width:none}.agent-box{grid-template-columns:30px minmax(0,1fr);gap:10px}.agent-avatar{width:30px;height:30px}.result-strip{flex-direction:column;align-items:flex-start;gap:4px}}
+@media (max-width:760px){.config-grid,.metric-grid,.constraint-grid{grid-template-columns:1fr}.constraint-intro,.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}.workflow-copy p,.report-copy{max-width:none}.agent-box{grid-template-columns:30px minmax(0,1fr);gap:10px}.agent-avatar{width:30px;height:30px}.result-strip{flex-direction:column;align-items:flex-start;gap:4px}}
 @media (prefers-reduced-motion:reduce){.agent-box,.metric-card,.fade-in-item,.pulse-dot,.agent-stream-pulse span{animation:none!important;transition:none!important}.metric-card:hover{transform:none}}
 </style>
