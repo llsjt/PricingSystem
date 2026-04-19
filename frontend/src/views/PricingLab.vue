@@ -13,9 +13,9 @@
         <router-link to="/models" class="alert-link">前往模型管理配置</router-link>
       </template>
     </el-alert>
-    <section class="panel-card">
-      <div class="section-head">
-        <div>
+    <section class="panel-card workflow-card">
+      <div class="section-head workflow-head">
+        <div class="workflow-copy">
           <h2>任务流程</h2>
           <p>配置任务、智能决策、结果报告。</p>
         </div>
@@ -175,17 +175,17 @@
 
     <section v-else class="report-page">
       <div class="metric-grid">
-        <div class="metric-card"><span>最终价格</span><strong><span class="price-unit">¥</span><CountUp :value="state.finalPrice" :duration="800" /></strong></div>
-        <div class="metric-card"><span>预期销量</span><strong><CountUp v-if="expectedSales != null" :value="expectedSales" :decimals="0" :duration="700" /><template v-else>-</template></strong></div>
-        <div class="metric-card"><span>预期利润</span><strong><span class="price-unit">¥</span><CountUp :value="expectedProfit" :duration="800" /></strong></div>
-        <div class="metric-card"><span>执行策略</span><strong>{{ strategyText || '-' }}</strong></div>
+        <div class="metric-card metric-card-primary"><span>最终价格</span><strong><span class="price-unit">¥</span><CountUp :value="state.finalPrice" :duration="800" /></strong></div>
+        <div class="metric-card metric-card-secondary"><span>预期销量</span><strong><CountUp v-if="expectedSales != null" :value="expectedSales" :decimals="0" :duration="700" /><template v-else>-</template></strong></div>
+        <div class="metric-card metric-card-secondary"><span>预期利润</span><strong><span class="price-unit">¥</span><CountUp :value="expectedProfit" :duration="800" /></strong></div>
+        <div class="metric-card metric-card-accent"><span>执行策略</span><strong>{{ strategyText || '-' }}</strong></div>
       </div>
-      <section class="panel-card">
-        <div class="section-head">
-          <div><h2>结果报告</h2><p>{{ reportSummary || '最终建议由 4 个 Agent 的分析结果综合得出。' }}</p></div>
-          <div class="toolbar"><el-button @click="activeStep = 1">查看智能决策过程</el-button><el-button type="primary" @click="resetTask">重新配置任务</el-button></div>
+      <section class="panel-card report-panel">
+        <div class="section-head report-head">
+          <div class="report-copy"><h2>结果报告</h2><p>{{ reportSummary || '最终建议由 4 个 Agent 的分析结果综合得出。' }}</p></div>
+          <div class="toolbar report-toolbar"><el-button @click="activeStep = 1">查看智能决策过程</el-button><el-button type="primary" @click="resetTask">重新配置任务</el-button></div>
         </div>
-        <el-table :data="comparisonData" border stripe>
+        <el-table :data="comparisonData" border stripe class="report-table">
           <el-table-column prop="productTitle" label="商品名称" min-width="180" show-overflow-tooltip />
           <el-table-column label="原价" width="120"><template #default="{ row }">{{ currency(row.originalPrice) }}</template></el-table-column>
           <el-table-column label="建议价" width="120"><template #default="{ row }">{{ currency(row.suggestedPrice) }}</template></el-table-column>
@@ -619,36 +619,46 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 </script>
 
 <style scoped>
-.llm-alert{margin-bottom:16px}
+.llm-alert{margin-bottom:14px}
 .alert-link{color:#409eff;text-decoration:underline;margin-left:4px}
-.pricing-page{display:grid;gap:16px}
-.panel-card{padding:18px;border-radius:16px;background:#fff;border:1px solid rgba(15,23,42,.08);box-shadow:0 10px 30px rgba(15,23,42,.05)}
-.section-head{display:flex;justify-content:space-between;gap:16px;margin-bottom:16px}
-.section-head h2{margin:0 0 6px;font-size:28px;color:#172033}
-.section-head p{margin:0;color:#6b7280}
+.pricing-page{--pricing-accent:#2563eb;--pricing-accent-soft:rgba(37,99,235,.08);--pricing-accent-border:rgba(147,197,253,.72);--pricing-border:rgba(15,23,42,.08);display:grid;gap:14px}
+.panel-card{padding:16px 18px;border-radius:14px;background:linear-gradient(180deg,rgba(255,255,255,.98),#fff);border:1px solid var(--pricing-border);box-shadow:0 8px 24px rgba(15,23,42,.05)}
+.section-head{display:flex;justify-content:space-between;gap:14px;margin-bottom:14px}
+.section-head h2{margin:0 0 4px;font-size:24px;color:#172033;line-height:1.2}
+.section-head p{margin:0;color:#6b7280;font-size:14px;line-height:1.7}
 .config-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 14px}
 .full-span{grid-column:1/-1}
-.toolbar{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
+.toolbar{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.workflow-card{padding-block:14px 16px}
+.workflow-head{margin-bottom:10px}
+.workflow-copy{display:grid;gap:4px}
+.workflow-copy h2{font-size:22px}
+.workflow-copy p{max-width:520px}
+.workflow-card :deep(.el-steps){padding-top:2px}
+.workflow-card :deep(.el-step__main){padding-top:6px}
+.workflow-card :deep(.el-step__title){font-size:15px;font-weight:700}
+.workflow-card :deep(.el-step__icon){width:30px;height:30px}
+.workflow-card :deep(.el-step__line){top:15px}
 .constraint-panel{width:100%;display:grid;gap:14px;padding:14px 16px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc}
-.constraint-intro{display:flex;justify-content:space-between;align-items:center;gap:12px;color:#64748b;line-height:1.6}
-.constraint-intro strong{font-size:14px;color:#172033}
+.constraint-intro{display:flex;justify-content:space-between;align-items:center;gap:12px;color:#64748b;font-size:14px;line-height:1.7}
+.constraint-intro strong{font-size:15px;color:#172033}
 .constraint-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 .constraint-field,.constraint-switch{min-width:0;padding:12px;border:1px solid #e2e8f0;border-radius:8px;background:#fff}
 .constraint-field{display:grid;gap:8px}
-.constraint-label{display:block;font-size:13px;font-weight:700;color:#334155;line-height:1.4}
+.constraint-label{display:block;font-size:14px;font-weight:700;color:#334155;line-height:1.45}
 .constraint-control{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px}
 .constraint-control :deep(.el-input-number){width:100%}
-.constraint-unit{font-size:13px;font-weight:700;color:#64748b}
+.constraint-unit{font-size:14px;font-weight:700;color:#64748b}
 .constraint-switch{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:16px}
-.constraint-switch small{display:block;margin-top:4px;font-size:12px;color:#64748b;line-height:1.5}
+.constraint-switch small{display:block;margin-top:4px;font-size:13px;color:#64748b;line-height:1.6}
 
 /* ========== Agent decision chat ========== */
 .decision-chat-panel{background:#f8fafc;border-color:#e2e8f0;box-shadow:none}
-.decision-chat-head{align-items:flex-start;padding-bottom:14px;margin-bottom:16px;border-bottom:1px solid #e2e8f0}
+.decision-chat-head{align-items:flex-start;padding-bottom:12px;margin-bottom:14px;border-bottom:1px solid #e2e8f0}
 .decision-chat-title{display:grid;gap:4px;min-width:0}
-.decision-chat-title h2{margin:0;font-size:24px;color:#0f172a}
-.decision-chat-title p{margin:0;color:#64748b;line-height:1.6}
-.decision-chat-kicker{width:fit-content;font-size:12px;font-weight:700;color:#1f6feb;background:rgba(31,111,235,.09);border:1px solid rgba(31,111,235,.12);border-radius:8px;padding:3px 8px}
+.decision-chat-title h2{margin:0;font-size:22px;color:#0f172a}
+.decision-chat-title p{margin:0;color:#64748b;font-size:14px;line-height:1.7}
+.decision-chat-kicker{width:fit-content;font-size:13px;font-weight:700;color:#1f6feb;background:rgba(31,111,235,.09);border:1px solid rgba(31,111,235,.12);border-radius:8px;padding:3px 8px}
 .decision-toolbar{align-items:center}
 
 .agent-stream-empty{min-height:220px;display:grid;place-items:center;text-align:center;padding:34px 18px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;color:#475569}
@@ -669,18 +679,18 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 .agent-identity{display:flex;align-items:flex-start;gap:12px;min-width:0}
 .agent-title{display:flex;flex-direction:column;gap:4px;min-width:0}
 .agent-title h3{margin:0;font-size:16px;font-weight:700;color:#0f172a;letter-spacing:0}
-.agent-role{display:inline-block;width:fit-content;font-size:12px;font-weight:600;color:#64748b;background:#f8fafc;border:1px solid #e2e8f0;padding:2px 8px;border-radius:8px;line-height:1.5}
+.agent-role{display:inline-block;width:fit-content;font-size:13px;font-weight:600;color:#64748b;background:#f8fafc;border:1px solid #e2e8f0;padding:2px 8px;border-radius:8px;line-height:1.5}
 
-.agent-box h4{margin:14px 0 8px;font-size:13px;font-weight:700;color:#334155;letter-spacing:0}
-.thinking{white-space:pre-wrap;line-height:1.8;color:#475569;font-size:14px;margin:0}
+.agent-box h4{margin:14px 0 8px;font-size:14px;font-weight:700;color:#334155;letter-spacing:0}
+.thinking{white-space:pre-wrap;line-height:1.8;color:#475569;font-size:15px;margin:0}
 
 .evidence-list,.suggestion-list{margin:0;padding:0;list-style:none;display:grid;gap:8px}
-.evidence-list li,.suggestion-list li{padding:9px 11px;background:#f8fafc;border:1px solid #edf2f7;border-radius:8px;line-height:1.65;color:#334155;font-size:14px}
+.evidence-list li,.suggestion-list li{padding:9px 11px;background:#f8fafc;border:1px solid #edf2f7;border-radius:8px;line-height:1.7;color:#334155;font-size:15px}
 
 .result-strip{margin:6px 0 10px;padding:12px 14px;border-radius:8px;background:#f8fafc;border:1px solid #dbeafe;display:flex;justify-content:space-between;align-items:baseline;gap:12px}
-.price-label{font-size:13px;color:#64748b;font-weight:600}
+.price-label{font-size:14px;color:#64748b;font-weight:600}
 .price-value{font-size:26px;font-weight:800;color:#1f6feb;letter-spacing:0;font-variant-numeric:tabular-nums;line-height:1}
-.price-unit{font-size:16px;font-weight:600;opacity:.7;margin-right:3px}
+.price-unit{font-size:17px;font-weight:600;opacity:.7;margin-right:3px}
 
 .failed-card{display:grid;gap:8px;padding:12px 14px;border-radius:8px;border:1px solid #fecaca;background:#fef2f2}
 .failed-card-title{font-size:14px;font-weight:700;color:#b42318}
@@ -697,13 +707,32 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 @keyframes typing-dot{0%,80%,100%{opacity:.35;transform:translateY(0)}40%{opacity:1;transform:translateY(-4px)}}
 
 /* ========== Report page ========== */
-.report-page,.metric-grid{display:grid;gap:14px}
+.report-page,.metric-grid{display:grid;gap:12px}
 .metric-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
-.metric-card{padding:20px;border-radius:14px;background:#fff;border:1px solid rgba(15,23,42,.06);box-shadow:0 1px 2px rgba(15,23,42,.04),0 10px 30px rgba(15,23,42,.05);display:grid;gap:10px;transition:box-shadow .25s ease,transform .25s ease}
-.metric-card:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(15,23,42,.06),0 16px 40px rgba(15,23,42,.08)}
-.metric-card span{font-size:13px;color:#64748b;font-weight:500}
-.metric-card strong{font-size:26px;color:#0f172a;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.metric-card{position:relative;padding:18px 18px 16px;border-radius:14px;background:#fff;border:1px solid rgba(15,23,42,.06);box-shadow:0 1px 2px rgba(15,23,42,.04),0 8px 22px rgba(15,23,42,.05);display:grid;gap:8px;transition:box-shadow .25s ease,transform .25s ease,border-color .25s ease}
+.metric-card:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(15,23,42,.06),0 14px 30px rgba(15,23,42,.08)}
+.metric-card span{font-size:14px;color:#64748b;font-weight:600;letter-spacing:0}
+.metric-card strong{font-size:24px;color:#0f172a;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1}
+.metric-card-primary,.metric-card-accent{border-color:var(--pricing-accent-border);background:linear-gradient(180deg,rgba(239,246,255,.95),rgba(255,255,255,.98))}
+.metric-card-primary strong{font-size:31px;color:#1d4ed8}
+.metric-card-secondary strong{font-size:24px}
+.metric-card-accent strong{font-size:29px}
+.metric-card-primary::before,.metric-card-accent::before{content:'';position:absolute;inset:0 0 auto 0;height:3px;border-radius:14px 14px 0 0;background:linear-gradient(90deg,#60a5fa,#2563eb)}
+.report-panel{padding-top:18px}
+.report-head{align-items:flex-start;margin-bottom:12px}
+.report-copy{display:grid;gap:8px;max-width:min(900px,100%)}
+.report-copy h2{margin:0;font-size:26px;line-height:1.2}
+.report-copy p{margin:0;color:#516074;font-size:15px;line-height:1.8}
+.report-toolbar{align-items:flex-start}
+.report-toolbar :deep(.el-button){min-height:36px;font-size:14px}
+.report-toolbar :deep(.el-button--primary){box-shadow:0 8px 18px rgba(37,99,235,.18)}
+.report-table :deep(.el-table__header th){padding-block:11px;background:#f8fbff;color:#334155;font-weight:700;font-size:14px}
+.report-table :deep(.el-table__cell){padding-block:10px;font-size:15px}
+.report-table :deep(.el-table__body tr:hover > td){background:#f8fbff}
+.report-table :deep(.el-tag){border-radius:999px;padding-inline:10px;font-size:14px;font-weight:700}
+.report-table :deep(.el-button.is-link){font-size:15px;font-weight:700}
+.report-table :deep(.cell){line-height:1.5}
 @media (max-width:1100px){.config-grid,.metric-grid,.constraint-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:760px){.config-grid,.metric-grid,.constraint-grid{grid-template-columns:1fr}.constraint-intro,.constraint-switch,.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}.agent-box{grid-template-columns:30px minmax(0,1fr);gap:10px}.agent-avatar{width:30px;height:30px}.result-strip{flex-direction:column;align-items:flex-start;gap:4px}}
+@media (max-width:760px){.config-grid,.metric-grid,.constraint-grid{grid-template-columns:1fr}.constraint-intro,.constraint-switch,.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}.workflow-copy p,.report-copy{max-width:none}.agent-box{grid-template-columns:30px minmax(0,1fr);gap:10px}.agent-avatar{width:30px;height:30px}.result-strip{flex-direction:column;align-items:flex-start;gap:4px}}
 @media (prefers-reduced-motion:reduce){.agent-box,.metric-card,.fade-in-item,.pulse-dot,.agent-stream-pulse span{animation:none!important;transition:none!important}.metric-card:hover{transform:none}}
 </style>

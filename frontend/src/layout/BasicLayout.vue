@@ -652,10 +652,10 @@ onBeforeUnmount(() => {
   top: 0;
   z-index: 20;
   flex-shrink: 0;
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.78);
   backdrop-filter: blur(20px) saturate(180%);
   border-bottom: 1px solid rgba(226, 232, 240, 0.8);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
+  box-shadow: 0 2px 14px rgba(15, 23, 42, 0.04);
 }
 
 .topbar {
@@ -663,8 +663,8 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: center;
   gap: 14px;
-  min-height: 60px;
-  padding: 0 20px;
+  min-height: 54px;
+  padding: 0 18px;
 }
 
 .topbar-left,
@@ -690,22 +690,22 @@ onBeforeUnmount(() => {
 .page-meta {
   display: flex;
   align-items: center;
-  margin-left: 8px;
+  margin-left: 4px;
 }
 
 .page-title {
   margin: 0;
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 600;
   color: #0f172a;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.2px;
 }
 
 .user-entry {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 5px 10px;
+  padding: 4px 10px;
   border-radius: 999px;
   border: 1px solid var(--line-soft);
   background: rgba(255, 255, 255, 0.85);
@@ -725,24 +725,24 @@ onBeforeUnmount(() => {
 }
 
 .user-copy strong {
-  font-size: 14px;
+  font-size: 15px;
 }
 
 .user-copy span {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-3);
 }
 
 .content-shell {
   flex: 1;
   min-height: 0;
-  padding: 14px 16px 20px;
+  padding: 12px 16px 18px;
   overflow-x: hidden;
   overflow-y: auto;
 }
 
 .tabs-shell {
-  padding: 0 20px;
+  padding: 0 18px 8px;
   background: transparent;
 }
 
@@ -750,7 +750,7 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  padding: 8px 0 0;
+  padding: 6px 0 0;
 }
 
 .tabs-track::-webkit-scrollbar {
@@ -762,13 +762,12 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 38px;
+  min-height: 34px;
   max-width: 200px;
-  padding: 0 14px;
-  border: 1px solid transparent;
-  border-bottom: none;
-  border-radius: 8px 8px 0 0;
-  background: rgba(226, 232, 240, 0.4);
+  padding: 0 12px;
+  border: 1px solid rgba(226, 232, 240, 0.82);
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.95);
   color: #64748b;
   cursor: pointer;
   position: relative;
@@ -776,30 +775,20 @@ onBeforeUnmount(() => {
 }
 
 .tab-item:hover {
-  background: rgba(226, 232, 240, 0.8);
+  background: #ffffff;
+  border-color: rgba(191, 219, 254, 0.9);
   color: #334155;
 }
 
 .tab-item.active {
-  background: #ffffff;
-  color: #3b82f6;
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  border-bottom: none;
-  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.02);
-}
-
-.tab-item.active::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: #ffffff;
+  background: linear-gradient(180deg, rgba(239, 246, 255, 0.96), rgba(232, 244, 255, 0.88));
+  color: #2563eb;
+  border-color: rgba(147, 197, 253, 0.9);
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.08);
 }
 
 .tab-title {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -810,10 +799,10 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  min-width: 18px;
-  height: 18px;
-  margin-left: 6px;
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 4px;
   border-radius: 50%;
   color: #516d89;
 }
@@ -880,19 +869,20 @@ onBeforeUnmount(() => {
   }
 
   .topbar {
-    padding: 10px 12px;
+    min-height: 52px;
+    padding: 8px 12px;
   }
 
   .content-shell {
-    padding: 14px 12px 20px;
+    padding: 12px 12px 18px;
   }
 
   .tabs-shell {
-    padding: 0 12px;
+    padding: 0 12px 6px;
   }
 
   .page-title {
-    font-size: 16px;
+    font-size: 17px;
   }
 
   .user-copy {
