@@ -4,6 +4,7 @@ export type ImportDataType = 'AUTO' | 'PRODUCT_BASE' | 'PRODUCT_SKU' | 'PRODUCT_
 
 export interface ProductListVO {
   id: number
+  shopId?: number
   platform?: string
   externalProductId: string
   productName: string

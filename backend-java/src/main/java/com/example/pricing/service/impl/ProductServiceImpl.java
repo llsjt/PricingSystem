@@ -199,6 +199,7 @@ public class ProductServiceImpl implements ProductService {
             ProductMetricSummary summary = loadMetricSummary(product.getId());
             ProductListVO vo = new ProductListVO();
             vo.setId(product.getId());
+            vo.setShopId(product.getShopId());
             vo.setPlatform(shopPlatformMap.getOrDefault(product.getShopId(), "-"));
             vo.setExternalProductId(product.getExternalProductId());
             vo.setProductName(product.getTitle());

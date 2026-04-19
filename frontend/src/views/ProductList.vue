@@ -99,10 +99,11 @@
             </template>
           </el-table-column>
 
-          <el-table-column label="操作" width="150">
+          <el-table-column label="操作" width="210" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openDetailDrawer(row)">详情</el-button>
               <el-button link type="success" @click="openTrendDrawer(row)">趋势</el-button>
+              <el-button link type="warning" @click="goPricing(row)">定价</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -148,6 +149,7 @@
             </el-button>
             <el-button size="small" @click="openDetailDrawer(row)">详情</el-button>
             <el-button size="small" type="success" plain @click="openTrendDrawer(row)">趋势</el-button>
+            <el-button size="small" type="warning" plain @click="goPricing(row)">定价</el-button>
           </div>
         </article>
       </div>
@@ -478,6 +480,7 @@ import ProductTrendDrawer from '../components/ProductTrendDrawer.vue'
 import { useViewport } from '../composables/useViewport'
 import { resolveRequestErrorMessage } from '../utils/error'
 import { formatCount, formatCurrency as sharedFormatCurrency, formatPercent as sharedFormatPercent } from '../utils/formatters'
+import { useRouter } from 'vue-router'
 
 interface ProductFormModel {
   externalProductId: string
@@ -492,6 +495,7 @@ interface ProductFormModel {
 }
 
 const { width } = useViewport()
+const router = useRouter()
 
 const loading = ref(false)
 const tableData = ref<ProductListVO[]>([])
@@ -652,6 +656,18 @@ const toggleRowSelection = (row: ProductListVO) => {
     return
   }
   selectedIds.value = Array.from(new Set([...selectedIds.value, row.id]))
+}
+
+const goPricing = (row: ProductListVO) => {
+  router.push({
+    path: '/lab',
+    query: {
+      productId: String(row.id),
+      platform: row.platform || '',
+      shopId: row.shopId ? String(row.shopId) : '',
+      productName: row.productName || ''
+    }
+  })
 }
 
 watch(

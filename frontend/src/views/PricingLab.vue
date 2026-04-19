@@ -202,7 +202,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { applyDecision, cancelPricingTask, createPricingTask, getPricingTaskSnapshot, getPricingTaskStreamUrl, type AgentCardContent, type DecisionComparisonItem, type DecisionLogItem, type PricingAgentCode, type PricingTaskSnapshot, type PricingTaskStatus, type PricingTaskStreamMessage } from '../api/decision'
 import { getProductList } from '../api/product'
@@ -236,8 +236,9 @@ const emptyCards = () => ({ DATA_ANALYSIS: null, MARKET_INTEL: null, RISK_CONTRO
 const typewriterSpeed = 24
 
 const shopStore = useShopStore()
+const route = useRoute()
 const router = useRouter()
-const taskConfig = reactive({ platform: '', shopId: undefined as number | undefined, productId: undefined as number | undefined, strategyGoal: 'MAX_PROFIT' as typeof goalOptions[number]['label'] })
+const taskConfig = reactive({ platform: '', shopId: undefined as number | undefined, productId: undefined as number | undefined, strategyGoal: undefined as typeof goalOptions[number]['label'] | undefined })
 const constraintForm = reactive(createDefaultPricingConstraintForm())
 const state = reactive({ taskStatus: 'IDLE' as PricingTaskStatus, cards: emptyCards(), finalPrice: null as number | null, strategy: '', finalSummary: '', errorMessage: '' })
 const productOptions = ref<ProductOption[]>([])
@@ -291,6 +292,8 @@ const strategyText = computed(() => state.strategy || String(managerSuggestion.v
 const reportSummary = computed(() => archiveReportSummary.value.trim() || state.finalSummary || String(managerSuggestion.value.summary || ''))
 
 const numberOf = (value: unknown) => { const n = Number(value); return Number.isFinite(n) ? n : null }
+const parsePositiveId = (value: unknown) => { const n = Number(Array.isArray(value) ? value[0] : value); return Number.isInteger(n) && n > 0 ? n : null }
+const routeQueryText = (value: unknown) => String(Array.isArray(value) ? value[0] || '' : value || '').trim()
 const currency = (value: unknown) => { const n = numberOf(value); return n == null ? '-' : n.toLocaleString('zh-CN', { style: 'currency', currency: 'CNY', minimumFractionDigits: 2, maximumFractionDigits: 2 }) }
 const signedCurrency = (value: unknown) => { const n = numberOf(value); return n == null ? '-' : `${n >= 0 ? '+' : '-'}${currency(Math.abs(n))}` }
 const isRunning = (status: PricingTaskStatus) => ['PENDING', 'QUEUED', 'RUNNING', 'RETRYING'].includes(status)
@@ -438,6 +441,57 @@ const onShopChange = async () => { taskConfig.productId = undefined; productOpti
 const searchProducts = (keyword: string) => { void loadProducts(keyword) }
 const loadProducts = async (keyword = '') => { const token = ++loadToken; if (!canSearchProducts.value) return; searchLoading.value = true; try { const res = await getProductList({ page: 1, size: 100, keyword, platform: taskConfig.platform || undefined, shopId: taskConfig.shopId }) as ApiResponse<{ records: Array<{ id: number; productName: string }> }>; if (token !== loadToken) return; productOptions.value = Array.isArray(res.data?.records) ? res.data.records.map((item) => ({ id: Number(item.id), productName: String(item.productName || '') })) : [] } finally { if (token === loadToken) searchLoading.value = false } }
 
+const prefillFromRoute = async () => {
+  const productId = parsePositiveId(route.query.productId)
+  const shopId = parsePositiveId(route.query.shopId)
+  const platform = routeQueryText(route.query.platform)
+  const productName = routeQueryText(route.query.productName)
+
+  if (!productId) return false
+
+  if (platform) {
+    taskConfig.platform = platform
+  } else if (shopId) {
+    const matchedShop = shopStore.shops.find((shop) => Number(shop.id) === shopId)
+    taskConfig.platform = matchedShop?.platform || ''
+  }
+
+  if (!taskConfig.platform) {
+    ElMessage.warning('未找到商品所属平台，请手动选择平台后继续定价')
+    activeStep.value = 0
+    return true
+  }
+
+  productOptions.value = []
+
+  if (shopId && availableShops.value.some((shop) => Number(shop.id) === shopId)) {
+    taskConfig.shopId = shopId
+  } else if (availableShops.value.length === 1) {
+    taskConfig.shopId = availableShops.value[0].id
+  } else {
+    ElMessage.info('请选择商品所属店铺后继续定价')
+    activeStep.value = 0
+    return true
+  }
+
+  await loadProducts(productName)
+  let matchedProduct = productOptions.value.find((item) => Number(item.id) === productId)
+
+  if (!matchedProduct && productName) {
+    await loadProducts('')
+    matchedProduct = productOptions.value.find((item) => Number(item.id) === productId)
+  }
+
+  if (matchedProduct) {
+    taskConfig.productId = productId
+  } else {
+    ElMessage.warning('未在当前店铺下找到该商品，请在商品下拉中手动搜索')
+  }
+
+  activeStep.value = 0
+  return true
+}
+
 const applySnapshotDetail = (detail?: PricingTaskSnapshot['detail'] | null) => { if (!detail) return; state.taskStatus = (detail.taskStatus || 'RUNNING') as PricingTaskStatus; state.finalPrice = detail.finalPrice != null ? Number(detail.finalPrice) : null; state.strategy = String(detail.strategy || ''); state.finalSummary = String(detail.finalSummary || '') }
 const applySnapshotLogs = (logs: DecisionLogItem[]) => {
   clearRevealState()
@@ -561,6 +615,7 @@ const startTask = async () => {
   if (!taskConfig.platform) return ElMessage.warning('请选择平台')
   if (!taskConfig.shopId) return ElMessage.warning('请选择店铺')
   if (!taskConfig.productId) return ElMessage.warning('请选择一个商品')
+  if (!taskConfig.strategyGoal) return ElMessage.warning('请选择策略目标')
   const constraintError = validatePricingConstraintForm(constraintForm)
   if (constraintError) return ElMessage.warning(constraintError)
   const constraints = serializePricingConstraints(constraintForm)
@@ -607,7 +662,19 @@ const refreshSnapshot = async () => {
 const resetTask = () => { resetState(); activeStep.value = 0 }
 const applyPrice = async (row: DecisionComparisonItem) => { const id = Number(row.resultId || 0); if (!id) return ElMessage.error('未找到可应用的结果记录'); try { await ElMessageBox.confirm(`确认将商品“${String(row.productTitle || '-')}”的售价更新为 ${currency(row.suggestedPrice)} 吗？`, '应用价格建议', { type: 'warning', confirmButtonText: '确认应用', cancelButtonText: '取消' }); applyingIds.value.push(id); const res = await applyDecision(id); if (res.code !== 200) return ElMessage.error(sanitizeErrorMessage(res.message, '应用失败')); ElMessage.success('价格建议已应用'); if (taskId.value) await loadSnapshot(taskId.value) } catch (error) { if (error !== 'cancel') ElMessage.error('应用失败') } finally { applyingIds.value = applyingIds.value.filter((item) => item !== id) } }
 
-onMounted(async () => { getLlmConfig().then((response) => { hasLlmConfig.value = hasConfiguredLlmApiKey(response) }).catch(() => { hasLlmConfig.value = false }); const loaded = await shopStore.fetchShops(); if (loaded && platformOptions.value.length === 1) { taskConfig.platform = platformOptions.value[0]; await onPlatformChange() } })
+onMounted(async () => {
+  getLlmConfig()
+    .then((response) => { hasLlmConfig.value = hasConfiguredLlmApiKey(response) })
+    .catch(() => { hasLlmConfig.value = false })
+
+  const loaded = await shopStore.fetchShops()
+  const hasPrefill = loaded ? await prefillFromRoute() : false
+
+  if (!hasPrefill && loaded && platformOptions.value.length === 1) {
+    taskConfig.platform = platformOptions.value[0]
+    await onPlatformChange()
+  }
+})
 onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 </script>
 

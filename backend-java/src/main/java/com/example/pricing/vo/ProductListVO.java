@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 @Data
 public class ProductListVO {
     private Long id;
+    private Long shopId;
     private String platform;
     private String externalProductId;
     private String productName;
