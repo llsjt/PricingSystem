@@ -1,17 +1,43 @@
 <template>
-  <div class="page-shell">
-    <section class="panel-card">
-      <div class="panel-header">
-        <div>
-          <h2 class="panel-title">店铺管理</h2>
-        </div>
-        <el-button type="primary" @click="openCreateDialog">新增店铺</el-button>
+  <div class="page-shell shop-page">
+    <section class="panel-card filter-panel">
+      <div class="filter-head">
+        <h3>店铺筛选</h3>
+        <span>当前共 {{ filteredShops.length }} 家店铺</span>
       </div>
 
-      <el-table :data="shops" v-loading="loading" stripe class="shop-table">
-        <el-table-column prop="shopName" label="店铺名称" min-width="160" />
+      <div class="toolbar-row filter-grid">
+        <el-select v-model="filters.platform" clearable placeholder="店铺分类">
+          <el-option label="全部分类" value="ALL" />
+          <el-option
+            v-for="platform in filterPlatformOptions"
+            :key="platform"
+            :label="platform"
+            :value="platform"
+          />
+        </el-select>
+
+        <div class="toolbar-actions">
+          <el-button type="primary" @click="applyFilters">查询店铺</el-button>
+          <el-button @click="resetFilters">重置条件</el-button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel-card table-card">
+      <div class="section-head">
+        <div class="section-title">
+          <h3>店铺列表</h3>
+        </div>
+        <div class="toolbar-actions">
+          <el-button type="primary" @click="openCreateDialog">新增店铺</el-button>
+        </div>
+      </div>
+
+      <el-table :data="paginatedShops" v-loading="loading" border stripe class="shop-table">
+        <el-table-column prop="shopName" label="店铺名称" min-width="180" show-overflow-tooltip />
         <el-table-column prop="platform" label="电商平台" width="120" />
-        <el-table-column prop="sellerNick" label="卖家昵称" width="140">
+        <el-table-column prop="sellerNick" label="卖家昵称" width="160" show-overflow-tooltip>
           <template #default="{ row }">{{ row.sellerNick || '-' }}</template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="180" />
@@ -22,6 +48,17 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div class="table-footer">
+        <el-pagination
+          v-model:current-page="queryParams.page"
+          v-model:page-size="queryParams.size"
+          :total="filteredShops.length"
+          :page-sizes="[10, 20, 50]"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="handlePageSizeChange"
+        />
+      </div>
     </section>
 
     <el-dialog
@@ -52,7 +89,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { createShop, deleteShop, updateShop, type Shop, type ShopCreateDTO } from '../api/shop'
 import { useShopStore } from '../stores/shop'
@@ -66,8 +103,32 @@ const isEdit = ref(false)
 const editingId = ref<number | null>(null)
 const submitting = ref(false)
 const platformOptions = ['淘宝', '天猫', '京东', '拼多多', '抖音']
+const appliedPlatformFilter = ref('ALL')
+const filters = reactive({
+  platform: 'ALL'
+})
+const queryParams = reactive({
+  page: 1,
+  size: 10
+})
 
 const form = ref<ShopCreateDTO>({ shopName: '', platform: '', sellerNick: '' })
+const filterPlatformOptions = computed(() => {
+  const fromList = shops.value
+    .map((shop) => String(shop.platform || '').trim())
+    .filter(Boolean)
+  return Array.from(new Set([...platformOptions, ...fromList]))
+})
+const filteredShops = computed(() => {
+  if (appliedPlatformFilter.value === 'ALL') {
+    return shops.value
+  }
+  return shops.value.filter((shop) => String(shop.platform || '').trim() === appliedPlatformFilter.value)
+})
+const paginatedShops = computed(() => {
+  const start = (queryParams.page - 1) * queryParams.size
+  return filteredShops.value.slice(start, start + queryParams.size)
+})
 
 const fetchList = async (force = false) => {
   loading.value = true
@@ -91,6 +152,21 @@ const openEditDialog = (row: Shop) => {
   editingId.value = row.id
   form.value = { shopName: row.shopName, platform: row.platform, sellerNick: row.sellerNick }
   dialogVisible.value = true
+}
+
+const applyFilters = () => {
+  appliedPlatformFilter.value = filters.platform || 'ALL'
+  queryParams.page = 1
+}
+
+const resetFilters = () => {
+  filters.platform = 'ALL'
+  appliedPlatformFilter.value = 'ALL'
+  queryParams.page = 1
+}
+
+const handlePageSizeChange = () => {
+  queryParams.page = 1
 }
 
 const handleSubmit = async () => {
@@ -154,25 +230,96 @@ const handleDelete = async (row: Shop) => {
   }
 }
 
+watch(
+  () => filteredShops.value.length,
+  (total) => {
+    const maxPage = Math.max(Math.ceil(total / queryParams.size), 1)
+    if (queryParams.page > maxPage) {
+      queryParams.page = maxPage
+    }
+  },
+  { immediate: true }
+)
+
 onMounted(() => fetchList())
 </script>
 
 <style scoped>
-.panel-header {
+.shop-page {
+  gap: 16px;
+}
+
+.filter-panel {
+  padding: 10px 12px;
+}
+
+.filter-head {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 20px;
+  gap: 12px;
+  margin-bottom: 10px;
 }
 
-.panel-title {
+.filter-head h3 {
   margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-  color: #24324a;
+  font-size: 24px;
 }
 
-.shop-table {
+.filter-head span {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: 220px auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.filter-grid .toolbar-actions {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.filter-panel :deep(.el-input__wrapper),
+.filter-panel :deep(.el-select__wrapper) {
+  min-height: 36px;
+}
+
+.table-card :deep(.el-table) {
   width: 100%;
+}
+
+.table-card :deep(.el-button.is-link) {
+  font-weight: 600;
+}
+
+.table-footer {
+  display: flex;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+@media (max-width: 1200px) {
+  .filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filter-grid .toolbar-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 768px) {
+  .filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .filter-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 </style>

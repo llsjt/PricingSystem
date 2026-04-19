@@ -19,7 +19,6 @@
       </el-descriptions>
 
       <div class="profile-actions">
-        <el-button @click="router.push('/import')">返回数据管理</el-button>
         <el-button type="danger" @click="handleLogout">退出登录</el-button>
       </div>
     </section>
