@@ -1,18 +1,20 @@
 """
 定价决策编排服务（CrewAI 版）
 ============================
-使用 CrewAI Crew 驱动 4 个 Agent 顺序执行定价决策。
-每个 Task 完成时通过回调将 Agent 卡片实时写入数据库，
-前端通过 Java 实时流读取 agent_run_log 表即可展示进度。
+驱动 4 个 CrewAI Agent 按顺序执行定价决策，支持 Agent 粒度的失败重试。
 
 执行流程：
   1. 构建 LLM 实例
-  2. 构建 Crew（4 Agent + 4 Task，顺序执行）
-  3. crew.kickoff() 启动执行
-  4. 每个 Task 完成 → callback → 解析 LLM 输出 → 写入 agent_run_log
-  5. 最终 Task 完成后 → 解析经理决策 → 强制硬约束校验 → 写入 pricing_result
+  2. 构建 CrewBundle（4 Agent + 4 Task）
+  3. 通过 ResumeService 计算续跑断点（上一轮已完成的 Agent 会被跳过）
+  4. 对每个需要执行的 Task 手动调用 task.execute_sync
+     - 已完成的 Agent：从 agent_run_log.raw_output_json 读取输出 → 作为 context 注入
+     - 失败/未开始的 Agent：真正调用 LLM 执行
+  5. 每个 Agent 成功后立即写入 agent_run_log（带 raw_output_json）供下次重试复用
+  6. 经理 Agent 完成后 → 解析最终决策 → 强制硬约束校验 → 写入 pricing_result
 """
 
+import json
 import logging
 from decimal import Decimal
 from typing import Any
@@ -20,11 +22,12 @@ from typing import Any
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.crew.crew_factory import build_pricing_crew
+from app.crew.crew_factory import CrewBundle, build_pricing_crew
 from app.crew.crewai_runtime import build_crewai_llm, debug_log, extract_json_object
 from app.crew.protocols import CrewRunPayload
 from app.schemas.agent import DataAgentOutput, ManagerAgentOutput, MarketAgentOutput, RiskAgentOutput
 from app.schemas.result import TaskFinalResult
+from app.services.resume_service import ResumeService
 from app.tools.log_writer_tool import LogWriterTool
 from app.tools.result_writer_tool import ResultWriterTool
 from app.utils.math_utils import money
@@ -122,7 +125,9 @@ class OrchestrationService:
             model = model_cls.model_validate(parsed)
         except ValidationError as exc:
             raise AgentOutputValidationError(agent_code, "输出结构校验失败") from exc
-        return model.model_dump(by_alias=True, exclude_none=True)
+        # mode="json" 将 Decimal 序列化为字符串，保证 raw_output_json 可直接存入 JSON 列，
+        # 同时下游 _safe_float / _safe_int / money() 都能接受字符串输入，行为与原实现一致。
+        return model.model_dump(by_alias=True, exclude_none=True, mode="json")
 
     # ── 从 LLM 输出构建数据分析卡片 ──────────────────────────
     @staticmethod
@@ -324,15 +329,101 @@ class OrchestrationService:
 
         return thinking, evidence, suggestion, reason_why
 
+    # ── Task 级 context 拼装 ──────────────────────────────────
+    @staticmethod
+    def _format_prior_outputs_for_context(
+        prior_outputs: dict[int, dict[str, Any]],
+        target_order: int,
+    ) -> str | None:
+        """把已完成 Agent 的 raw_output_json 拼成一段文本，作为下游 Task 的 context。
+
+        行为与原 Crew.kickoff 保持一致：
+        - data/market/risk_task（order 1-3）原本 task.context=[]，不依赖其他 Agent → 返回 None
+        - manager_task（order=4）原本 task.context=[data,market,risk] → 注入三者 raw_output
+          （我们走 task.execute_sync 手工调度，CrewAI 不会自动读取 task.context 列表，必须手动拼接）
+        """
+        if target_order != 4 or not prior_outputs:
+            return None
+        sections: list[str] = []
+        name_by_order = {
+            1: "数据分析Agent",
+            2: "市场情报Agent",
+            3: "风险控制Agent",
+        }
+        for order in sorted(prior_outputs.keys()):
+            if order >= target_order:
+                continue
+            name = name_by_order.get(order, f"Agent#{order}")
+            payload_text = json.dumps(prior_outputs[order], ensure_ascii=False, default=str)
+            sections.append(f"[{name} 的历史输出 JSON]\n{payload_text}")
+        return "\n\n".join(sections) if sections else None
+
+    def _write_agent_success_card(
+        self,
+        *,
+        payload: CrewRunPayload,
+        order: int,
+        parsed: dict[str, Any],
+        prior_outputs: dict[int, dict[str, Any]],
+    ) -> None:
+        """构建并写入单个 Agent 的成功卡片（包含 raw_output 以便后续回放）。"""
+        meta = _AGENT_META[order - 1]
+        reason_why: str | None = None
+        if order == 1:
+            thinking, evidence, suggestion = self._build_data_card(payload, parsed)
+        elif order == 2:
+            thinking, evidence, suggestion = self._build_market_card(parsed)
+        elif order == 3:
+            thinking, evidence, suggestion = self._build_risk_card(payload, parsed)
+        else:
+            data_p = prior_outputs.get(1, {})
+            market_p = prior_outputs.get(2, {})
+            risk_p = prior_outputs.get(3, {})
+            thinking, evidence, suggestion, reason_why = self._build_manager_card(
+                parsed, data_p, market_p, risk_p
+            )
+
+        self.log_tool.write_agent_card(
+            task_id=payload.task_id,
+            agent_name=meta["name"],
+            display_order=meta["order"],
+            thinking_summary=thinking,
+            evidence=evidence,
+            suggestion=suggestion,
+            reason_why=reason_why,
+            raw_output=parsed,
+        )
+
+    def _write_agent_failed_card(
+        self,
+        *,
+        payload: CrewRunPayload,
+        order: int,
+        summary: str,
+    ) -> None:
+        """为失败 Agent 写入 failed 卡片。"""
+        meta = _AGENT_META[order - 1]
+        thinking, evidence, suggestion = self._build_failed_card(summary)
+        self.log_tool.write_agent_card(
+            task_id=payload.task_id,
+            agent_name=meta["name"],
+            display_order=meta["order"],
+            thinking_summary=thinking,
+            evidence=evidence,
+            suggestion=suggestion,
+            stage="failed",
+        )
+
     # ── 主执行方法 ────────────────────────────────────────────
     def run(self, payload: CrewRunPayload) -> TaskFinalResult:
         """
-        使用 CrewAI Crew 驱动 4 个 Agent 顺序执行定价决策。
+        驱动 4 个 Agent 按顺序执行定价决策，支持 Agent 粒度的断点续跑。
 
         流程：
-          1. 构建 LLM → 构建 Crew
-          2. crew.kickoff() 执行（每个 Task 完成后回调写入卡片）
-          3. 解析最终输出 → 强制硬约束 → 写入结果
+          1. 构建 LLM → 构建 CrewBundle
+          2. ResumeService 计算断点 → 已完成 Agent 的 raw_output 注入下游 context
+          3. 对每个需要执行的 Task 调用 task.execute_sync；失败立即写 failed 卡片并抛异常
+          4. 所有 Agent 成功后，解析经理决策 → 强制硬约束 → 写入最终结果
         """
         # ── 构建 CrewAI LLM 实例 ──────────────────────────────
         analysis_llm = build_crewai_llm(
@@ -356,189 +447,133 @@ class OrchestrationService:
             f"task_id={payload.task_id}"
         )
 
-        # ── 用于收集每个 Task 的解析结果 ──────────────────────
-        task_outputs: list[dict[str, Any]] = []
-        validation_errors: list[AgentOutputValidationError] = []
-        card_counter = [0]  # 使用列表以便在闭包中修改
-
-        def write_next_running_card(completed_idx: int) -> None:
-            next_idx = completed_idx + 1
-            if next_idx >= len(_AGENT_META):
-                return
-            next_meta = _AGENT_META[next_idx]
-            self.log_tool.write_running_card(
-                task_id=payload.task_id,
-                agent_name=next_meta["name"],
-                display_order=next_meta["order"],
-            )
-
-        def on_task_done(task_output: Any) -> None:
-            """
-            Task 完成时的回调函数。
-            解析 LLM 输出，构建 Agent 卡片，写入数据库。
-            这是实现实时结果推送的关键: 每个 Task 完成后立即入库。
-            """
-            try:
-                # 获取 LLM 原始输出并解析 JSON
-                raw = str(task_output.raw) if hasattr(task_output, "raw") else str(task_output)
-                debug_log(f"[CrewAI] task callback raw_len={len(raw)} raw_preview={raw[:200]}")
-                parsed = extract_json_object(raw)
-
-                # 确定当前是第几个 Agent
-                idx = card_counter[0]
-                card_counter[0] += 1
-
-                if idx >= len(_AGENT_META):
-                    logger.warning("回调次数超过预期 Agent 数量: idx=%d", idx)
-                    task_outputs.append(parsed)
-                    return
-
-                meta = _AGENT_META[idx]
-
-                # 空输出保护：写入错误卡片而非全零卡片
-                if not parsed:
-                    exc = AgentOutputValidationError(meta["code"], "输出解析失败")
-                    validation_errors.append(exc)
-                    logger.warning("Agent [%s] 输出解析失败，写入错误卡片", meta["name"])
-                    task_outputs.append({})
-                    thinking, evidence, suggestion = self._build_failed_card(str(exc))
-                    self.log_tool.write_agent_card(
-                        task_id=payload.task_id,
-                        agent_name=meta["name"],
-                        display_order=meta["order"],
-                        thinking_summary=thinking,
-                        evidence=evidence,
-                        suggestion=suggestion,
-                        stage="failed",
-                    )
-                    write_next_running_card(idx)
-                    return
-
-                try:
-                    parsed = self._validate_agent_output(meta["code"], parsed)
-                except AgentOutputValidationError as exc:
-                    validation_errors.append(exc)
-                    task_outputs.append({})
-                    logger.warning("Agent [%s] 输出结构校验失败: %s", meta["name"], exc, exc_info=True)
-                    thinking, evidence, suggestion = self._build_failed_card(str(exc))
-                    self.log_tool.write_agent_card(
-                        task_id=payload.task_id,
-                        agent_name=meta["name"],
-                        display_order=meta["order"],
-                        thinking_summary=thinking,
-                        evidence=evidence,
-                        suggestion=suggestion,
-                        stage="failed",
-                    )
-                    write_next_running_card(idx)
-                    return
-
-                task_outputs.append(parsed)
-                logger.info("Agent [%s] 完成，正在写入卡片 (order=%d)", meta["name"], meta["order"])
-
-                # 根据 Agent 类型构建不同格式的卡片
-                if idx == 0:
-                    # 数据分析Agent
-                    thinking, evidence, suggestion = self._build_data_card(payload, parsed)
-                    reason_why = None
-                elif idx == 1:
-                    # 市场情报Agent
-                    thinking, evidence, suggestion = self._build_market_card(parsed)
-                    reason_why = None
-                elif idx == 2:
-                    # 风险控制Agent
-                    thinking, evidence, suggestion = self._build_risk_card(payload, parsed)
-                    reason_why = None
-                else:
-                    # 经理协调Agent
-                    data_p = task_outputs[0] if len(task_outputs) > 0 else {}
-                    market_p = task_outputs[1] if len(task_outputs) > 1 else {}
-                    risk_p = task_outputs[2] if len(task_outputs) > 2 else {}
-                    thinking, evidence, suggestion, reason_why = self._build_manager_card(
-                        parsed, data_p, market_p, risk_p
-                    )
-
-                # 写入 agent_run_log 表，立即 commit 后前端即可通过实时流看到更新
-                self.log_tool.write_agent_card(
-                    task_id=payload.task_id,
-                    agent_name=meta["name"],
-                    display_order=meta["order"],
-                    thinking_summary=thinking,
-                    evidence=evidence,
-                    suggestion=suggestion,
-                    reason_why=reason_why,
-                )
-                logger.info("Agent [%s] 卡片已写入数据库", meta["name"])
-                write_next_running_card(idx)
-
-            except Exception as exc:
-                # 回调异常不应中断 Crew 执行
-                logger.error("写入 Agent 卡片失败: %s", exc, exc_info=True)
-                debug_log(f"[CrewAI] write card failed error={exc}")
-
-        # ── 构建并执行 Crew ────────────────────────────────────
+        # ── 构建 Crew Bundle ───────────────────────────────────
         logger.info("开始构建定价 Crew (task_id=%d)", payload.task_id)
         debug_log(f"[CrewAI] building crew task_id={payload.task_id}")
-        crew = build_pricing_crew(
+        bundle: CrewBundle = build_pricing_crew(
             payload=payload,
             analysis_llm=analysis_llm,
             manager_llm=manager_llm,
-            on_task_done=on_task_done,
+            on_task_done=None,  # 处理已内联到主循环，不再走 callback
         )
 
-        first_meta = _AGENT_META[0]
+        # ── 计算续跑断点 ───────────────────────────────────────
+        resume_service = ResumeService(self.db)
+        start_from, prior_outputs = resume_service.compute_resume_point(payload.task_id)
+
+        if start_from > 1:
+            skipped = sorted(prior_outputs.keys())
+            logger.info(
+                "任务 %d 部分重试: 从 order=%d 开始，跳过已完成 order=%s",
+                payload.task_id,
+                start_from,
+                skipped,
+            )
+            debug_log(
+                f"[CrewAI] resume_from={start_from} skipped={skipped} task_id={payload.task_id}"
+            )
+        else:
+            debug_log(f"[CrewAI] resume_from=1 (full run) task_id={payload.task_id}")
+
+        # ── 全部 Agent 都已完成的边界情况 ─────────────────────
+        if start_from > len(_AGENT_META):
+            logger.info(
+                "任务 %d 所有 Agent 都已有 completed 记录，直接使用经理输出生成最终结果",
+                payload.task_id,
+            )
+            manager_parsed = prior_outputs.get(4, {})
+            return self._finalize_result(payload, manager_parsed)
+
+        # ── 为第一个待执行的 Agent 写 running 占位卡片 ─────────
+        first_meta = _AGENT_META[start_from - 1]
         self.log_tool.write_running_card(
             task_id=payload.task_id,
             agent_name=first_meta["name"],
             display_order=first_meta["order"],
         )
-        logger.info("Crew 启动执行 (task_id=%d)", payload.task_id)
-        debug_log(f"[CrewAI] crew kickoff task_id={payload.task_id}")
-        try:
-            crew_output = crew.kickoff()
-        except Exception as crew_exc:
-            # Crew 执行失败：为第一个未完成的 Agent 写入错误卡片，
-            # 让前端实时流能尽快拿到错误信息，而不是一直停留在加载中
-            logger.error("Crew 执行失败: %s", crew_exc, exc_info=True)
-            debug_log(f"[CrewAI] crew kickoff failed error={crew_exc}")
-            error_idx = card_counter[0]  # 当前未完成的 Agent 索引
-            if error_idx < len(_AGENT_META):
-                meta = _AGENT_META[error_idx]
-                summary = self._summarize_failure_message(crew_exc)
-                thinking, evidence, suggestion = self._build_failed_card(summary)
-                self.log_tool.write_agent_card(
-                    task_id=payload.task_id,
-                    agent_name=meta["name"],
-                    display_order=meta["order"],
-                    thinking_summary=thinking,
-                    evidence=evidence,
-                    suggestion=suggestion,
-                    stage="failed",
+
+        # ── 串行执行剩余 Task ─────────────────────────────────
+        for order in range(start_from, len(_AGENT_META) + 1):
+            task = bundle.tasks[order - 1]
+            agent = bundle.agents_by_order[order]
+            meta = _AGENT_META[order - 1]
+
+            # 构造 context：经理 Agent 依赖上游三者的 raw_output；其余 Agent 不注入。
+            context_text = self._format_prior_outputs_for_context(
+                prior_outputs, target_order=order
+            )
+
+            logger.info("Agent [%s] 开始执行 (order=%d)", meta["name"], order)
+            debug_log(
+                f"[CrewAI] execute_sync agent={meta['code']} order={order} "
+                f"prior_orders={sorted(prior_outputs.keys())} task_id={payload.task_id}"
+            )
+
+            try:
+                task_output = task.execute_sync(
+                    agent=agent,
+                    context=context_text,
+                    tools=agent.tools,
                 )
-                debug_log(f"[CrewAI] wrote error card agent={meta['name']}")
-            if validation_errors:
-                raise validation_errors[0] from crew_exc
-            raise  # 继续向上抛出，让 dispatch_service 标记 task 为 FAILED
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Agent [%s] 执行失败: %s", meta["name"], exc, exc_info=True)
+                debug_log(f"[CrewAI] execute_sync failed agent={meta['code']} error={exc}")
+                summary = self._summarize_failure_message(exc)
+                self._write_agent_failed_card(payload=payload, order=order, summary=summary)
+                raise  # 向上抛给 dispatch_service 做 retry_count 递增
+
+            raw = str(task_output.raw) if hasattr(task_output, "raw") else str(task_output)
+            debug_log(
+                f"[CrewAI] execute_sync done agent={meta['code']} "
+                f"raw_len={len(raw)} raw_preview={raw[:200]}"
+            )
+
+            parsed = extract_json_object(raw)
+            if not parsed:
+                exc = AgentOutputValidationError(meta["code"], "输出解析失败")
+                logger.warning("Agent [%s] 输出解析失败，写入错误卡片", meta["name"])
+                self._write_agent_failed_card(payload=payload, order=order, summary=str(exc))
+                raise exc
+
+            try:
+                parsed = self._validate_agent_output(meta["code"], parsed)
+            except AgentOutputValidationError as exc:
+                logger.warning("Agent [%s] 输出结构校验失败: %s", meta["name"], exc, exc_info=True)
+                self._write_agent_failed_card(payload=payload, order=order, summary=str(exc))
+                raise
+
+            # 成功：把 parsed 存入 prior_outputs 供后续 Agent 使用，同时写 completed 卡片
+            prior_outputs[order] = parsed
+            logger.info("Agent [%s] 完成，正在写入卡片 (order=%d)", meta["name"], order)
+            self._write_agent_success_card(
+                payload=payload,
+                order=order,
+                parsed=parsed,
+                prior_outputs=prior_outputs,
+            )
+            logger.info("Agent [%s] 卡片已写入数据库", meta["name"])
+
+            # 为下一个 Agent 提前写 running 占位
+            if order < len(_AGENT_META):
+                next_meta = _AGENT_META[order]
+                self.log_tool.write_running_card(
+                    task_id=payload.task_id,
+                    agent_name=next_meta["name"],
+                    display_order=next_meta["order"],
+                )
 
         logger.info("Crew 执行完成 (task_id=%d)", payload.task_id)
         debug_log(f"[CrewAI] crew completed task_id={payload.task_id}")
 
-        if validation_errors:
-            raise validation_errors[0]
+        manager_parsed = prior_outputs.get(4, {})
+        return self._finalize_result(payload, manager_parsed)
 
-        # ── 解析最终经理决策 ──────────────────────────────────
-        # 从最后一个 Task 的输出中提取最终定价结果
-        raw_final = str(crew_output) if crew_output else ""
-        manager_parsed = extract_json_object(raw_final)
-
-        # 如果 kickoff 输出解析失败，回退到 callback 收集的经理 Agent 结果
-        if not manager_parsed and len(task_outputs) >= 4:
-            manager_parsed = task_outputs[3]
-            logger.info("使用经理 Agent 回调输出作为回退 (task_id=%d)", payload.task_id)
-        elif not manager_parsed:
-            logger.warning("经理 Agent 输出不可用，仅 %d 个 Agent 完成 (task_id=%d)", len(task_outputs), payload.task_id)
-            manager_parsed = {}
-
+    def _finalize_result(
+        self,
+        payload: CrewRunPayload,
+        manager_parsed: dict[str, Any],
+    ) -> TaskFinalResult:
+        """对经理 Agent 输出做最终校验 + 硬约束，写入 pricing_result 并返回。"""
         manager_parsed = self._validate_agent_output("MANAGER_COORDINATOR", manager_parsed)
 
         # 提取最终定价字段。核心字段必须来自已校验的经理 Agent 输出，不再静默兜底。

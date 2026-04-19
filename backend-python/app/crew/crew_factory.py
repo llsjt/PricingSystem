@@ -9,9 +9,11 @@ CrewAI Crew 构建工厂
 """
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any
 
-from crewai import Crew, Process, Task
+from crewai import Agent, Crew, Process, Task
 
 from app.agents.crewai_agents import build_crewai_agents
 from app.core.config import get_settings
@@ -20,6 +22,20 @@ from app.services.competitor_service import CompetitorService
 from app.tools.product_data_tool import ProductDataTool
 from app.utils.math_utils import money
 from app.utils.text_utils import MANUAL_REVIEW_STRATEGY, to_strategy_goal_cn
+
+
+@dataclass
+class CrewBundle:
+    """Crew 构建结果的结构化封装。
+
+    在串行 Task 级调度（由 OrchestrationService 使用 task.execute_sync 驱动）场景下，
+    OrchestrationService 直接按 order 拿 task + agent 执行；`crew` 字段保留兼容，
+    便于未来需要时回退到 kickoff 模式。
+    """
+
+    crew: Crew
+    tasks: list[Task]
+    agents_by_order: dict[int, Agent]
 
 
 def _build_metrics_summary(payload: CrewRunPayload) -> str:
@@ -231,12 +247,15 @@ def build_pricing_crew(
     analysis_llm: object,
     manager_llm: object,
     on_task_done: Callable | None = None,
-) -> Crew:
+) -> CrewBundle:
     """
     构建定价决策 Crew。
 
     优化策略：预计算数据摘要和竞品数据并注入 prompt，
     减少 Agent 的工具调用轮次，降低 LLM 往返次数。
+
+    返回 CrewBundle 以便调用方按 Task 粒度调度执行
+    （支持失败重试时只重跑失败 Agent 及其下游）。
     """
     # ── 创建 4 个 Agent ────────────────────────────────────
     agents = build_crewai_agents(analysis_llm=analysis_llm, manager_llm=manager_llm)
@@ -265,10 +284,10 @@ def build_pricing_crew(
             "   - 利润优先：适当提价（+1%~4%）\n"
             "   - 清仓促销：适当降价（-5%左右）\n"
             "   - 市场份额优先：小幅降价（-3%左右）\n"
-            "3. 使用「预估调价后销量」工具计算预期销量\n"
+            "3. 使用 estimate_sales_volume 工具计算预期销量\n"
             f'   参数: {{"baseline_sales": {payload.baseline_sales}, "current_price": "{money(product.current_price)}", '
             f'"target_price": "你的建议价格", "strategy_goal": "{payload.strategy_goal}"}}\n'
-            "4. 使用「预估利润」工具计算预期利润\n"
+            "4. 使用 estimate_profit 工具计算预期利润\n"
             f'   参数: {{"price": "你的建议价格", "cost_price": "{money(product.cost_price)}", "expected_sales": 预估销量}}\n'
             "5. 确定建议价格区间（最低价不低于成本价×1.08）\n\n"
             "最终输出必须是严格的JSON格式，包含以下字段："
@@ -367,7 +386,7 @@ def build_pricing_crew(
             "   - 利润优先：当前售价上浮2%左右\n"
             "   - 清仓促销：当前售价下调5%左右\n"
             "   - 市场份额优先：当前售价下调3%左右\n"
-            "2. 使用「评估风控规则」工具校验候选价格，参数如下：\n"
+            "2. 使用 evaluate_risk_rules 工具校验候选价格，参数如下：\n"
             f"   {{{risk_tool_params}}}\n"
             "3. 根据工具返回结果，判断候选价格是否安全\n"
             "4. 如果候选价格不通过，使用工具返回的suggested_price作为风控建议价\n\n"
@@ -401,7 +420,7 @@ def build_pricing_crew(
             "决策规则：\n"
             "- 最终价格必须不低于风控的安全底价\n"
             "- 最终价格必须不高于市场天花板价\n"
-            "- 使用「预估调价后销量」和「预估利润」工具验证最终价格的预期效果\n"
+            "- 使用 estimate_sales_volume 和 estimate_profit 工具验证最终价格的预期效果\n"
             f'  (baseline_sales={payload.baseline_sales}, current_price="{money(product.current_price)}", '
             f'cost_price="{money(product.cost_price)}", strategy_goal="{payload.strategy_goal}")\n\n'
             "执行策略要求：\n"
@@ -429,6 +448,9 @@ def build_pricing_crew(
     )
 
     # ── 组装 Crew（顺序执行流程） ─────────────────────────
+    # Crew 仍保留，便于将来回退到 kickoff 模式或调试，但
+    # OrchestrationService 在正常路径上通过 CrewBundle.tasks/agents_by_order
+    # 直接调用 task.execute_sync，以支持 Agent 粒度的断点续跑。
     crew = Crew(
         agents=[
             agents["DATA_ANALYSIS"],
@@ -441,4 +463,13 @@ def build_pricing_crew(
         verbose=True,
     )
 
-    return crew
+    return CrewBundle(
+        crew=crew,
+        tasks=[data_task, market_task, risk_task, manager_task],
+        agents_by_order={
+            1: agents["DATA_ANALYSIS"],
+            2: agents["MARKET_INTEL"],
+            3: agents["RISK_CONTROL"],
+            4: agents["MANAGER_COORDINATOR"],
+        },
+    )

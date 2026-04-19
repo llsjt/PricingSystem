@@ -136,7 +136,11 @@ class DispatchService:
                 message="retry budget exhausted",
             )
 
-        self.log_repo.delete_running_and_failed_by_task_id(task.id)
+        # Agent 粒度断点续跑：只清理本轮 retry_count 下的 running/failed 占位，
+        # 保留上一轮 completed 的卡片（ResumeService 用它们判断可跳过的前缀集）。
+        self.log_repo.delete_running_and_failed_by_run_attempt(
+            task.id, int(task.retry_count or 0)
+        )
         self.task_repo.mark_retrying(task, trace_id=req.trace_id, failure_reason=reason)
         return DispatchTaskResponse(
             accepted=True,

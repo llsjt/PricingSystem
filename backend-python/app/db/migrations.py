@@ -46,7 +46,7 @@ def _has_index(table_name: str, schema_name: str, index_name: str) -> bool:
 
 
 def ensure_agent_run_log_schema(schema_name: str) -> None:
-    """启动时兜底迁移：保证 agent_run_log 具备卡片化字段。"""
+    """Startup fallback migration for agent_run_log card fields."""
     table_name = "agent_run_log"
     existing = _list_columns(table_name, schema_name)
 
@@ -57,14 +57,24 @@ def ensure_agent_run_log_schema(schema_name: str) -> None:
         statements.append("ADD COLUMN evidence_json JSON NULL COMMENT '依据(JSON数组)'")
     if "suggestion_json" not in existing:
         statements.append("ADD COLUMN suggestion_json JSON NULL COMMENT '建议(JSON对象)'")
+    if "raw_output_json" not in existing:
+        statements.append(
+            "ADD COLUMN raw_output_json JSON NULL COMMENT 'Agent 输出的完整 Pydantic 校验后 JSON，用于失败重试时回放下游 context'"
+        )
     if "final_reason" not in existing:
         statements.append("ADD COLUMN final_reason TEXT NULL COMMENT '最终建议原因(经理Agent)'")
     if "display_order" not in existing:
         statements.append("ADD COLUMN display_order INT NULL COMMENT '卡片展示顺序(1-4)'")
     if "stage" not in existing:
-        statements.append("ADD COLUMN stage VARCHAR(20) NOT NULL DEFAULT 'completed' COMMENT '卡片阶段: running=正在分析, completed=已完成, failed=执行失败'")
+        statements.append(
+            "ADD COLUMN stage VARCHAR(20) NOT NULL DEFAULT 'completed' COMMENT "
+            "'卡片阶段: running=正在分析, completed=已完成, failed=执行失败'"
+        )
     if "run_attempt" not in existing:
-        statements.append("ADD COLUMN run_attempt INT NOT NULL DEFAULT 0 COMMENT 'Agent 执行轮次，从0开始，对应任务 retry_count'")
+        statements.append(
+            "ADD COLUMN run_attempt INT NOT NULL DEFAULT 0 COMMENT "
+            "'Agent 执行轮次，从0开始，对应任务 retry_count'"
+        )
 
     if statements:
         ddl = "ALTER TABLE agent_run_log " + ", ".join(statements)

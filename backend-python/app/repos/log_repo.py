@@ -35,8 +35,13 @@ class LogRepo:
         reason_why: str | None = None,
         stage: str = "completed",
         run_attempt: int = 0,
+        raw_output: dict[str, Any] | None = None,
     ) -> AgentRunLog:
-        """写入 Agent 卡片日志，兼容旧字段 thought_content/speak_order。"""
+        """写入 Agent 卡片日志，兼容旧字段 thought_content/speak_order。
+
+        raw_output: Pydantic 校验后的完整 JSON（camelCase），供失败重试时回放下游 context。
+        与 suggestion 不同——suggestion 是裁剪后的展示卡片，raw_output 保留全部字段。
+        """
         order = int(display_order or self.get_next_display_order(task_id))
         normalized_stage = "failed" if str(stage or "").strip().lower() == "failed" else "completed"
         log = AgentRunLog(
@@ -47,6 +52,7 @@ class LogRepo:
             thinking_summary=thinking_summary,
             evidence_json=evidence or [],
             suggestion_json=suggestion or {},
+            raw_output_json=raw_output if isinstance(raw_output, dict) and raw_output else None,
             final_reason=reason_why,
             display_order=order,
             stage=normalized_stage,
@@ -105,6 +111,48 @@ class LogRepo:
         )
         self.db.commit()
         return int(result.rowcount or 0)
+
+    def delete_running_and_failed_by_run_attempt(self, task_id: int, run_attempt: int) -> int:
+        """只删除指定 run_attempt 下的 running/failed 占位卡片，保留已完成（completed）的卡片。
+
+        这是部分重试的关键：新一轮 retry 前只清理本轮的失败/占位，不触碰上一轮已成功的 Agent 记录。
+        """
+        result = self.db.execute(
+            delete(AgentRunLog)
+            .where(AgentRunLog.task_id == task_id)
+            .where(AgentRunLog.run_attempt == int(run_attempt))
+            .where(AgentRunLog.stage.in_(("running", "failed")))
+        )
+        self.db.commit()
+        return int(result.rowcount or 0)
+
+    def list_completed_raw_outputs(self, task_id: int) -> dict[int, dict[str, Any]]:
+        """返回已完成 Agent 的 raw_output_json，按 display_order 聚合。
+
+        同一 display_order 若存在多轮 completed 记录（理论上不会，但历史数据可能），
+        保留最新 run_attempt 的那条。raw_output_json 为空的记录视作无效（会触发断点回退到该 order）。
+
+        返回 {display_order: raw_output_dict}，只含可用于回放的条目。
+        """
+        stmt = (
+            select(AgentRunLog)
+            .where(AgentRunLog.task_id == task_id)
+            .where(AgentRunLog.stage == "completed")
+            .order_by(
+                desc(AgentRunLog.run_attempt),
+                desc(AgentRunLog.id),
+            )
+        )
+        result: dict[int, dict[str, Any]] = {}
+        for row in self.db.scalars(stmt).all():
+            order = int(row.display_order or row.speak_order or 0)
+            if order <= 0 or order in result:
+                continue
+            raw = row.raw_output_json
+            if not isinstance(raw, dict) or not raw:
+                continue
+            result[order] = raw
+        return result
 
     def list_latest_by_task_id(self, task_id: int, limit: int = 200) -> list[AgentRunLog]:
         stmt = (

@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.sql import text
 
+from app.crew.crew_factory import CrewBundle
 from app.db.base import Base
 from app.models.agent_run_log import AgentRunLog
 from app.models.pricing_task import PricingTask
@@ -41,6 +42,7 @@ def build_session(*tables) -> Session:
                         thinking_summary TEXT DEFAULT NULL,
                         evidence_json JSON DEFAULT NULL,
                         suggestion_json JSON DEFAULT NULL,
+                        raw_output_json JSON DEFAULT NULL,
                         final_reason TEXT DEFAULT NULL,
                         display_order INT DEFAULT NULL,
                         stage VARCHAR(20) NOT NULL DEFAULT 'completed',
@@ -146,16 +148,59 @@ def _json_output(payload: dict) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-class _CallbackCrew:
-    def __init__(self, callback, outputs: list[dict], final_output: dict):
-        self.callback = callback
-        self.outputs = outputs
-        self.final_output = final_output
+class _FakeTaskOutput:
+    """Mock for CrewAI TaskOutput — 只提供 .raw 字段供 orchestration 读取。"""
 
-    def kickoff(self):
-        for output in self.outputs:
-            self.callback(SimpleNamespace(raw=_json_output(output)))
-        return _json_output(self.final_output)
+    def __init__(self, raw: str):
+        self.raw = raw
+
+
+class _FakeTask:
+    """Mock Task 对象：execute_sync 直接返回预设的 JSON 原始字符串。"""
+
+    def __init__(self, raw_json: str):
+        self._raw_json = raw_json
+        self.captured_context: str | None = None
+
+    def execute_sync(self, agent=None, context=None, tools=None):
+        self.captured_context = context
+        return _FakeTaskOutput(self._raw_json)
+
+
+class _RaisingTask:
+    """Mock Task 对象：execute_sync 抛出预设异常，用于模拟单 Agent 执行失败。"""
+
+    def __init__(self, error: BaseException):
+        self._error = error
+
+    def execute_sync(self, agent=None, context=None, tools=None):
+        raise self._error
+
+
+def _fake_bundle(outputs: list) -> CrewBundle:
+    """为 4 个 Agent 构造伪 CrewBundle。
+
+    outputs: 长度 <= 4 的列表；每个元素可以是 dict(成功输出)、str(原始 JSON) 或 Exception(失败)。
+    不足 4 个时后续任务以空 dict 兜底（不会被执行则不触发）。
+    """
+    tasks: list = []
+    for item in outputs:
+        if isinstance(item, BaseException):
+            tasks.append(_RaisingTask(item))
+        elif isinstance(item, str):
+            tasks.append(_FakeTask(item))
+        else:
+            tasks.append(_FakeTask(_json_output(item)))
+    # 补齐 4 个 Task（未被执行时不触发，仅满足下标访问）
+    while len(tasks) < 4:
+        tasks.append(_FakeTask("{}"))
+
+    fake_agent = SimpleNamespace(tools=[])
+    return CrewBundle(
+        crew=None,  # type: ignore[arg-type]  # 新流程不再调用 Crew.kickoff
+        tasks=tasks,  # type: ignore[arg-type]
+        agents_by_order={1: fake_agent, 2: fake_agent, 3: fake_agent, 4: fake_agent},  # type: ignore[arg-type]
+    )
 
 
 def test_log_repo_writes_completed_and_running_stage():
@@ -337,6 +382,7 @@ def test_validate_agent_output_rejects_missing_required_data_price():
 
 
 def test_orchestration_validation_failure_writes_failed_card_and_blocks_result(monkeypatch):
+    """数据分析 Agent 输出校验失败 → 写 failed 卡片并立即终止；下游 Agent 不应执行。"""
     db = build_session(PricingTask.__table__, AgentRunLog.__table__)
     task = create_running_task(db, task_id=5)
     invalid_data = _valid_data_output()
@@ -348,7 +394,7 @@ def test_orchestration_validation_failure_writes_failed_card_and_blocks_result(m
     )
     monkeypatch.setattr(
         "app.services.orchestration_service.build_pricing_crew",
-        lambda **kwargs: _CallbackCrew(kwargs["on_task_done"], [invalid_data], _valid_manager_output()),
+        lambda **kwargs: _fake_bundle([invalid_data]),
     )
 
     service = OrchestrationService(db)
@@ -362,65 +408,63 @@ def test_orchestration_validation_failure_writes_failed_card_and_blocks_result(m
 
     assert "[DATA_ANALYSIS]" in str(exc_info.value)
     assert result_calls == []
-    assert [log.stage for log in logs] == ["running", "failed", "running"]
+    # 串行执行流程：失败立即抛错，不再为下游 Agent 写 running 占位
+    assert [log.stage for log in logs] == ["running", "failed"]
     assert logs[1].role_name == "数据分析Agent"
     assert logs[1].suggestion_json["error"] is True
     assert logs[1].suggestion_json["message"].startswith("[DATA_ANALYSIS]")
 
 
-def test_validation_failure_keeps_task_outputs_aligned_for_manager(monkeypatch):
+def test_validation_failure_aborts_immediately_skipping_downstream_agents(monkeypatch):
+    """串行模式下，上游 Agent 校验失败应立即中断，避免下游浪费 LLM 调用。
+
+    这是从全量 Crew.kickoff 迁移到 Task 级 execute_sync 后的关键行为变化：
+    - 旧实现：on_task_done callback 抛错后 CrewAI 仍会继续触发后续 task，manager 拿到空 dict
+    - 新实现：任何一个 Agent 抛错 → 立即 raise → dispatch_service 接住做断点续跑
+    """
     db = build_session(PricingTask.__table__, AgentRunLog.__table__)
     task = create_running_task(db, task_id=7)
+
     invalid_data = _valid_data_output()
     invalid_data.pop("suggestedPrice")
-    captured_manager_context = []
-    original_build_manager_card = OrchestrationService._build_manager_card
 
-    def _capture_manager_context(parsed, data_parsed, market_parsed, risk_parsed):
-        captured_manager_context.append((data_parsed, market_parsed, risk_parsed))
-        return original_build_manager_card(parsed, data_parsed, market_parsed, risk_parsed)
+    # 给后续三个 Task 也准备 mock，但它们不应被调用——execute_sync 一旦被触发就会引发 AssertionError
+    def _should_not_run(*args, **kwargs):
+        raise AssertionError("downstream Agent must not execute after upstream validation failure")
 
-    monkeypatch.setattr(
-        OrchestrationService,
-        "_build_manager_card",
-        staticmethod(_capture_manager_context),
-    )
+    bundle = _fake_bundle([invalid_data])
+    for downstream_task in bundle.tasks[1:]:
+        downstream_task.execute_sync = _should_not_run  # type: ignore[assignment]
+
     monkeypatch.setattr(
         "app.services.orchestration_service.build_crewai_llm",
         lambda **kwargs: SimpleNamespace(model="fake-model"),
     )
     monkeypatch.setattr(
         "app.services.orchestration_service.build_pricing_crew",
-        lambda **kwargs: _CallbackCrew(
-            kwargs["on_task_done"],
-            [
-                invalid_data,
-                _valid_market_output(),
-                _valid_risk_output(),
-                _valid_manager_output(),
-            ],
-            _valid_manager_output(),
-        ),
+        lambda **kwargs: bundle,
     )
 
     service = OrchestrationService(db)
-    service.result_tool = SimpleNamespace(write_final_result=lambda payload: None)
+    result_calls: list = []
+    service.result_tool = SimpleNamespace(write_final_result=result_calls.append)
 
     with pytest.raises(_agent_validation_error_cls()):
         service.run(_payload(task.id))
 
-    assert captured_manager_context
-    data_parsed, market_parsed, risk_parsed = captured_manager_context[0]
-    assert data_parsed == {}
-    assert market_parsed["suggestedPrice"] == Decimal("30.50")
-    assert risk_parsed["suggestedPrice"] == Decimal("30.00")
+    assert result_calls == []
+    logs = LogRepo(db).list_by_task_id(task.id)
+    # 失败发生在 order=1，停在 [running, failed]；不会再有 order=2/3/4 的 running 占位
+    assert [log.stage for log in logs] == ["running", "failed"]
+    assert logs[-1].role_name == "数据分析Agent"
 
 
 def test_orchestration_final_manager_output_requires_final_price(monkeypatch):
+    """经理 Agent 输出缺 finalPrice → 应直接报错并阻止 pricing_result 写入。"""
     db = build_session(PricingTask.__table__, AgentRunLog.__table__)
     task = create_running_task(db, task_id=6)
-    final_output = _valid_manager_output()
-    final_output.pop("finalPrice")
+    invalid_manager = _valid_manager_output()
+    invalid_manager.pop("finalPrice")
 
     monkeypatch.setattr(
         "app.services.orchestration_service.build_crewai_llm",
@@ -428,15 +472,13 @@ def test_orchestration_final_manager_output_requires_final_price(monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.orchestration_service.build_pricing_crew",
-        lambda **kwargs: _CallbackCrew(
-            kwargs["on_task_done"],
+        lambda **kwargs: _fake_bundle(
             [
                 _valid_data_output(),
                 _valid_market_output(),
                 _valid_risk_output(),
-                _valid_manager_output(),
-            ],
-            final_output,
+                invalid_manager,
+            ]
         ),
     )
 
@@ -451,13 +493,12 @@ def test_orchestration_final_manager_output_requires_final_price(monkeypatch):
     assert result_calls == []
 
 
-def test_orchestration_service_writes_failed_stage_when_crew_kickoff_raises(monkeypatch):
+def test_orchestration_service_writes_failed_stage_when_task_execute_sync_raises(monkeypatch):
+    """单个 Task.execute_sync 抛出非超时类异常 → 写入 failed 卡片并向上抛错。"""
     db = build_session(PricingTask.__table__, AgentRunLog.__table__)
     task = create_running_task(db, task_id=4)
 
-    class _FakeCrew:
-        def kickoff(self):
-            raise RuntimeError("Task `你正在为商品 [测试商品] 分析市场竞争态势` failed")
+    raised = RuntimeError("Task `你正在为商品 [测试商品] 分析市场竞争态势` failed")
 
     monkeypatch.setattr(
         "app.services.orchestration_service.build_crewai_llm",
@@ -465,18 +506,11 @@ def test_orchestration_service_writes_failed_stage_when_crew_kickoff_raises(monk
     )
     monkeypatch.setattr(
         "app.services.orchestration_service.build_pricing_crew",
-        lambda **kwargs: _FakeCrew(),
-    )
-
-    payload = SimpleNamespace(
-        task_id=task.id,
-        llm_api_key=None,
-        llm_base_url=None,
-        llm_model=None,
+        lambda **kwargs: _fake_bundle([raised]),
     )
 
     with pytest.raises(RuntimeError):
-        OrchestrationService(db).run(payload)
+        OrchestrationService(db).run(_payload(task.id))
 
     logs = LogRepo(db).list_by_task_id(task.id)
 

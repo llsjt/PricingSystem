@@ -17,7 +17,7 @@ def _default_serializer(obj: Any) -> Any:
     return str(obj)
 
 
-@tool("预估调价后销量")
+@tool("estimate_sales_volume")
 def estimate_sales_volume(
     baseline_sales: int,
     current_price: float,
@@ -34,7 +34,7 @@ def estimate_sales_volume(
     return json.dumps({"estimated_sales": estimated}, ensure_ascii=False)
 
 
-@tool("预估利润")
+@tool("estimate_profit")
 def estimate_profit(
     price: float,
     cost_price: float,
@@ -49,7 +49,7 @@ def estimate_profit(
     return json.dumps({"estimated_profit": str(profit)}, ensure_ascii=False)
 
 
-@tool("评估风控规则")
+@tool("evaluate_risk_rules")
 def evaluate_risk_rules(
     current_price: float,
     cost_price: float,
