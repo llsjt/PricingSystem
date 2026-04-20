@@ -24,6 +24,65 @@
       </div>
     </section>
 
+    <section class="panel-card batch-archive-panel">
+      <div class="section-head">
+        <div class="section-title">
+          <h3>批量定价批次</h3>
+          <p>最近创建的批量定价进度，关闭标签后可从这里重新打开。</p>
+        </div>
+        <div class="toolbar-actions">
+          <span class="batch-total">共 {{ recentBatchTotal }} 个批次</span>
+          <el-button @click="fetchRecentBatches">刷新批次</el-button>
+        </div>
+      </div>
+
+      <el-table
+        v-loading="batchLoading"
+        :data="recentBatches"
+        border
+        stripe
+        :resizable="false"
+      >
+        <el-table-column prop="batchCode" label="批次号" min-width="220" show-overflow-tooltip />
+        <el-table-column label="策略目标" width="130">
+          <template #default="{ row }">{{ batchGoalLabel(row.strategyGoal) }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="120">
+          <template #default="{ row }">
+            <el-tag :type="batchStatusTagType(row.batchStatus)">
+              {{ batchStatusText(row.batchStatus) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="进度" width="120">
+          <template #default="{ row }">{{ batchProgressText(row) }}</template>
+        </el-table-column>
+        <el-table-column label="执行中" width="90">
+          <template #default="{ row }">{{ row.runningCount || 0 }}</template>
+        </el-table-column>
+        <el-table-column prop="createdAt" label="创建时间" width="180">
+          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" fixed="right" width="120">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openBatchDetail(row)">打开进度</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div v-if="recentBatchTotal > batchQueryParams.size" class="table-footer batch-pagination">
+        <el-pagination
+          v-model:current-page="batchQueryParams.page"
+          v-model:page-size="batchQueryParams.size"
+          :total="recentBatchTotal"
+          :page-sizes="[5, 10, 20]"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="handleBatchSizeChange"
+          @current-change="handleBatchPageChange"
+        />
+      </div>
+    </section>
+
     <section class="panel-card filter-panel">
       <div class="filter-head">
         <h3>任务筛选</h3>
@@ -69,6 +128,7 @@
         :data="tasks"
         border
         stripe
+        :resizable="false"
         @sort-change="handleSortChange"
       >
         <el-table-column prop="taskCode" label="任务编号" min-width="220" show-overflow-tooltip />
@@ -174,7 +234,7 @@
             </section>
 
             <section class="panel-card embedded-panel">
-              <el-table :data="comparisonData" border stripe>
+              <el-table :data="comparisonData" border stripe :resizable="false">
                 <el-table-column prop="productTitle" label="商品名称" min-width="180" show-overflow-tooltip />
                 <el-table-column label="原价" width="120">
                   <template #default="{ row }">{{ formatCurrency(row.originalPrice) }}</template>
@@ -291,6 +351,12 @@ const {
   activeTab,
   applyingResultIds,
   applyPrice,
+  batchGoalLabel,
+  batchLoading,
+  batchProgressText,
+  batchQueryParams,
+  batchStatusTagType,
+  batchStatusText,
   chartRef,
   comparisonData,
   currentTask,
@@ -299,6 +365,7 @@ const {
   drawerSize,
   drawerVisible,
   exportReport,
+  fetchRecentBatches,
   fetchTasks,
   formatCurrency,
   formatDateTime,
@@ -313,13 +380,18 @@ const {
   getLogThinking,
   getRunStatusType,
   getRunStatusText,
+  handleBatchPageChange,
+  handleBatchSizeChange,
   handleDateChange,
   handleSearch,
   handleSortChange,
   isFailedLog,
   loading,
+  openBatchDetail,
   orderedLogs,
   queryParams,
+  recentBatches,
+  recentBatchTotal,
   resetFilters,
   stats,
   statusMap,
@@ -344,6 +416,25 @@ const {
 
 .archive-hero .section-title {
   margin-bottom: 10px;
+}
+
+.batch-archive-panel {
+  padding: 12px 14px;
+}
+
+.batch-archive-panel .section-head {
+  margin-bottom: 12px;
+}
+
+.batch-archive-panel .section-title p {
+  margin: 4px 0 0;
+  color: var(--text-3);
+  font-size: 13px;
+}
+
+.batch-total {
+  color: var(--text-3);
+  font-size: 13px;
 }
 
 .filter-panel {

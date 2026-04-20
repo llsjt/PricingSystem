@@ -216,6 +216,7 @@ import { clearRevealQueue, createRevealQueueState, finishReveal, isActiveReveal,
 import { buildVisibleAgentTimeline, filterLatestAgentRunRound, resolveLatestAgentRunAttempt } from '../utils/agentTimeline'
 import { formatEvidenceValue, getSuggestionLines, normalizeAgentCode, toNaturalChinese } from '../utils/decisionDisplay'
 import { createDefaultPricingConstraintForm, serializePricingConstraints, validatePricingConstraintForm } from '../utils/pricingConstraints'
+import { PRICING_GOAL_OPTIONS } from '../utils/pricingTaskOptions'
 import { shouldKeepRevealEnabledAfterRefresh } from '../utils/revealRefresh'
 import TypewriterText from '../components/TypewriterText.vue'
 import CountUp from '../components/CountUp.vue'
@@ -231,7 +232,7 @@ interface SnapshotLoadOptions { applyLogs?: boolean }
 
 const agents = [{ code: 'DATA_ANALYSIS', name: '数据分析Agent', order: 1 }, { code: 'MARKET_INTEL', name: '市场情报Agent', order: 2 }, { code: 'RISK_CONTROL', name: '风险控制Agent', order: 3 }, { code: 'MANAGER_COORDINATOR', name: '经理协调Agent', order: 4 }] as const
 const agentRevealOrder = agents.map((agent) => agent.code) as PricingAgentCode[]
-const goalOptions = [{ label: 'MAX_PROFIT', name: '利润优先' }, { label: 'CLEARANCE', name: '清仓促销' }, { label: 'MARKET_SHARE', name: '市场份额优先' }] as const
+const goalOptions = PRICING_GOAL_OPTIONS
 const emptyCards = () => ({ DATA_ANALYSIS: null, MARKET_INTEL: null, RISK_CONTROL: null, MANAGER_COORDINATOR: null }) as Record<PricingAgentCode, InternalAgentCardContent | null>
 const typewriterSpeed = 24
 

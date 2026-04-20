@@ -30,7 +30,7 @@ const navItems = APP_NAV_ITEMS
 const isAdmin = computed(() => userStore.isAdmin)
 const visibleNavItems = computed(() => navItems.filter((item) => !item.adminOnly || isAdmin.value))
 const currentNav = computed(() => visibleNavItems.value.find((item) => route.path.startsWith(item.path)))
-const pageTitle = computed(() => currentNav.value?.title || String(route.meta.title || 'App'))
+const pageTitle = computed(() => String(route.meta.title || currentNav.value?.title || 'App'))
 const openTabs = ref<OpenTab[]>([])
 const cacheNames = computed(() =>
   openTabs.value
@@ -94,7 +94,7 @@ const upsertTab = (tab: OpenTab) => {
 
 const ensureCurrentTab = () => {
   if (route.path === '/login') return
-  const title = currentNav.value?.title || String(route.meta.title || route.name || route.path)
+  const title = String(route.meta.title || currentNav.value?.title || route.name || route.path)
   const name = typeof route.name === 'string' ? route.name : undefined
   upsertTab({
     path: route.path,

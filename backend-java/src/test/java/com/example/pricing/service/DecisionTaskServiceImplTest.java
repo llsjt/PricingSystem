@@ -11,6 +11,7 @@ import com.example.pricing.mapper.PricingResultMapper;
 import com.example.pricing.mapper.PricingTaskMapper;
 import com.example.pricing.mapper.ProductMapper;
 import com.example.pricing.mapper.UserLlmConfigMapper;
+import com.example.pricing.service.PricingTaskReuseSupport;
 import com.example.pricing.service.impl.DecisionTaskServiceImpl;
 import com.example.pricing.vo.PricingTaskSnapshotVO;
 import org.junit.jupiter.api.BeforeEach;
@@ -59,6 +60,9 @@ class DecisionTaskServiceImplTest {
     @Mock
     private UserLlmConfigMapper userLlmConfigMapper;
 
+    @Mock
+    private PricingTaskReuseSupport pricingTaskReuseSupport;
+
     private DecisionTaskServiceImpl service;
 
     @BeforeEach
@@ -70,7 +74,8 @@ class DecisionTaskServiceImplTest {
                 productMapper,
                 shopService,
                 pythonDispatchClient,
-                userLlmConfigMapper
+                userLlmConfigMapper,
+                pricingTaskReuseSupport
         );
         ReflectionTestUtils.setField(service, "llmKeyEncryptionSecret", TEST_LLM_SECRET);
     }
@@ -91,7 +96,8 @@ class DecisionTaskServiceImplTest {
         when(shopService.getShopIdsByUser(1L)).thenReturn(List.of(2L));
         when(productMapper.selectById(221L)).thenReturn(product);
         when(userLlmConfigMapper.selectOne(any())).thenReturn(llmConfig);
-        when(taskMapper.selectOne(any())).thenReturn(null);
+        when(pricingTaskReuseSupport.buildIdempotencyKey(List.of(221L), "MARKET_SHARE", "", 1L)).thenReturn("idem-221");
+        when(pricingTaskReuseSupport.findReusableTask("idem-221", 2L)).thenReturn(null);
         doAnswer(invocation -> {
             PricingTask task = invocation.getArgument(0);
             task.setId(113L);
@@ -129,7 +135,8 @@ class DecisionTaskServiceImplTest {
         when(shopService.getShopIdsByUser(1L)).thenReturn(List.of(2L));
         when(productMapper.selectById(221L)).thenReturn(product);
         when(userLlmConfigMapper.selectOne(any())).thenReturn(llmConfig);
-        when(taskMapper.selectOne(any())).thenReturn(existing);
+        when(pricingTaskReuseSupport.buildIdempotencyKey(List.of(221L), "MARKET_SHARE", "", 1L)).thenReturn("idem-221");
+        when(pricingTaskReuseSupport.findReusableTask("idem-221", 2L)).thenReturn(existing);
 
         Long taskId = service.startTask(List.of(221L), "MARKET_SHARE", "", 1L);
 

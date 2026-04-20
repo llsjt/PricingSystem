@@ -38,6 +38,12 @@ const routes: Array<RouteRecordRaw> = [
         meta: { title: getNavTitleByPath('/archive') }
       },
       {
+        path: 'archive/batches/:batchId',
+        name: 'PricingBatchDetail',
+        component: () => import('../views/PricingBatchDetail.vue'),
+        meta: { title: '批量定价进度' }
+      },
+      {
         path: 'shops',
         name: 'ShopManagement',
         component: () => import('../views/ShopManagement.vue'),

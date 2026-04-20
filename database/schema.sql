@@ -17,6 +17,8 @@ CREATE TABLE schema_migration_history (
 
 DROP TABLE IF EXISTS login_audit_log;
 DROP TABLE IF EXISTS auth_refresh_session;
+DROP TABLE IF EXISTS pricing_batch_item;
+DROP TABLE IF EXISTS pricing_batch;
 DROP TABLE IF EXISTS pricing_result;
 DROP TABLE IF EXISTS agent_run_log;
 DROP TABLE IF EXISTS pricing_task;
@@ -227,6 +229,45 @@ CREATE TABLE pricing_result (
     CONSTRAINT fk_pricing_result_task FOREIGN KEY (task_id) REFERENCES pricing_task(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定价结果表';
 
+CREATE TABLE pricing_batch (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT 'Batch pricing request id',
+    batch_code VARCHAR(50) NOT NULL COMMENT 'Batch code',
+    requested_by_user_id BIGINT NOT NULL COMMENT 'Requester user id',
+    strategy_goal VARCHAR(50) NOT NULL COMMENT 'Strategy goal',
+    constraint_text VARCHAR(1000) DEFAULT NULL COMMENT 'Serialized pricing constraints',
+    total_count INT NOT NULL DEFAULT 0 COMMENT 'Total item count',
+    completed_count INT NOT NULL DEFAULT 0 COMMENT 'Completed task count',
+    manual_review_count INT NOT NULL DEFAULT 0 COMMENT 'Manual review task count',
+    failed_count INT NOT NULL DEFAULT 0 COMMENT 'Failed item count',
+    cancelled_count INT NOT NULL DEFAULT 0 COMMENT 'Cancelled task count',
+    batch_status VARCHAR(20) NOT NULL DEFAULT 'RUNNING' COMMENT 'Batch status',
+    finalized_at DATETIME DEFAULT NULL COMMENT 'First terminal timestamp',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Created time',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Updated time',
+    UNIQUE KEY uk_pricing_batch_code (batch_code),
+    KEY idx_pricing_batch_user_created (requested_by_user_id, created_at),
+    KEY idx_pricing_batch_status (batch_status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Batch pricing summary';
+
+CREATE TABLE pricing_batch_item (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT 'Batch pricing item id',
+    batch_id BIGINT NOT NULL COMMENT 'Batch id',
+    product_id BIGINT NOT NULL COMMENT 'Product id',
+    item_order INT NOT NULL COMMENT 'Display order inside the batch',
+    task_id BIGINT DEFAULT NULL COMMENT 'Linked pricing task id',
+    item_status VARCHAR(20) NOT NULL DEFAULT 'TASK_LINKED' COMMENT 'Batch item creation status',
+    error_message VARCHAR(255) DEFAULT NULL COMMENT 'Batch-level creation failure message',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Created time',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Updated time',
+    UNIQUE KEY uk_batch_product (batch_id, product_id),
+    KEY idx_batch_item_batch_order (batch_id, item_order),
+    KEY idx_batch_item_batch_status (batch_id, item_status),
+    KEY idx_batch_item_task (task_id),
+    CONSTRAINT fk_batch_item_batch FOREIGN KEY (batch_id) REFERENCES pricing_batch(id) ON DELETE CASCADE,
+    CONSTRAINT fk_batch_item_product FOREIGN KEY (product_id) REFERENCES product(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_batch_item_task FOREIGN KEY (task_id) REFERENCES pricing_task(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Batch pricing detail';
+
 CREATE TABLE auth_refresh_session (
     id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '刷新会话ID',
     user_id BIGINT NOT NULL COMMENT '用户ID',
@@ -269,6 +310,7 @@ INSERT INTO schema_migration_history (version, checksum, description, applied_at
     ('migration_20260413_stage_failed_backfill', REPEAT('0', 64), 'baseline schema includes failed agent stage backfill', CURRENT_TIMESTAMP),
     ('migration_20260418_agent_run_attempt', REPEAT('0', 64), 'baseline schema includes agent run retry attempt', CURRENT_TIMESTAMP),
     ('migration_20260418_product_category_titles', REPEAT('0', 64), 'baseline schema includes product category and title profile fields', CURRENT_TIMESTAMP),
-    ('migration_20260419_agent_raw_output', REPEAT('0', 64), 'baseline schema includes per-Agent raw output JSON for partial retry', CURRENT_TIMESTAMP);
+    ('migration_20260419_agent_raw_output', REPEAT('0', 64), 'baseline schema includes per-Agent raw output JSON for partial retry', CURRENT_TIMESTAMP),
+    ('migration_20260420_pricing_batch', REPEAT('0', 64), 'baseline schema includes batch pricing tables', CURRENT_TIMESTAMP);
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -15,6 +15,7 @@ import com.example.pricing.mapper.PricingTaskMapper;
 import com.example.pricing.mapper.ProductMapper;
 import com.example.pricing.mapper.UserLlmConfigMapper;
 import com.example.pricing.service.DecisionTaskService;
+import com.example.pricing.service.PricingTaskReuseSupport;
 import com.example.pricing.service.PythonDispatchClient;
 import com.example.pricing.service.ShopService;
 import com.example.pricing.vo.DecisionComparisonVO;
@@ -32,16 +33,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URLEncoder;
-import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -65,6 +63,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     private final ShopService shopService;
     private final PythonDispatchClient pythonDispatchClient;
     private final UserLlmConfigMapper userLlmConfigMapper;
+    private final PricingTaskReuseSupport pricingTaskReuseSupport;
 
     @Value("${app.pricing.max-adjustment-ratio:0.30}")
     private BigDecimal maxAdjustmentRatio;
@@ -120,9 +119,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
 
         String normalizedGoal = (strategyGoal == null || strategyGoal.isBlank()) ? "MAX_PROFIT" : strategyGoal.trim();
         String normalizedConstraints = constraints == null ? "" : constraints.trim();
-        String idempotencyKey = buildIdempotencyKey(productIds, normalizedGoal, normalizedConstraints, userId);
+        String idempotencyKey = pricingTaskReuseSupport.buildIdempotencyKey(productIds, normalizedGoal, normalizedConstraints, userId);
 
-        PricingTask existingTask = findReusableTask(idempotencyKey, product.getShopId());
+        PricingTask existingTask = pricingTaskReuseSupport.findReusableTask(idempotencyKey, product.getShopId());
         if (existingTask != null) {
             refreshReusableTaskLlmConfigIfNeeded(
                     existingTask,
@@ -646,31 +645,6 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         } catch (Exception e) {
             log.error("Refresh LLM config for reusable task failed, taskId={}", existingTask.getId(), e);
             throw new IllegalStateException("刷新复用任务的大模型配置失败: " + e.getMessage(), e);
-        }
-    }
-
-    private PricingTask findReusableTask(String idempotencyKey, Long shopId) {
-        LambdaQueryWrapper<PricingTask> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(PricingTask::getIdempotencyKey, idempotencyKey)
-                .eq(PricingTask::getShopId, shopId)
-                .in(PricingTask::getTaskStatus, List.of("QUEUED", "RUNNING", "RETRYING", "MANUAL_REVIEW", "COMPLETED"))
-                .orderByDesc(PricingTask::getId)
-                .last("LIMIT 1");
-        return taskMapper.selectOne(wrapper);
-    }
-
-    private String buildIdempotencyKey(List<Long> productIds, String strategyGoal, String constraints, Long userId) {
-        String source = String.join("|",
-                String.valueOf(userId),
-                String.valueOf(productIds),
-                String.valueOf(strategyGoal),
-                String.valueOf(constraints)
-        );
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(source.getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception e) {
-            return UUID.randomUUID().toString().replace("-", "");
         }
     }
 

@@ -1,5 +1,5 @@
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, nextTick, onActivated, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   applyDecision,
@@ -15,6 +15,7 @@ import {
   type PricingTaskDetail,
   type PricingAgentCode
 } from '../api/decision'
+import { getRecentPricingBatches, type PricingBatchDetail } from '../api/pricingBatch'
 import { useEChart } from './useEChart'
 import { useViewport } from './useViewport'
 import {
@@ -36,6 +37,7 @@ import { resolveRequestErrorMessage } from '../utils/error'
 import { getFailureSummary } from '../utils/failureSummary'
 import { filterLatestAgentRunRound } from '../utils/agentTimeline'
 import { formatCurrency, formatDateTime, formatPercent, formatSignedCurrency } from '../utils/formatters'
+import { PRICING_GOAL_LABELS, PRICING_STATUS_LABELS, PRICING_STATUS_TAG_TYPES } from '../utils/pricingTaskOptions'
 
 const STATUS_MAP: Record<string, string> = {
   QUEUED: '待执行',
@@ -117,21 +119,26 @@ const buildComparisonChartOption = (rows: DecisionComparisonItem[]) => ({
 
 export const useArchivePage = () => {
   const route = useRoute()
+  const router = useRouter()
   const { width } = useViewport()
   const { chartRef, disposeChart, resizeChart, setChartOption } = useEChart()
 
   const loading = ref(false)
+  const batchLoading = ref(false)
   const detailLoading = ref(false)
   const drawerVisible = ref(false)
   const activeTab = ref('comparison')
   const total = ref(0)
+  const recentBatchTotal = ref(0)
   const tasks = ref<DecisionTaskItem[]>([])
+  const recentBatches = ref<PricingBatchDetail[]>([])
   const comparisonData = ref<DecisionComparisonItem[]>([])
   const agentLogs = ref<DecisionLogItem[]>([])
   const currentTask = ref<DecisionTaskItem | null>(null)
   const dateRange = ref<string[]>([])
   const applyingResultIds = ref<number[]>([])
   const openedRouteTaskId = ref<number | null>(null)
+  let hasSkippedInitialActivation = false
   const stats = ref<DecisionTaskStats>({
     total: 0,
     completed: 0,
@@ -146,6 +153,10 @@ export const useArchivePage = () => {
     startTime: '',
     endTime: '',
     sortOrder: 'desc' as 'asc' | 'desc'
+  })
+  const batchQueryParams = reactive({
+    page: 1,
+    size: 5
   })
 
   const drawerSize = computed(() => (width.value < 900 ? '100%' : '78%'))
@@ -233,6 +244,36 @@ export const useArchivePage = () => {
     }
   }
 
+  const fetchRecentBatches = async () => {
+    batchLoading.value = true
+    try {
+      const res: any = await getRecentPricingBatches({
+        page: batchQueryParams.page,
+        size: batchQueryParams.size
+      })
+      if (res.code !== 200) {
+        ElMessage.error(res.message || '获取批量定价批次失败')
+        return
+      }
+
+      recentBatches.value = res.data?.records || []
+      recentBatchTotal.value = Number(res.data?.total || 0)
+    } catch (error) {
+      ElMessage.error(await resolveRequestErrorMessage(error, '获取批量定价批次失败'))
+    } finally {
+      batchLoading.value = false
+    }
+  }
+
+  const handleBatchSizeChange = () => {
+    batchQueryParams.page = 1
+    void fetchRecentBatches()
+  }
+
+  const handleBatchPageChange = () => {
+    void fetchRecentBatches()
+  }
+
   const renderChart = () => {
     if (comparisonData.value.length === 0) {
       disposeChart()
@@ -281,6 +322,24 @@ export const useArchivePage = () => {
     drawerVisible.value = true
     activeTab.value = 'comparison'
     await Promise.all([fetchComparison(), fetchLogs()])
+  }
+
+  const openBatchDetail = async (row: PricingBatchDetail) => {
+    const batchId = Number(row.batchId || 0)
+    if (!batchId) return
+    await router.push(`/archive/batches/${batchId}`)
+  }
+
+  const batchStatusText = (status?: string | null) => PRICING_STATUS_LABELS[String(status || '').trim().toUpperCase()] || status || '-'
+  const batchStatusTagType = (status?: string | null) => PRICING_STATUS_TAG_TYPES[String(status || '').trim().toUpperCase()] || 'info'
+  const batchGoalLabel = (goal?: string | null) => PRICING_GOAL_LABELS[String(goal || '').trim()] || goal || '-'
+  const batchProgressText = (row: PricingBatchDetail) => {
+    const totalCount = Number(row.totalCount || 0)
+    const terminalCount = Number(row.completedCount || 0)
+      + Number(row.manualReviewCount || 0)
+      + Number(row.failedCount || 0)
+      + Number(row.cancelledCount || 0)
+    return `${terminalCount} / ${totalCount}`
   }
 
   const routeTaskId = () => {
@@ -410,8 +469,16 @@ export const useArchivePage = () => {
   })
 
   onMounted(async () => {
-    await fetchTasks()
+    await Promise.all([fetchTasks(), fetchRecentBatches()])
     await openTaskFromRoute()
+  })
+
+  onActivated(() => {
+    if (!hasSkippedInitialActivation) {
+      hasSkippedInitialActivation = true
+      return
+    }
+    void Promise.all([fetchTasks(), fetchRecentBatches()])
   })
 
   watch(() => route.query.taskId, () => {
@@ -422,6 +489,12 @@ export const useArchivePage = () => {
     activeTab,
     agentLogs,
     applyingResultIds,
+    batchGoalLabel,
+    batchLoading,
+    batchProgressText,
+    batchQueryParams,
+    batchStatusTagType,
+    batchStatusText,
     chartRef,
     comparisonData,
     currentTask,
@@ -430,6 +503,7 @@ export const useArchivePage = () => {
     drawerSize,
     drawerVisible,
     exportReport,
+    fetchRecentBatches,
     fetchTasks,
     formatCurrency,
     formatDateTime,
@@ -444,14 +518,19 @@ export const useArchivePage = () => {
     getLogThinking,
     getRunStatusType,
     getRunStatusText,
+    handleBatchPageChange,
+    handleBatchSizeChange,
     handleDateChange,
     handleSearch,
     handleSortChange,
     isSuccessStatus,
     isFailedLog,
     loading,
+    openBatchDetail,
     orderedLogs,
     queryParams,
+    recentBatches,
+    recentBatchTotal,
     resetFilters,
     stats,
     statusMap: STATUS_MAP,

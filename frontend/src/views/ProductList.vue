@@ -8,6 +8,9 @@
         </div>
         <div class="toolbar-actions">
           <el-button type="success" @click="openAddDialog">新增商品</el-button>
+          <el-button type="primary" plain :disabled="selectedIds.length === 0" @click="openBatchPricingDialog">
+            批量定价
+          </el-button>
           <el-button type="danger" :disabled="selectedIds.length === 0" @click="handleBatchDelete">
             批量删除
           </el-button>
@@ -36,7 +39,9 @@
 
       <div class="selected-bar" v-if="selectedIds.length > 0">
         <el-tag type="success">已选择 {{ selectedIds.length }} 个商品</el-tag>
-        <el-button link type="danger" @click="clearSelection">清空选择</el-button>
+        <div class="selected-bar-actions">
+          <el-button link type="danger" @click="clearSelection">清空选择</el-button>
+        </div>
       </div>
 
       <div v-if="!isMobile" class="table-wrap">
@@ -217,6 +222,98 @@
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" @click="submitProduct">保存商品</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="batchPricingVisible"
+      title="批量定价"
+      width="760px"
+    >
+      <div class="batch-pricing-shell">
+        <div class="batch-pricing-intro">
+          <strong>已选择 {{ selectedIds.length }} 个商品</strong>
+          <span>统一配置策略目标和硬约束，系统会为每个商品创建或复用现有定价任务。</span>
+        </div>
+
+        <el-form label-position="top" class="batch-pricing-form">
+          <el-form-item label="策略目标">
+            <el-radio-group v-model="batchPricingForm.strategyGoal">
+              <el-radio v-for="goal in goalOptions" :key="goal.label" :label="goal.label" border>{{ goal.name }}</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="约束条件">
+            <div class="constraint-panel">
+              <div class="constraint-intro">
+                <strong>定价硬约束</strong>
+                <span>未填写的售价区间和降价幅度不会参与限制。</span>
+              </div>
+              <div class="constraint-grid">
+                <div class="constraint-field">
+                  <span class="constraint-label">最低利润率</span>
+                  <div class="constraint-control">
+                    <el-input-number
+                      v-model="batchConstraintForm.minProfitRatePercent"
+                      :min="0.01"
+                      :max="99.99"
+                      :step="1"
+                      :precision="2"
+                      controls-position="right"
+                    />
+                    <span class="constraint-unit">%</span>
+                  </div>
+                </div>
+                <div class="constraint-field">
+                  <span class="constraint-label">最低售价</span>
+                  <div class="constraint-control">
+                    <el-input-number
+                      v-model="batchConstraintForm.minPrice"
+                      :min="0.01"
+                      :step="1"
+                      :precision="2"
+                      controls-position="right"
+                      placeholder="不限制"
+                    />
+                    <span class="constraint-unit">元</span>
+                  </div>
+                </div>
+                <div class="constraint-field">
+                  <span class="constraint-label">最高售价</span>
+                  <div class="constraint-control">
+                    <el-input-number
+                      v-model="batchConstraintForm.maxPrice"
+                      :min="0.01"
+                      :step="1"
+                      :precision="2"
+                      controls-position="right"
+                      placeholder="不限制"
+                    />
+                    <span class="constraint-unit">元</span>
+                  </div>
+                </div>
+                <div class="constraint-field">
+                  <span class="constraint-label">最大降价幅度</span>
+                  <div class="constraint-control">
+                    <el-input-number
+                      v-model="batchConstraintForm.maxDiscountRatePercent"
+                      :min="0.01"
+                      :max="100"
+                      :step="1"
+                      :precision="2"
+                      controls-position="right"
+                      placeholder="不限制"
+                    />
+                    <span class="constraint-unit">%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="batchPricingVisible = false">取消</el-button>
+        <el-button type="primary" :loading="batchStarting" @click="submitBatchPricing">启动批量定价</el-button>
       </template>
     </el-dialog>
 
@@ -462,6 +559,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { createPricingBatch } from '../api/pricingBatch'
 import {
   addProductManual,
   batchDeleteProducts,
@@ -480,6 +578,8 @@ import ProductTrendDrawer from '../components/ProductTrendDrawer.vue'
 import { useViewport } from '../composables/useViewport'
 import { resolveRequestErrorMessage } from '../utils/error'
 import { formatCount, formatCurrency as sharedFormatCurrency, formatPercent as sharedFormatPercent } from '../utils/formatters'
+import { createDefaultPricingConstraintForm, serializePricingConstraints, validatePricingConstraintForm } from '../utils/pricingConstraints'
+import { PRICING_GOAL_OPTIONS, type PricingGoal } from '../utils/pricingTaskOptions'
 import { useRouter } from 'vue-router'
 
 interface ProductFormModel {
@@ -502,6 +602,8 @@ const tableData = ref<ProductListVO[]>([])
 const total = ref(0)
 const selectedIds = ref<number[]>([])
 const dialogVisible = ref(false)
+const batchPricingVisible = ref(false)
+const batchStarting = ref(false)
 const detailVisible = ref(false)
 const detailLoading = ref(false)
 const detailTab = ref('base')
@@ -536,6 +638,11 @@ const filters = reactive({
   status: 'ALL',
   platform: 'ALL'
 })
+const goalOptions = PRICING_GOAL_OPTIONS
+const batchPricingForm = reactive({
+  strategyGoal: undefined as PricingGoal | undefined
+})
+const batchConstraintForm = reactive(createDefaultPricingConstraintForm())
 
 const createDefaultForm = (): ProductFormModel => ({
   externalProductId: '',
@@ -627,6 +734,11 @@ const statusTagType = (status?: string) => {
 const clearSelection = () => {
   selectedIds.value = []
   tableRef.value?.clearSelection?.()
+}
+
+const resetBatchPricingForm = () => {
+  batchPricingForm.strategyGoal = undefined
+  Object.assign(batchConstraintForm, createDefaultPricingConstraintForm())
 }
 
 const isSelected = (id: number) => selectedIds.value.includes(id)
@@ -773,6 +885,57 @@ const handleBatchDelete = async () => {
     }
   } finally {
     loading.value = false
+  }
+}
+
+const openBatchPricingDialog = () => {
+  if (selectedIds.value.length === 0) {
+    ElMessage.warning('请先选择要定价的商品')
+    return
+  }
+  resetBatchPricingForm()
+  batchPricingVisible.value = true
+}
+
+const submitBatchPricing = async () => {
+  if (selectedIds.value.length === 0) {
+    ElMessage.warning('请先选择要定价的商品')
+    return
+  }
+  const constraintError = validatePricingConstraintForm(batchConstraintForm)
+  if (constraintError) {
+    ElMessage.warning(constraintError)
+    return
+  }
+  if (!batchPricingForm.strategyGoal) {
+    ElMessage.warning('请选择策略目标')
+    return
+  }
+
+  batchStarting.value = true
+  try {
+    const constraints = serializePricingConstraints(batchConstraintForm)
+    const res: any = await createPricingBatch({
+      productIds: selectedIds.value,
+      strategyGoal: batchPricingForm.strategyGoal,
+      constraints
+    })
+    if (res?.code !== 200 || !res?.data?.batchId) {
+      ElMessage.error(res?.message || '批量定价启动失败')
+      return
+    }
+    batchPricingVisible.value = false
+    clearSelection()
+    if (Number(res.data.createFailedCount || 0) > 0) {
+      ElMessage.warning(`批量定价已创建，${Number(res.data.createFailedCount)} 个商品创建失败`)
+    } else {
+      ElMessage.success('批量定价已启动')
+    }
+    await router.push(`/archive/batches/${Number(res.data.batchId)}`)
+  } catch (error) {
+    ElMessage.error(await resolveRequestErrorMessage(error, '批量定价启动失败'))
+  } finally {
+    batchStarting.value = false
   }
 }
 
@@ -927,6 +1090,106 @@ handleSearch()
   border-radius: 12px;
   border: 1px solid rgba(47, 161, 116, 0.16);
   background: rgba(47, 161, 116, 0.06);
+}
+
+.selected-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.batch-pricing-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.batch-pricing-intro {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 46, 77, 0.06);
+  background: var(--surface-2);
+}
+
+.batch-pricing-intro strong {
+  color: var(--text-1);
+}
+
+.batch-pricing-intro span {
+  color: var(--text-3);
+  line-height: 1.7;
+}
+
+.batch-pricing-form {
+  display: grid;
+  gap: 8px;
+}
+
+.constraint-panel {
+  width: 100%;
+  display: grid;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.constraint-intro {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  color: #64748b;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.constraint-intro strong {
+  font-size: 15px;
+  color: #172033;
+}
+
+.constraint-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.constraint-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.constraint-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 700;
+  color: #334155;
+  line-height: 1.45;
+}
+
+.constraint-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.constraint-control :deep(.el-input-number) {
+  width: 100%;
+}
+
+.constraint-unit {
+  font-size: 14px;
+  font-weight: 700;
+  color: #64748b;
 }
 
 .table-wrap {
@@ -1374,6 +1637,7 @@ handleSearch()
   .base-meta-grid,
   .detail-kpi-grid,
   .detail-grid,
+  .constraint-grid,
   .form-grid {
     grid-template-columns: 1fr;
   }
