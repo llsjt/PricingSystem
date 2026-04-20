@@ -11,11 +11,18 @@ export const AGENT_ORDER_BY_CODE: Record<PricingAgentCode, number> = {
 }
 
 export const AGENT_NAME_BY_CODE: Record<PricingAgentCode, string> = {
-  DATA_ANALYSIS: '数据分析Agent',
-  MARKET_INTEL: '市场情报Agent',
-  RISK_CONTROL: '风险控制Agent',
-  MANAGER_COORDINATOR: '经理协调Agent'
+  DATA_ANALYSIS: '数据分析智能体',
+  MARKET_INTEL: '市场情报智能体',
+  RISK_CONTROL: '风险控制智能体',
+  MANAGER_COORDINATOR: '经理协调智能体'
 }
+
+const LEGACY_AGENT_CODE_PATTERNS: Array<[PricingAgentCode, RegExp]> = [
+  ['DATA_ANALYSIS', /\b(data\s*analysis|data\s*agent)\b/i],
+  ['MARKET_INTEL', /\b(market\s*intel(?:ligence)?|market\s*agent)\b/i],
+  ['RISK_CONTROL', /\b(risk\s*control|risk\s*agent)\b/i],
+  ['MANAGER_COORDINATOR', /\b(manager(?:\s*coordinator)?|manager\s*agent)\b/i]
+]
 
 const TEXT_VALUE_MAP: Record<string, string> = {
   MAX_PROFIT: '利润优先',
@@ -34,7 +41,16 @@ const TEXT_VALUE_MAP: Record<string, string> = {
   CANCELLED: '已取消',
   FAILED: '失败',
   PENDING: '待执行',
-  TMALL_CSV: '天猫真实样本'
+  OK: '正常',
+  EMPTY: '无数据',
+  UNCONFIGURED: '未配置',
+  UNKNOWN: '未知',
+  TRUE: '是',
+  FALSE: '否',
+  TMALL_CSV: '天猫真实样本',
+  'VALID COMPETITORS >= 5': '有效竞品数不少于5个',
+  'VALID COMPETITORS >= 3': '有效竞品数达到3个',
+  'VALID COMPETITORS < 3': '有效竞品数不足3个'
 }
 
 const DATA_QUALITY_MAP: Record<string, string> = {
@@ -47,6 +63,20 @@ export const normalizeAgentCode = (code?: string | null): PricingAgentCode | nul
   const normalized = String(code || '') as PricingAgentCode
   return normalized in AGENT_ORDER_BY_CODE ? normalized : null
 }
+
+const inferLegacyAgentCode = (value?: string | null): PricingAgentCode | null => {
+  const text = String(value || '').trim()
+  if (!text) return null
+  for (const [code, pattern] of LEGACY_AGENT_CODE_PATTERNS) {
+    if (pattern.test(text)) return code
+  }
+  return null
+}
+
+const resolveLogAgentCode = (log: Pick<DecisionLogItem, 'agentName' | 'agentCode' | 'roleName'>): PricingAgentCode | null =>
+  normalizeAgentCode(log.agentCode)
+  || inferLegacyAgentCode(log.agentName)
+  || inferLegacyAgentCode(log.roleName)
 
 export const toNaturalChinese = (value: unknown): string => {
   const text = String(value ?? '').trim()
@@ -173,6 +203,7 @@ const formatObjectLine = (value: Record<string, unknown>) => {
 
 export const formatEvidenceValue = (label: unknown, value: unknown): string => {
   if (value == null) return '-'
+  if (typeof value === 'boolean') return formatBoolean(value)
 
   if (String(label || '').includes('数据质量')) {
     return formatDataQualityText(value)
@@ -285,7 +316,26 @@ export const getSuggestionLines = (
     expectedSales: '预期销量',
     expectedProfit: '预期利润',
     expectedProfitRate: '预期利润率',
+    confidenceScore: '置信度评分',
     marketScore: '市场接受度评分',
+    source: '竞品来源',
+    sourceStatus: '竞品状态',
+    dataQuality: '数据质量',
+    pricingPosition: '当前价格位置',
+    usedCompetitorCount: '纳入分析竞品',
+    riskNotes: '风险提示',
+    evidenceSummary: '证据摘要',
+    rawItemCount: '原始样本数',
+    filteredItemCount: '过滤后样本数',
+    validCompetitorCount: '有效样本数',
+    marketFloor: '市场最低价',
+    marketMedian: '市场中位价',
+    marketCeiling: '市场最高价',
+    marketAverage: '市场均价',
+    salesWeightedAverage: '销量加权均价',
+    salesWeightedMedian: '销量加权中位价',
+    safeFloorPrice: '安全底价',
+    needManualReview: '是否需要人工复核',
     pass: '是否自动通过',
     riskLevel: '风险等级',
     action: '建议动作',
@@ -322,10 +372,9 @@ export const getSuggestionHighlightLabel = (code: PricingAgentCode | null) => {
 }
 
 export const getLogAgentName = (log: Pick<DecisionLogItem, 'agentName' | 'agentCode' | 'roleName'>) => {
-  if (log.agentName) return log.agentName
-  const code = normalizeAgentCode(log.agentCode)
+  const code = resolveLogAgentCode(log)
   if (code) return AGENT_NAME_BY_CODE[code]
-  return log.agentCode || log.roleName || 'Agent'
+  return log.agentName || log.agentCode || log.roleName || '智能体'
 }
 
 export const getLogThinking = (log: DecisionLogItem) => String(log.thinking || log.outputSummary || log.thoughtContent || '-')
@@ -341,16 +390,16 @@ export const getLogEvidenceLines = (log: DecisionLogItem): DecisionDisplayLine[]
 
 export const getLogSuggestionLines = (log: DecisionLogItem): DecisionDisplayLine[] => {
   const suggestion = log.suggestion && typeof log.suggestion === 'object' ? log.suggestion : {}
-  return getSuggestionLines(normalizeAgentCode(log.agentCode), suggestion)
+  return getSuggestionLines(resolveLogAgentCode(log), suggestion)
 }
 
 export const getLogSuggestionHighlightPrice = (log: DecisionLogItem) => {
   const suggestion = log.suggestion && typeof log.suggestion === 'object' ? log.suggestion : {}
-  return getSuggestionHighlightPrice(normalizeAgentCode(log.agentCode), suggestion)
+  return getSuggestionHighlightPrice(resolveLogAgentCode(log), suggestion)
 }
 
 export const getLogSuggestionHighlightLabel = (log: DecisionLogItem) =>
-  getSuggestionHighlightLabel(normalizeAgentCode(log.agentCode))
+  getSuggestionHighlightLabel(resolveLogAgentCode(log))
 
 export const getLogReason = (log: DecisionLogItem) => String(log.reasonWhy || '').trim()
 

@@ -147,13 +147,13 @@ def _precompute_competitor_summary(payload: CrewRunPayload) -> str:
     if no_real_competitor_data:
         lines.extend(
             [
-                "NO_DATA_RULES:",
-                "- sourceStatus != OK or competitorSamples == 0: do not infer or fabricate market floor/ceiling/average.",
-                "- Output suggestedPrice=0.",
-                "- Output competitorSamples=0.",
-                "- Set marketFloor=0 and marketCeiling=0.",
-                "- Keep confidence <= 0.3.",
-                "- summary must explicitly include provider status and reason.",
+                "无有效竞品时的硬规则：",
+                "- sourceStatus != OK 或 competitorSamples == 0 时，不得推断或编造市场最低价、最高价、均价。",
+                "- suggestedPrice 输出 0。",
+                "- competitorSamples 输出 0。",
+                "- marketFloor 与 marketCeiling 输出 0。",
+                "- confidence 必须 <= 0.3。",
+                "- summary 必须明确说明竞品状态和原因。",
             ]
         )
     if not competitors:
@@ -164,10 +164,10 @@ def _precompute_competitor_summary(payload: CrewRunPayload) -> str:
     if low_quality:
         lines.extend(
             [
-                "LOW_DATA_RULES:",
-                f"- validCompetitorCount < {min_valid_count}: do not output an aggressive market conclusion.",
-                "- Prefer a conservative range over a strong single-price recommendation.",
-                "- If suggestedPrice is present, keep confidence <= 0.6.",
+                "低质量样本时的硬规则：",
+                f"- validCompetitorCount < {min_valid_count} 时，不得输出激进的市场结论。",
+                "- 优先给出保守区间，不要给出过强的单点结论。",
+                "- 如果输出 suggestedPrice，confidence 必须 <= 0.6。",
             ]
         )
 
@@ -326,6 +326,8 @@ def build_pricing_crew(
             "- sourceStatus != OK 时，不得编造市场价格带，建议价必须保守并在summary中说明原因。\n"
             "- validCompetitorCount < 3 时，不得输出强建议价；只能输出风险提示和弱建议。\n"
             "- dataQuality = LOW 时，confidence 不得高于 0.6。\n"
+            "- 所有面向用户的自然语言字段必须使用中文，包括 thinking、summary、pricingPosition、riskNotes、evidenceSummary、qualityReasons。\n"
+            "- 如果已给出 salesWeightedAverage / salesWeightedMedian，必须原样回填；没有数据时填 null，不要写 0 占位。\n"
             "- 所有结论必须引用给定统计值，不允许重新虚构样本。\n\n"
             "最终输出必须是严格的JSON格式："
         ),
@@ -349,6 +351,11 @@ def build_pricing_crew(
             '"usedCompetitorCount": 纳入分析的有效竞品数(整数), '
             '"riskNotes": "风险提示(中文，可空)", '
             '"evidenceSummary": "证据摘要(中文，可空)", '
+            '"salesWeightedAverage": 销量加权均价(数字, 无数据时填 null), '
+            '"salesWeightedMedian": 销量加权中位价(数字, 无数据时填 null), '
+            '"brandBreakdown": [{"brand": "品牌", "sampleCount": 样本数, "averagePrice": 均价, "medianPrice": 中位价, "minPrice": 最低价, "maxPrice": 最高价}], '
+            '"shopTypeBreakdown": [{"shopType": "店铺类型", "sampleCount": 样本数, "share": 占比, "averagePrice": 均价}], '
+            '"promotionDensity": {"promotionRate": 促销占比, "averageDiscount": 平均折扣率, "promotedSampleCount": 在促样本数}, '
             '"source": "竞品来源", '
             '"sourceStatus": "竞品状态"}'
         ),

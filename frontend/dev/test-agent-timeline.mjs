@@ -31,10 +31,10 @@ const { buildVisibleAgentTimeline, filterLatestAgentRunRound } = await import(`$
 const { shouldKeepRevealEnabledAfterRefresh } = await import(`${pathToFileURL(refreshOutfile).href}?${Date.now()}`)
 
 const agents = [
-  { code: 'DATA_ANALYSIS', name: '数据分析Agent', order: 1 },
-  { code: 'MARKET_INTEL', name: '市场情报Agent', order: 2 },
-  { code: 'RISK_CONTROL', name: '风险控制Agent', order: 3 },
-  { code: 'MANAGER_COORDINATOR', name: '经理协调Agent', order: 4 }
+  { code: 'DATA_ANALYSIS', name: '数据分析智能体', order: 1 },
+  { code: 'MARKET_INTEL', name: '市场情报智能体', order: 2 },
+  { code: 'RISK_CONTROL', name: '风险控制智能体', order: 3 },
+  { code: 'MANAGER_COORDINATOR', name: '经理协调智能体', order: 4 }
 ]
 
 assert.deepEqual(

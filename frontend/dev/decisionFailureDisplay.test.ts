@@ -28,3 +28,11 @@ test('getFailureSummary hides prompt-like raw task text from historical failed c
 
   assert.equal(summary, '任务执行失败')
 })
+
+test('getFailureSummary hides generic english failure text from historical failed cards', () => {
+  const summary = getFailureSummary({
+    thinking: 'Agent execution failed'
+  })
+
+  assert.equal(summary, '任务执行失败')
+})

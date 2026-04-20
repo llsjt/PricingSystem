@@ -96,8 +96,8 @@
       <div class="section-head decision-chat-head">
         <div class="decision-chat-title">
           <span class="decision-chat-kicker">AI 决策流</span>
-          <h2>多 Agent 决策</h2>
-          <p>各 Agent 会按执行顺序生成分析消息。</p>
+          <h2>多智能体决策</h2>
+          <p>各智能体会按执行顺序生成分析消息。</p>
         </div>
         <div class="toolbar decision-toolbar">
           <el-button v-if="canCancelTask" @click="cancelTask">取消任务</el-button>
@@ -110,7 +110,7 @@
       <div v-if="visibleAgents.length === 0" class="agent-stream-empty">
         <div class="agent-stream-pulse"><span></span><span></span><span></span></div>
         <h3>智能定价任务已启动</h3>
-        <p>正在准备商品上下文，首个 Agent 开始分析后会生成决策消息。</p>
+        <p>正在准备商品上下文，首个智能体开始分析后会生成决策消息。</p>
       </div>
       <div v-else class="agent-list">
         <article v-for="agent in visibleAgents" :key="agent.code" class="agent-box" :class="{ 'is-streaming': isCardRunning(agent.code) || shouldAnimate(agent.code) }">
@@ -160,7 +160,7 @@
             <p class="failed-card-message">{{ getAgentFailureSummary(agent.code) }}</p>
           </section>
           <div v-else-if="isCardRunning(agent.code)" class="waiting running-pulse"><span class="pulse-dot"></span> 正在分析中...</div>
-          <div v-else class="waiting">正在同步 Agent 输出...</div>
+          <div v-else class="waiting">正在同步智能体输出...</div>
           </div>
         </article>
       </div>
@@ -175,7 +175,7 @@
       </div>
       <section class="panel-card report-panel">
         <div class="section-head report-head">
-          <div class="report-copy"><h2>结果报告</h2><p>{{ reportSummary || '最终建议由 4 个 Agent 的分析结果综合得出。' }}</p></div>
+          <div class="report-copy"><h2>结果报告</h2><p>{{ reportSummary || '最终建议由 4 个智能体的分析结果综合得出。' }}</p></div>
           <div class="toolbar report-toolbar"><el-button @click="activeStep = 1">查看智能决策过程</el-button><el-button type="primary" @click="resetTask">重新配置任务</el-button></div>
         </div>
         <el-table :data="comparisonData" border stripe class="report-table">
@@ -230,7 +230,7 @@ type InternalAgentCardContent = AgentCardContent & { __stage?: AgentStage }
 interface PendingRevealCard { card: AgentCardContent | null; stage: AgentStage }
 interface SnapshotLoadOptions { applyLogs?: boolean }
 
-const agents = [{ code: 'DATA_ANALYSIS', name: '数据分析Agent', order: 1 }, { code: 'MARKET_INTEL', name: '市场情报Agent', order: 2 }, { code: 'RISK_CONTROL', name: '风险控制Agent', order: 3 }, { code: 'MANAGER_COORDINATOR', name: '经理协调Agent', order: 4 }] as const
+const agents = [{ code: 'DATA_ANALYSIS', name: '数据分析智能体', order: 1 }, { code: 'MARKET_INTEL', name: '市场情报智能体', order: 2 }, { code: 'RISK_CONTROL', name: '风险控制智能体', order: 3 }, { code: 'MANAGER_COORDINATOR', name: '经理协调智能体', order: 4 }] as const
 const agentRevealOrder = agents.map((agent) => agent.code) as PricingAgentCode[]
 const goalOptions = PRICING_GOAL_OPTIONS
 const emptyCards = () => ({ DATA_ANALYSIS: null, MARKET_INTEL: null, RISK_CONTROL: null, MANAGER_COORDINATOR: null }) as Record<PricingAgentCode, InternalAgentCardContent | null>

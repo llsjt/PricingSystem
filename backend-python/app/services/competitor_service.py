@@ -15,6 +15,12 @@ from app.services.competitor_providers import (
 
 logger = logging.getLogger(__name__)
 
+QUALITY_REASON_CN = {
+    "VALID COMPETITORS >= 5": "有效竞品数不少于5个",
+    "VALID COMPETITORS >= 3": "有效竞品数达到3个",
+    "VALID COMPETITORS < 3": "有效竞品数不足3个",
+}
+
 
 class CompetitorService:
     """Market intelligence service backed by the Tmall CSV index."""
@@ -79,16 +85,16 @@ class CompetitorService:
         enriched.setdefault("filteredItemCount", len(competitors))
         enriched.setdefault("validCompetitorCount", valid_count)
 
-        quality_reasons = list(enriched.get("qualityReasons") or [])
+        quality_reasons = [_to_quality_reason_cn(item) for item in (enriched.get("qualityReasons") or [])]
         if valid_count >= 5:
             enriched.setdefault("dataQuality", "HIGH")
-            quality_reasons.append("valid competitors >= 5")
+            quality_reasons.append("有效竞品数不少于5个")
         elif valid_count >= 3:
             enriched.setdefault("dataQuality", "MEDIUM")
-            quality_reasons.append("valid competitors >= 3")
+            quality_reasons.append("有效竞品数达到3个")
         else:
             enriched.setdefault("dataQuality", "LOW")
-            quality_reasons.append("valid competitors < 3")
+            quality_reasons.append("有效竞品数不足3个")
         enriched.setdefault("qualityReasons", _unique(quality_reasons))
         return enriched
 
@@ -169,3 +175,10 @@ def _unique(values: list[str]) -> list[str]:
         seen.add(normalized)
         result.append(normalized)
     return result
+
+
+def _to_quality_reason_cn(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    return QUALITY_REASON_CN.get(normalized.upper(), normalized)

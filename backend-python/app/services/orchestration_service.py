@@ -52,6 +52,23 @@ def _safe_int(val: Any, default: int = 0) -> int:
         return default
 
 
+def _safe_positive_float(val: Any) -> float | None:
+    try:
+        parsed = float(val)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _normalize_optional_text(val: Any) -> str | None:
+    text = str(val or "").strip()
+    if not text:
+        return None
+    if text in {"-", "--", "—", "暂无", "暂无数据", "无", "N/A", "n/a", "null", "None"}:
+        return None
+    return text
+
+
 # ── Agent 元数据（名称和展示顺序） ──────────────────────────
 _AGENT_META = [
     {"code": "DATA_ANALYSIS", "name": "数据分析Agent", "order": 1},
@@ -194,10 +211,10 @@ class OrchestrationService:
         source_status = str(parsed.get("sourceStatus", "UNKNOWN"))
         data_quality = str(parsed.get("dataQuality", "LOW"))
         quality_reasons = parsed.get("qualityReasons")
-        pricing_position = str(parsed.get("pricingPosition", "")).strip()
-        evidence_summary = str(parsed.get("evidenceSummary", "")).strip()
+        pricing_position = _normalize_optional_text(parsed.get("pricingPosition")) or ""
+        evidence_summary = _normalize_optional_text(parsed.get("evidenceSummary")) or ""
 
-        risk_notes = parsed.get("riskNotes")
+        risk_notes = _normalize_optional_text(parsed.get("riskNotes"))
         degraded = source_status.upper() != "OK" or data_quality.upper() == "LOW" or valid_count < 3
         if not risk_notes and degraded:
             risk_notes = "本次竞品数据不足，仅供参考"
@@ -221,8 +238,8 @@ class OrchestrationService:
             ]
         )
 
-        sales_weighted_avg = _safe_float(parsed.get("salesWeightedAverage"))
-        sales_weighted_median = _safe_float(parsed.get("salesWeightedMedian"))
+        sales_weighted_avg = _safe_positive_float(parsed.get("salesWeightedAverage"))
+        sales_weighted_median = _safe_positive_float(parsed.get("salesWeightedMedian"))
         if sales_weighted_avg is not None:
             evidence.append({"label": "销量加权均价", "value": sales_weighted_avg})
         if sales_weighted_median is not None:

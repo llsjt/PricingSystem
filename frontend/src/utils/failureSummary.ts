@@ -6,6 +6,20 @@ export interface FailureSummarySource {
 }
 
 const normalizeText = (value: unknown) => String(value ?? '').trim()
+const containsChinese = (value: string) => /[\u3400-\u9fff]/u.test(value)
+
+const GENERIC_ENGLISH_FAILURE_PATTERNS = [
+  /\bagent execution failed\b/i,
+  /\btask failed\b/i,
+  /\brequest failed\b/i,
+  /\binternal server error\b/i,
+  /\bbad request\b/i,
+  /\bunauthorized\b/i,
+  /\bforbidden\b/i,
+  /\bnot found\b/i,
+  /\bprovider returned invalid competitor result\b/i,
+  /\bcrewai\b.*\bfailed\b/i
+] as const
 
 const detectFailureSummary = (text: string) => {
   const normalized = text.toLowerCase()
@@ -46,7 +60,14 @@ export const getFailureSummary = (
   const suggestion = source?.suggestion
   if (suggestion && typeof suggestion === 'object') {
     const message = normalizeText((suggestion as Record<string, unknown>).message)
-    if (message) return detectFailureSummary(message)
+    if (message) {
+      const detected = detectFailureSummary(message)
+      if (detected !== message) return detected
+      if (!containsChinese(message) && GENERIC_ENGLISH_FAILURE_PATTERNS.some((pattern) => pattern.test(message))) {
+        return fallback
+      }
+      return message
+    }
   }
 
   const rawText = normalizeText(source?.thinking)
@@ -55,5 +76,10 @@ export const getFailureSummary = (
 
   if (!rawText) return fallback
   if (looksLikePromptLeak(rawText)) return fallback
-  return detectFailureSummary(rawText)
+  const detected = detectFailureSummary(rawText)
+  if (detected !== rawText) return detected
+  if (!containsChinese(rawText) && GENERIC_ENGLISH_FAILURE_PATTERNS.some((pattern) => pattern.test(rawText))) {
+    return fallback
+  }
+  return rawText
 }

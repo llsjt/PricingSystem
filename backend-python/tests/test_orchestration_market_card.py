@@ -27,7 +27,7 @@ def test_build_market_card_uses_competitor_samples():
         "sourceStatus": "OK",
         "validCompetitorCount": 7,
         "dataQuality": "HIGH",
-        "qualityReasons": ["valid competitors >= 5"],
+        "qualityReasons": ["有效竞品数不少于5个"],
         "pricingPosition": "接近市场主流带",
         "competitorSamples": 7,
         "marketFloor": 19.9,
@@ -44,6 +44,32 @@ def test_build_market_card_uses_competitor_samples():
     assert suggestion["recommendedPrice"] == 29.9
     assert suggestion["dataQuality"] == "HIGH"
     assert suggestion["pricingPosition"] == "接近市场主流带"
+
+
+def test_build_market_card_does_not_fake_missing_sales_weighted_fields_as_zero():
+    parsed = {
+        "thinking": "market-thinking",
+        "source": "TMALL_CSV",
+        "sourceStatus": "OK",
+        "validCompetitorCount": 8,
+        "dataQuality": "HIGH",
+        "qualityReasons": ["有效竞品数不少于5个"],
+        "competitorSamples": 8,
+        "marketFloor": 19.9,
+        "marketMedian": 29.9,
+        "marketCeiling": 39.9,
+        "marketAverage": 28.8,
+        "suggestedPrice": 29.9,
+        "confidence": 0.86,
+        "summary": "market-summary",
+    }
+
+    _, evidence, suggestion = OrchestrationService._build_market_card(parsed)
+
+    labels = [item["label"] for item in evidence]
+    assert "销量加权均价" not in labels
+    assert "销量加权中位价" not in labels
+    assert suggestion["salesWeightedAverage"] is None
 
 
 def test_precompute_competitor_summary_includes_failure_metadata(monkeypatch):
@@ -69,11 +95,10 @@ def test_precompute_competitor_summary_includes_failure_metadata(monkeypatch):
     assert "状态说明: token expired" in summary
     assert "原始样本数: 0" in summary
     assert "竞品样本数: 0" in summary
-    assert "competitorSamples=0" in summary
-    assert "marketFloor=0" in summary
-    assert "marketCeiling=0" in summary
-    assert "confidence <= 0.3" in summary
-    assert "suggestedPrice=0" in summary
+    assert "competitorSamples 输出 0" in summary
+    assert "marketFloor 与 marketCeiling 输出 0" in summary
+    assert "confidence 必须 <= 0.3" in summary
+    assert "suggestedPrice 输出 0" in summary
 
 
 def test_precompute_competitor_summary_includes_unconfigured_metadata(monkeypatch):
@@ -99,11 +124,10 @@ def test_precompute_competitor_summary_includes_unconfigured_metadata(monkeypatc
     assert "状态说明: missing cookie" in summary
     assert "原始样本数: 0" in summary
     assert "竞品样本数: 0" in summary
-    assert "competitorSamples=0" in summary
-    assert "marketFloor=0" in summary
-    assert "marketCeiling=0" in summary
-    assert "confidence <= 0.3" in summary
-    assert "suggestedPrice=0" in summary
+    assert "competitorSamples 输出 0" in summary
+    assert "marketFloor 与 marketCeiling 输出 0" in summary
+    assert "confidence 必须 <= 0.3" in summary
+    assert "suggestedPrice 输出 0" in summary
 
 
 def test_precompute_competitor_summary_adds_no_data_guardrail_when_status_ok_but_empty(monkeypatch):
@@ -127,11 +151,10 @@ def test_precompute_competitor_summary_adds_no_data_guardrail_when_status_ok_but
     assert "竞品状态: OK" in summary
     assert "状态说明: empty result" in summary
     assert "竞品样本数: 0" in summary
-    assert "competitorSamples=0" in summary
-    assert "marketFloor=0" in summary
-    assert "marketCeiling=0" in summary
-    assert "confidence <= 0.3" in summary
-    assert "suggestedPrice=0" in summary
+    assert "competitorSamples 输出 0" in summary
+    assert "marketFloor 与 marketCeiling 输出 0" in summary
+    assert "confidence 必须 <= 0.3" in summary
+    assert "suggestedPrice 输出 0" in summary
 
 
 def test_build_pricing_crew_threads_no_data_suggested_price_guardrail_into_market_task_description(monkeypatch):
@@ -195,9 +218,9 @@ def test_build_pricing_crew_threads_no_data_suggested_price_guardrail_into_marke
     market_task = next(task for task in _FakeTask.instances if task.kwargs["agent"] == "market-agent")
     market_description = market_task.kwargs["description"]
 
-    assert "sourceStatus != OK or competitorSamples == 0" in summary
-    assert "suggestedPrice=0" in summary
-    assert "suggestedPrice=0" in market_description
+    assert "sourceStatus != OK 或 competitorSamples == 0" in summary
+    assert "suggestedPrice 输出 0" in summary
+    assert "suggestedPrice 输出 0" in market_description
 
 
 def test_precompute_competitor_summary_includes_ok_metadata_and_details(monkeypatch):
@@ -218,7 +241,7 @@ def test_precompute_competitor_summary_includes_ok_metadata_and_details(monkeypa
                 "marketCeiling": 31.8,
                 "marketAverage": 29.15,
                 "dataQuality": "LOW",
-                "qualityReasons": ["valid competitors < 3"],
+                "qualityReasons": ["有效竞品数不足3个"],
                 "competitors": [
                     {
                         "competitorName": "A",
@@ -264,7 +287,7 @@ def test_precompute_competitor_summary_adds_low_quality_guardrail(monkeypatch):
                 "marketCeiling": 219.0,
                 "marketAverage": 209.0,
                 "dataQuality": "LOW",
-                "qualityReasons": ["valid competitors < 3"],
+                "qualityReasons": ["有效竞品数不足3个"],
                 "competitors": [
                     {"competitorName": "A", "price": 199.0, "sourcePlatform": "taobao"},
                     {"competitorName": "B", "price": 219.0, "sourcePlatform": "tmall"},
@@ -277,7 +300,79 @@ def test_precompute_competitor_summary_adds_low_quality_guardrail(monkeypatch):
 
     assert "数据质量: LOW" in summary
     assert "validCompetitorCount < 3" in summary
-    assert "do not output an aggressive market conclusion" in summary
+    assert "不得输出激进的市场结论" in summary
+
+
+def test_build_pricing_crew_market_task_requires_sales_weighted_fields(monkeypatch):
+    payload = SimpleNamespace(
+        product=SimpleNamespace(
+            product_id=1001,
+            product_name="coffee",
+            category_name="beverage",
+            current_price=Decimal("29.90"),
+            cost_price=Decimal("16.80"),
+        ),
+        strategy_goal="profit",
+        baseline_sales=120,
+        baseline_profit=Decimal("1200.00"),
+        constraints={},
+        metrics=[],
+        traffic=[],
+    )
+
+    class _FakeService:
+        def get_competitor_result(self, **kwargs):  # noqa: ANN003
+            return {
+                "sourceStatus": "OK",
+                "source": "TMALL_CSV",
+                "message": "ok",
+                "rawItemCount": 1,
+                "filteredItemCount": 1,
+                "validCompetitorCount": 1,
+                "marketFloor": 29.9,
+                "marketMedian": 29.9,
+                "marketCeiling": 29.9,
+                "marketAverage": 29.9,
+                "salesWeightedAverage": 29.9,
+                "salesWeightedMedian": 29.9,
+                "competitors": [{"competitorName": "A", "price": 29.9, "sourcePlatform": "tmall"}],
+            }
+
+    class _FakeTask:
+        instances = []
+
+        def __init__(self, **kwargs):  # noqa: ANN003
+            self.kwargs = kwargs
+            _FakeTask.instances.append(self)
+
+    class _FakeCrew:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(crew_factory, "CompetitorService", _FakeService)
+    monkeypatch.setattr(crew_factory, "_precompute_data_summary", lambda _payload: "data-summary")
+    monkeypatch.setattr(crew_factory, "_build_metrics_summary", lambda _payload: "metrics-summary")
+    monkeypatch.setattr(crew_factory, "_build_constraints_text", lambda _constraints: "constraints-summary")
+    monkeypatch.setattr(
+        crew_factory,
+        "build_crewai_agents",
+        lambda **kwargs: {
+            "DATA_ANALYSIS": "data-agent",
+            "MARKET_INTEL": "market-agent",
+            "RISK_CONTROL": "risk-agent",
+            "MANAGER_COORDINATOR": "manager-agent",
+        },
+    )
+    monkeypatch.setattr(crew_factory, "Task", _FakeTask)
+    monkeypatch.setattr(crew_factory, "Crew", _FakeCrew)
+
+    crew_factory.build_pricing_crew(payload, analysis_llm=object(), manager_llm=object())
+
+    market_task = next(task for task in _FakeTask.instances if task.kwargs["agent"] == "market-agent")
+    assert '"salesWeightedAverage"' in market_task.kwargs["expected_output"]
+    assert '"salesWeightedMedian"' in market_task.kwargs["expected_output"]
+    assert "没有数据时填 null，不要写 0 占位" in market_task.kwargs["description"]
+
 
 
 def test_market_agent_output_accepts_competitor_samples_alias():

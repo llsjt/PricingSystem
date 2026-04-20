@@ -81,7 +81,7 @@ def test_competitor_query_result_supports_new_breakdown_fields():
             "marketCeiling": Decimal("19.80"),
             "marketAverage": Decimal("19.80"),
             "dataQuality": "LOW",
-            "qualityReasons": ["valid competitors < 3"],
+            "qualityReasons": ["有效竞品数不足3个"],
             "competitors": [item.model_dump(by_alias=True)],
             "brandBreakdown": [
                 {
@@ -241,3 +241,4 @@ def test_competitor_service_passes_through_breakdown_fields():
     assert result["brandBreakdown"][0]["brand"] == "A"
     assert result["salesWeightedAverage"] == 19.9
     assert result["promotionDensity"]["promotedSampleCount"] == 1
+    assert result["qualityReasons"] == ["有效竞品数不足3个"]
