@@ -326,6 +326,13 @@
                 </section>
                 <section class="log-section">
                   <h4>建议</h4>
+                  <div v-if="getLogSuggestionHighlightPrice(log) != null" class="result-strip">
+                    <span class="price-label">{{ getLogSuggestionHighlightLabel(log) }}</span>
+                    <span class="price-value">
+                      <span class="price-unit">¥</span>
+                      <CountUp :value="getLogSuggestionHighlightPrice(log)" :duration="700" />
+                    </span>
+                  </div>
                   <ul class="info-list">
                     <li v-for="(line, idx) in getLogSuggestionLines(log)" :key="`s-${log.id}-${idx}`">{{ line }}</li>
                   </ul>
@@ -345,6 +352,7 @@
 </template>
 
 <script setup lang="ts">
+import CountUp from '../components/CountUp.vue'
 import { useArchivePage } from '../composables/useArchivePage'
 
 const {
@@ -376,6 +384,8 @@ const {
   getLogAgentName,
   getLogEvidenceLines,
   getLogReason,
+  getLogSuggestionHighlightLabel,
+  getLogSuggestionHighlightPrice,
   getLogSuggestionLines,
   getLogThinking,
   getRunStatusType,
@@ -635,6 +645,40 @@ const {
   line-height: 1.7;
 }
 
+.result-strip {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #dbeafe;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.price-label {
+  font-size: 14px;
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.price-value {
+  font-size: 26px;
+  font-weight: 800;
+  color: #1f6feb;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.price-unit {
+  font-size: 17px;
+  font-weight: 600;
+  opacity: 0.7;
+  margin-right: 3px;
+}
+
 .price-text {
   font-weight: 700;
   color: var(--accent);
@@ -681,6 +725,12 @@ const {
 
   .log-head {
     flex-direction: column;
+  }
+
+  .result-strip {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
   }
 }
 </style>

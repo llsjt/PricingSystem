@@ -300,6 +300,27 @@ export const getSuggestionLines = (
     .map(([key, value]) => `${keyMap[key] || key}：${formatPrimitive(key, value)}`)
 }
 
+export const getSuggestionHighlightPrice = (
+  code: PricingAgentCode | null,
+  suggestion?: Record<string, unknown>
+) => {
+  if (!suggestion || Object.keys(suggestion).length === 0) {
+    return null
+  }
+
+  const raw = code === 'MANAGER_COORDINATOR'
+    ? suggestion.finalPrice
+    : suggestion.recommendedPrice
+  const numeric = toNumber(raw)
+  return numeric != null && numeric > 0 ? numeric : null
+}
+
+export const getSuggestionHighlightLabel = (code: PricingAgentCode | null) => {
+  if (code === 'MANAGER_COORDINATOR') return '最终建议价'
+  if (code === 'RISK_CONTROL') return '风控建议价'
+  return '建议定价'
+}
+
 export const getLogAgentName = (log: Pick<DecisionLogItem, 'agentName' | 'agentCode' | 'roleName'>) => {
   if (log.agentName) return log.agentName
   const code = normalizeAgentCode(log.agentCode)
@@ -322,6 +343,14 @@ export const getLogSuggestionLines = (log: DecisionLogItem): DecisionDisplayLine
   const suggestion = log.suggestion && typeof log.suggestion === 'object' ? log.suggestion : {}
   return getSuggestionLines(normalizeAgentCode(log.agentCode), suggestion)
 }
+
+export const getLogSuggestionHighlightPrice = (log: DecisionLogItem) => {
+  const suggestion = log.suggestion && typeof log.suggestion === 'object' ? log.suggestion : {}
+  return getSuggestionHighlightPrice(normalizeAgentCode(log.agentCode), suggestion)
+}
+
+export const getLogSuggestionHighlightLabel = (log: DecisionLogItem) =>
+  getSuggestionHighlightLabel(normalizeAgentCode(log.agentCode))
 
 export const getLogReason = (log: DecisionLogItem) => String(log.reasonWhy || '').trim()
 
