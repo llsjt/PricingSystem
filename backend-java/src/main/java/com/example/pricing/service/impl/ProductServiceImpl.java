@@ -270,7 +270,8 @@ public class ProductServiceImpl implements ProductService {
         }
         verifyProductOwnership(product, userId);
 
-        LocalDate endDate = LocalDate.now();
+        LocalDate latestMetricDate = findLatestMetricDate(id);
+        LocalDate endDate = latestMetricDate == null ? LocalDate.now() : latestMetricDate;
         LocalDate startDate = endDate.minusDays(Math.max(days, 1) - 1L);
         List<ProductDailyMetric> stats = listMetrics(id, startDate, endDate);
 
@@ -457,23 +458,22 @@ public class ProductServiceImpl implements ProductService {
     }
 
     private ProductMetricSummary loadMetricSummary(Long productId) {
-        List<ProductDailyMetric> stats = listMetrics(productId, LocalDate.now().minusDays(29), LocalDate.now());
+        LocalDate latestMetricDate = findLatestMetricDate(productId);
+        if (latestMetricDate == null) {
+            return new ProductMetricSummary(0, BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP));
+        }
+        List<ProductDailyMetric> stats = listMetrics(productId, latestMetricDate.minusDays(29), latestMetricDate);
         int monthlySales = sumSales(stats);
-        BigDecimal conversionRate = BigDecimal.ZERO;
-        int count = 0;
-        for (ProductDailyMetric stat : stats) {
-            BigDecimal value = stat.getConversionRate() == null
-                    ? calculateConversionRate(defaultInteger(stat.getSalesCount()), defaultInteger(stat.getVisitorCount()))
-                    : stat.getConversionRate();
-            if (value.compareTo(BigDecimal.ZERO) > 0) {
-                conversionRate = conversionRate.add(value);
-                count++;
-            }
-        }
-        if (count > 0) {
-            conversionRate = conversionRate.divide(BigDecimal.valueOf(count), 4, RoundingMode.HALF_UP);
-        }
-        return new ProductMetricSummary(monthlySales, conversionRate);
+        return new ProductMetricSummary(monthlySales, calculateWeightedConversionRate(stats));
+    }
+
+    private LocalDate findLatestMetricDate(Long productId) {
+        LambdaQueryWrapper<ProductDailyMetric> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(ProductDailyMetric::getProductId, productId)
+                .orderByDesc(ProductDailyMetric::getStatDate, ProductDailyMetric::getId)
+                .last("LIMIT 1");
+        ProductDailyMetric latest = statMapper.selectOne(wrapper);
+        return latest == null ? null : latest.getStatDate();
     }
 
     private List<ProductDailyMetric> listMetrics(Long productId, LocalDate startDate, LocalDate endDate) {
@@ -499,6 +499,33 @@ public class ProductServiceImpl implements ProductService {
             total += defaultInteger(stat.getSalesCount());
         }
         return total;
+    }
+
+    private BigDecimal calculateWeightedConversionRate(List<ProductDailyMetric> stats) {
+        long totalVisitors = 0;
+        long totalSales = 0;
+        for (ProductDailyMetric stat : stats) {
+            totalVisitors += defaultInteger(stat.getVisitorCount());
+            totalSales += defaultInteger(stat.getSalesCount());
+        }
+        if (totalVisitors > 0 && totalSales > 0) {
+            return BigDecimal.valueOf(totalSales)
+                    .divide(BigDecimal.valueOf(totalVisitors), 4, RoundingMode.HALF_UP);
+        }
+
+        BigDecimal conversionRate = BigDecimal.ZERO;
+        int count = 0;
+        for (ProductDailyMetric stat : stats) {
+            BigDecimal value = stat.getConversionRate();
+            if (value != null && value.compareTo(BigDecimal.ZERO) > 0) {
+                conversionRate = conversionRate.add(value);
+                count++;
+            }
+        }
+        if (count == 0) {
+            return BigDecimal.ZERO.setScale(4, RoundingMode.HALF_UP);
+        }
+        return conversionRate.divide(BigDecimal.valueOf(count), 4, RoundingMode.HALF_UP);
     }
 
     private BigDecimal sumProfit(List<ProductDailyMetric> stats, BigDecimal costPrice) {
