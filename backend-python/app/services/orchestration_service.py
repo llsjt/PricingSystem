@@ -28,6 +28,7 @@ from app.crew.protocols import CrewRunPayload
 from app.schemas.agent import DataAgentOutput, ManagerAgentOutput, MarketAgentOutput, RiskAgentOutput
 from app.schemas.result import TaskFinalResult
 from app.services.resume_service import ResumeService
+from app.services.progress_event_service import get_progress_event_service
 from app.tools.log_writer_tool import LogWriterTool
 from app.tools.result_writer_tool import ResultWriterTool
 from app.utils.math_utils import money
@@ -98,10 +99,12 @@ class AgentOutputValidationError(RuntimeError):
 class OrchestrationService:
     """4-Agent CrewAI 编排服务：通过 LLM 驱动的多Agent协作完成定价决策。"""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, execution_id: str | None = None, progress_service=None):
         self.db = db
-        self.log_tool = LogWriterTool(db)
-        self.result_tool = ResultWriterTool(db)
+        self.execution_id = execution_id
+        self.progress_service = progress_service or get_progress_event_service()
+        self.log_tool = LogWriterTool(db, execution_id=execution_id)
+        self.result_tool = ResultWriterTool(db, execution_id=execution_id)
 
     @staticmethod
     def _summarize_failure_message(error: Any) -> str:
@@ -430,6 +433,12 @@ class OrchestrationService:
             suggestion=suggestion,
             stage="failed",
         )
+        self.progress_service.publish_sync(
+            "AGENT_CARD_COMPLETED",
+            payload.task_id,
+            self.execution_id,
+            {"agentName": meta["name"], "runStatus": "failed"},
+        )
 
     # ── 主执行方法 ────────────────────────────────────────────
     def run(self, payload: CrewRunPayload) -> TaskFinalResult:
@@ -508,6 +517,12 @@ class OrchestrationService:
             agent_name=first_meta["name"],
             display_order=first_meta["order"],
         )
+        self.progress_service.publish_sync(
+            "AGENT_CARD_RUNNING",
+            payload.task_id,
+            self.execution_id,
+            {"agentName": first_meta["name"]},
+        )
 
         # ── 串行执行剩余 Task ─────────────────────────────────
         for order in range(start_from, len(_AGENT_META) + 1):
@@ -568,6 +583,12 @@ class OrchestrationService:
                 parsed=parsed,
                 prior_outputs=prior_outputs,
             )
+            self.progress_service.publish_sync(
+                "AGENT_CARD_COMPLETED",
+                payload.task_id,
+                self.execution_id,
+                {"agentName": meta["name"], "runStatus": "success"},
+            )
             logger.info("Agent [%s] 卡片已写入数据库", meta["name"])
 
             # 为下一个 Agent 提前写 running 占位
@@ -577,6 +598,12 @@ class OrchestrationService:
                     task_id=payload.task_id,
                     agent_name=next_meta["name"],
                     display_order=next_meta["order"],
+                )
+                self.progress_service.publish_sync(
+                    "AGENT_CARD_RUNNING",
+                    payload.task_id,
+                    self.execution_id,
+                    {"agentName": next_meta["name"]},
                 )
 
         logger.info("Crew 执行完成 (task_id=%d)", payload.task_id)
@@ -638,6 +665,16 @@ class OrchestrationService:
             suggestedMaxPrice=suggested_max,
         )
         self.result_tool.write_final_result(final_payload)
+        self.progress_service.publish_sync(
+            "TASK_MANUAL_REVIEW" if execute_strategy == MANUAL_REVIEW_STRATEGY else "TASK_COMPLETED",
+            payload.task_id,
+            self.execution_id,
+            {
+                "finalPrice": str(final_price),
+                "expectedSales": expected_sales,
+                "expectedProfit": str(expected_profit),
+            },
+        )
         logger.info(
             "定价结果已写入: task_id=%d, final_price=%s, strategy=%s",
             payload.task_id,

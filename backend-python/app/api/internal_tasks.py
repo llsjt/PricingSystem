@@ -14,29 +14,13 @@ from app.schemas.task import (
     TaskStatusResponse,
 )
 from app.services.dispatch_service import DispatchService
-from app.services.task_queue_service import get_task_queue_service
+from app.services.dispatch_publisher_service import get_dispatch_publisher_service
 
 router = APIRouter(
     prefix="/tasks",
     tags=["internal-tasks"],
     dependencies=[Depends(verify_internal_token)],
 )
-
-
-@router.post("/dispatch", response_model=DispatchTaskResponse)
-async def dispatch_task(
-    request: DispatchTaskRequest,
-    db: Session = Depends(get_db),
-) -> DispatchTaskResponse:
-    """
-    Java 后端调用入口：
-    1. 受理任务
-    2. 后台触发 4-Agent 协作执行
-    """
-    with bind_trace_context(trace_id=request.trace_id or f"task-{request.task_id}", task_id=request.task_id):
-        service = DispatchService(db)
-        return service.dispatch(request, get_task_queue_service())
-
 
 @router.get("/{task_id}/status", response_model=TaskStatusResponse)
 def task_status(task_id: int, db: Session = Depends(get_db)) -> TaskStatusResponse:
@@ -88,4 +72,11 @@ async def retry_task(
     )
     with bind_trace_context(trace_id=req.trace_id or f"task-{task_id}", task_id=task_id):
         service = DispatchService(db)
-        return service.retry(req, get_task_queue_service())
+        updated = task_repo.mark_retrying(task, trace_id=req.trace_id)
+        await get_dispatch_publisher_service().publish_task(updated.id, updated.trace_id)
+        return DispatchTaskResponse(
+            accepted=True,
+            taskId=task_id,
+            status="RETRYING",
+            message="retry accepted",
+        )

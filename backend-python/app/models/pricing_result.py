@@ -13,6 +13,7 @@ class PricingResult(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     task_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    execution_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     final_price: Mapped[Decimal] = mapped_column(DECIMAL(10, 2), nullable=False)
     expected_sales: Mapped[int | None] = mapped_column(Integer, nullable=True)
     expected_profit: Mapped[Decimal] = mapped_column(DECIMAL(12, 2), nullable=False, default=0)

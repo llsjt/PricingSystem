@@ -4,6 +4,7 @@ from sqlalchemy import asc, delete, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.models.agent_run_log import AgentRunLog
+from app.models.pricing_task import PricingTask
 
 
 class LogRepo:
@@ -36,6 +37,7 @@ class LogRepo:
         stage: str = "completed",
         run_attempt: int = 0,
         raw_output: dict[str, Any] | None = None,
+        execution_id: str | None = None,
     ) -> AgentRunLog:
         """写入 Agent 卡片日志，兼容旧字段 thought_content/speak_order。
 
@@ -44,8 +46,25 @@ class LogRepo:
         """
         order = int(display_order or self.get_next_display_order(task_id))
         normalized_stage = "failed" if str(stage or "").strip().lower() == "failed" else "completed"
+        if execution_id and not self._can_write(task_id, execution_id):
+            return AgentRunLog(
+                task_id=task_id,
+                execution_id=execution_id,
+                role_name=(agent_name or "Agent").strip() or "Agent",
+                speak_order=order,
+                thought_content=thinking_summary,
+                thinking_summary=thinking_summary,
+                evidence_json=evidence or [],
+                suggestion_json=suggestion or {},
+                raw_output_json=raw_output if isinstance(raw_output, dict) and raw_output else None,
+                final_reason=reason_why,
+                display_order=order,
+                stage=normalized_stage,
+                run_attempt=max(int(run_attempt or 0), 0),
+            )
         log = AgentRunLog(
             task_id=task_id,
+            execution_id=execution_id,
             role_name=(agent_name or "Agent").strip() or "Agent",
             speak_order=order,
             thought_content=thinking_summary,
@@ -69,11 +88,28 @@ class LogRepo:
         agent_name: str,
         display_order: int,
         run_attempt: int = 0,
+        execution_id: str | None = None,
     ) -> AgentRunLog:
         """写入 running 占位卡片，表示 Agent 正在工作。"""
         order = int(display_order or self.get_next_display_order(task_id))
+        if execution_id and not self._can_write(task_id, execution_id):
+            return AgentRunLog(
+                task_id=task_id,
+                execution_id=execution_id,
+                role_name=(agent_name or "Agent").strip() or "Agent",
+                speak_order=order,
+                thought_content=None,
+                thinking_summary=None,
+                evidence_json=[],
+                suggestion_json={},
+                final_reason=None,
+                display_order=order,
+                stage="running",
+                run_attempt=max(int(run_attempt or 0), 0),
+            )
         log = AgentRunLog(
             task_id=task_id,
+            execution_id=execution_id,
             role_name=(agent_name or "Agent").strip() or "Agent",
             speak_order=order,
             thought_content=None,
@@ -89,6 +125,15 @@ class LogRepo:
         self.db.commit()
         self.db.refresh(log)
         return log
+
+    def _can_write(self, task_id: int, execution_id: str) -> bool:
+        task = self.db.get(PricingTask, task_id)
+        if task is None:
+            return False
+        status = str(task.task_status or "").upper()
+        if status in {"COMPLETED", "FAILED", "CANCELLED", "MANUAL_REVIEW"}:
+            return False
+        return str(task.current_execution_id or "") == execution_id
 
     def list_by_task_id(self, task_id: int, limit: int = 200) -> list[AgentRunLog]:
         stmt = (

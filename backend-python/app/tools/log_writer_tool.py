@@ -9,9 +9,10 @@ from app.repos.task_repo import TaskRepo
 class LogWriterTool:
     """统一日志写入工具：写入 Agent 进度占位和完整卡片。"""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, execution_id: str | None = None):
         self.log_repo = LogRepo(db)
         self.task_repo = TaskRepo(db)
+        self.execution_id = execution_id
 
     def write_agent_card(
         self,
@@ -41,6 +42,7 @@ class LogWriterTool:
             stage=stage,
             run_attempt=run_attempt,
             raw_output=raw_output,
+            execution_id=self.execution_id,
         )
 
     def write_running_card(
@@ -59,4 +61,5 @@ class LogWriterTool:
             agent_name=agent_name,
             display_order=display_order,
             run_attempt=run_attempt,
+            execution_id=self.execution_id,
         )

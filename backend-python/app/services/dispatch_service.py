@@ -18,7 +18,7 @@ from app.schemas.task import (
 )
 from app.services.context_service import ContextService
 from app.services.orchestration_service import OrchestrationService
-from app.utils.crypto_utils import encrypt_api_key, decrypt_api_key
+from app.utils.crypto_utils import decrypt_task_api_key, encrypt_api_key
 from app.utils.text_utils import MANUAL_REVIEW_STRATEGY, is_manual_review_action, parse_constraints
 
 logger = logging.getLogger(__name__)
@@ -231,7 +231,7 @@ class DispatchService:
         llm_api_key = None
         if task.llm_api_key_enc:
             try:
-                llm_api_key = decrypt_api_key(task.llm_api_key_enc)
+                llm_api_key = decrypt_task_api_key(task.llm_api_key_enc)
             except Exception:
                 logger.warning("Failed to decrypt LLM API key for task %s", task.id)
 
@@ -247,7 +247,19 @@ class DispatchService:
             llmModel=task.llm_model,
         )
 
-    def execute_queued(self, req: DispatchTaskRequest, worker_id: int | None = None) -> None:
+    def execute_queued_by_task_id(self, task_id: int, execution_id: str) -> None:
+        task = self.task_repo.get_by_id(task_id)
+        if task is None:
+            raise ValueError(f"task not found: {task_id}")
+        request = self.build_dispatch_request(task)
+        self.execute_queued(request, execution_id=execution_id)
+
+    def execute_queued(
+        self,
+        req: DispatchTaskRequest,
+        worker_id: int | None = None,
+        execution_id: str | None = None,
+    ) -> None:
         task = self.task_repo.get_by_id(req.task_id)
         if task is None:
             raise ValueError(f"task not found: {req.task_id}")
@@ -293,7 +305,7 @@ class DispatchService:
                 if str(self.task_repo.get_by_id(req.task_id).task_status or "").upper() == "CANCELLED":
                     logger.info("Worker %s aborted cancelled task %s before orchestration", worker_id, req.task_id)
                     return
-                orchestration_service = OrchestrationService(self.db)
+                orchestration_service = OrchestrationService(self.db, execution_id=execution_id)
                 orchestration_service.run(payload)
 
                 # 任务完成后清空加密的 API Key

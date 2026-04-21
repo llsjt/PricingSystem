@@ -21,6 +21,9 @@ public class AgentRunLog {
     @TableField("task_id")
     private Long taskId;
 
+    @TableField("execution_id")
+    private String executionId;
+
     @TableField("role_name")
     private String roleName;
 

@@ -3,7 +3,7 @@ package com.example.pricing.service.impl;
 import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.example.pricing.common.AesGcmUtil;
+import com.example.pricing.dto.TaskDispatchEvent;
 import com.example.pricing.entity.AgentRunLog;
 import com.example.pricing.entity.PricingResult;
 import com.example.pricing.entity.PricingTask;
@@ -16,8 +16,8 @@ import com.example.pricing.mapper.ProductMapper;
 import com.example.pricing.mapper.UserLlmConfigMapper;
 import com.example.pricing.service.DecisionTaskService;
 import com.example.pricing.service.PricingTaskReuseSupport;
-import com.example.pricing.service.PythonDispatchClient;
 import com.example.pricing.service.ShopService;
+import com.example.pricing.service.TaskDispatchPublisher;
 import com.example.pricing.vo.DecisionComparisonVO;
 import com.example.pricing.vo.DecisionLogVO;
 import com.example.pricing.vo.DecisionTaskItemVO;
@@ -31,16 +31,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URLEncoder;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,18 +62,16 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     private final AgentRunLogMapper logMapper;
     private final ProductMapper productMapper;
     private final ShopService shopService;
-    private final PythonDispatchClient pythonDispatchClient;
+    private final TaskDispatchPublisher taskDispatchPublisher;
     private final UserLlmConfigMapper userLlmConfigMapper;
     private final PricingTaskReuseSupport pricingTaskReuseSupport;
+    private final TransactionTemplate transactionTemplate;
 
     @Value("${app.pricing.max-adjustment-ratio:0.30}")
     private BigDecimal maxAdjustmentRatio;
 
     @Value("${app.pricing.min-margin-rate:0.05}")
     private BigDecimal minMarginRate;
-
-    @Value("${app.llm-key-encryption-secret:}")
-    private String llmKeyEncryptionSecret;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -115,23 +114,12 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         if (llmConfig == null) {
             throw new IllegalStateException("请先在个人中心配置大模型 API 密钥");
         }
-        String decryptedApiKey = AesGcmUtil.decrypt(llmConfig.getLlmApiKeyEnc(), llmKeyEncryptionSecret);
-
         String normalizedGoal = (strategyGoal == null || strategyGoal.isBlank()) ? "MAX_PROFIT" : strategyGoal.trim();
         String normalizedConstraints = constraints == null ? "" : constraints.trim();
         String idempotencyKey = pricingTaskReuseSupport.buildIdempotencyKey(productIds, normalizedGoal, normalizedConstraints, userId);
 
         PricingTask existingTask = pricingTaskReuseSupport.findReusableTask(idempotencyKey, product.getShopId());
         if (existingTask != null) {
-            refreshReusableTaskLlmConfigIfNeeded(
-                    existingTask,
-                    productId,
-                    productIds,
-                    normalizedGoal,
-                    normalizedConstraints,
-                    decryptedApiKey,
-                    llmConfig
-            );
             return existingTask.getId();
         }
 
@@ -148,21 +136,39 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         task.setTraceId(UUID.randomUUID().toString().replace("-", ""));
         task.setIdempotencyKey(idempotencyKey);
         task.setRetryCount(0);
+        task.setConsumerRetryCount(0);
+        task.setCurrentExecutionId(null);
         task.setFailureReason(null);
-        taskMapper.insert(task);
+        task.setLlmApiKeyEnc(llmConfig.getLlmApiKeyEnc());
+        task.setLlmBaseUrl(llmConfig.getLlmBaseUrl());
+        task.setLlmModel(llmConfig.getLlmModel());
 
-        try {
-            dispatchToPython(task.getId(), productId, productIds, normalizedGoal, normalizedConstraints, task.getTraceId(), decryptedApiKey, llmConfig.getLlmBaseUrl(), llmConfig.getLlmModel());
-        } catch (Exception e) {
-            log.error("Dispatch decision task to python failed, taskId={}", task.getId(), e);
-            task.setTaskStatus("FAILED");
-            task.setFailureReason(truncate(e.getMessage(), 255));
-            task.setCompletedAt(LocalDateTime.now());
-            taskMapper.updateById(task);
-            throw new IllegalStateException("任务派发到 Python 协作后端失败: " + e.getMessage(), e);
+        Long taskId = transactionTemplate.execute(status -> {
+            taskMapper.insert(task);
+            return task.getId();
+        });
+        if (taskId == null) {
+            throw new IllegalStateException("任务创建失败");
         }
 
-        return task.getId();
+        TaskDispatchEvent event = new TaskDispatchEvent(
+                UUID.randomUUID().toString(),
+                taskId,
+                task.getTraceId(),
+                Instant.now()
+        );
+        try {
+            taskDispatchPublisher.publishAndConfirm(event);
+        } catch (RuntimeException e) {
+            log.error("Publish decision task dispatch failed, taskId={}", taskId, e);
+            transactionTemplate.executeWithoutResult(status ->
+                    taskMapper.updateStatusAndReason(taskId, "FAILED", truncate("派发失败: " + e.getMessage(), 255))
+            );
+            throw new IllegalStateException("任务派发失败: " + e.getMessage(), e);
+        }
+
+        transactionTemplate.executeWithoutResult(status -> taskMapper.updateStatusIfPending(taskId, "QUEUED"));
+        return taskId;
     }
 
     /**
@@ -388,10 +394,10 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
             throw new IllegalStateException("当前任务状态不允许取消");
         }
 
-        task.setTaskStatus("CANCELLED");
-        task.setFailureReason("任务已取消");
-        task.setCompletedAt(LocalDateTime.now());
-        taskMapper.updateById(task);
+        int updated = taskMapper.cancelIfRunning(taskId);
+        if (updated == 0) {
+            throw new IllegalStateException("当前任务状态不允许取消");
+        }
     }
 
     /**
@@ -429,23 +435,6 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         if (!shopIds.contains(task.getShopId())) {
             throw new IllegalArgumentException("无权操作此任务");
         }
-    }
-
-    /**
-     * 调用 Python 协作端的内部接口，把任务派发给多智能体工作流。
-     */
-    private void dispatchToPython(Long taskId, Long productId, List<Long> productIds, String strategyGoal, String constraints, String traceId, String llmApiKey, String llmBaseUrl, String llmModel) {
-        Map<String, Object> payload = new HashMap<>();
-        payload.put("taskId", taskId);
-        payload.put("productId", productId);
-        payload.put("productIds", productIds);
-        payload.put("strategyGoal", strategyGoal);
-        payload.put("constraints", constraints);
-        payload.put("traceId", traceId);
-        payload.put("llmApiKey", llmApiKey);
-        payload.put("llmBaseUrl", llmBaseUrl);
-        payload.put("llmModel", llmModel);
-        pythonDispatchClient.dispatchTask(payload, traceId);
     }
 
     /**
@@ -609,43 +598,6 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
             case "failed" -> "failed";
             default -> "success";
         };
-    }
-
-    /**
-     * 复用活跃任务时，补发当前用户 LLM 配置，避免旧任务缺少 worker 侧 Key。
-     */
-    private void refreshReusableTaskLlmConfigIfNeeded(
-            PricingTask existingTask,
-            Long productId,
-            List<Long> productIds,
-            String strategyGoal,
-            String constraints,
-            String decryptedApiKey,
-            UserLlmConfig llmConfig
-    ) {
-        String status = String.valueOf(existingTask.getTaskStatus()).toUpperCase();
-        if (!List.of("QUEUED", "RUNNING", "RETRYING").contains(status)) {
-            return;
-        }
-        if (existingTask.getLlmApiKeyEnc() != null && !existingTask.getLlmApiKeyEnc().isBlank()) {
-            return;
-        }
-        try {
-            dispatchToPython(
-                    existingTask.getId(),
-                    productId,
-                    productIds,
-                    strategyGoal,
-                    constraints,
-                    existingTask.getTraceId(),
-                    decryptedApiKey,
-                    llmConfig.getLlmBaseUrl(),
-                    llmConfig.getLlmModel()
-            );
-        } catch (Exception e) {
-            log.error("Refresh LLM config for reusable task failed, taskId={}", existingTask.getId(), e);
-            throw new IllegalStateException("刷新复用任务的大模型配置失败: " + e.getMessage(), e);
-        }
     }
 
     private void assertPriceWithinGuardrails(Product product, PricingTask task, BigDecimal finalPrice) {

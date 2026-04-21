@@ -1,6 +1,7 @@
 package com.example.pricing.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.example.pricing.dto.TaskProgressEvent;
 import com.example.pricing.entity.AgentRunLog;
 import com.example.pricing.entity.PricingResult;
 import com.example.pricing.entity.PricingTask;
@@ -10,7 +11,6 @@ import com.example.pricing.mapper.PricingTaskMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -18,13 +18,11 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 @Service
 @RequiredArgsConstructor
@@ -35,86 +33,161 @@ public class PricingTaskStreamService {
     private static final String MANUAL_REVIEW_STRATEGY = "人工审核";
     private static final int EXPECTED_AGENT_CARD_COUNT = 4;
     private static final ObjectMapper STAGE_OBJECT_MAPPER = new ObjectMapper();
-    private static final ExecutorService STREAM_EXECUTOR = Executors.newCachedThreadPool(runnable -> {
-        Thread thread = new Thread(runnable, "pricing-task-stream");
-        thread.setDaemon(true);
-        return thread;
-    });
 
     private final PricingTaskMapper taskMapper;
     private final PricingResultMapper resultMapper;
     private final AgentRunLogMapper logMapper;
     private final DecisionTaskService decisionTaskService;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    @Value("${app.pricing.stream-poll-ms:400}")
-    private long streamPollIntervalMs;
+    private final Map<Long, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
 
     public SseEmitter streamTask(Long taskId, Long userId) {
         decisionTaskService.getTaskDetail(taskId, userId);
         SseEmitter emitter = new SseEmitter(0L);
-        emitter.onTimeout(emitter::complete);
-        STREAM_EXECUTOR.execute(() -> streamLoop(taskId, emitter));
+        emitter.onCompletion(() -> unregister(taskId, emitter));
+        emitter.onTimeout(() -> unregister(taskId, emitter));
+        emitSnapshot(taskId, emitter);
+        register(taskId, emitter);
         return emitter;
     }
 
-    private void streamLoop(Long taskId, SseEmitter emitter) {
-        long lastLogId = 0L;
-        boolean started = false;
-        Set<Integer> completedOrders = new HashSet<>();
+    public void handleProgressEvent(TaskProgressEvent event) {
+        if (event == null || event.taskId() == null) {
+            return;
+        }
+        if (!isCurrentExecution(event.taskId(), event.executionId())) {
+            return;
+        }
+        for (Map<String, Object> payload : payloadsForEvent(event)) {
+            for (SseEmitter emitter : emitters.getOrDefault(event.taskId(), new CopyOnWriteArrayList<>())) {
+                try {
+                    send(emitter, payload);
+                } catch (IOException ex) {
+                    unregister(event.taskId(), emitter);
+                }
+            }
+        }
+    }
+
+    void register(Long taskId, SseEmitter emitter) {
+        emitters.computeIfAbsent(taskId, ignored -> new CopyOnWriteArrayList<>()).add(emitter);
+    }
+
+    void unregister(Long taskId, SseEmitter emitter) {
+        CopyOnWriteArrayList<SseEmitter> registered = emitters.get(taskId);
+        if (registered == null) {
+            return;
+        }
+        registered.remove(emitter);
+        if (registered.isEmpty()) {
+            emitters.remove(taskId);
+        }
+    }
+
+    private void emitSnapshot(Long taskId, SseEmitter emitter) {
         try {
-            while (true) {
+            PricingTask task = taskMapper.selectById(taskId);
+            if (task == null) {
+                send(emitter, baseMessage(taskId, "task_failed", Map.of("message", "task not found", "status", "FAILED")));
+                return;
+            }
+
+            send(emitter, baseMessage(taskId, "task_started", Map.of("status", task.getTaskStatus())));
+
+            LambdaQueryWrapper<AgentRunLog> logWrapper = new LambdaQueryWrapper<>();
+            logWrapper.eq(AgentRunLog::getTaskId, taskId).orderByAsc(AgentRunLog::getId);
+            List<AgentRunLog> logs = logMapper.selectList(logWrapper);
+            for (AgentRunLog logItem : logs) {
+                send(emitter, toAgentCard(taskId, logItem));
+            }
+
+            PricingResult result = getResultByTaskId(taskId);
+            int completedCardCount = (int) logs.stream().filter(PricingTaskStreamService::isCompletedAgentCard).count();
+            if (shouldEmitCompletedEvent(task, result, completedCardCount)) {
+                send(emitter, baseMessage(taskId, "task_completed", Map.of(
+                        "status", normalizeStatus(task),
+                        "result", buildResultPayload(result)
+                )));
+                return;
+            }
+
+            if (shouldEmitTerminalFailure(task, result)) {
+                send(emitter, baseMessage(taskId, "task_failed", Map.of(
+                        "message", resolveTerminalMessage(task),
+                        "status", normalizeStatus(task)
+                )));
+            }
+        } catch (Exception ex) {
+            try {
+                send(emitter, baseMessage(taskId, "task_failed", Map.of("message", resolveExceptionMessage(ex), "status", "FAILED")));
+            } catch (IOException ignore) {
+            }
+        }
+    }
+
+    private List<Map<String, Object>> payloadsForEvent(TaskProgressEvent event) {
+        String eventType = String.valueOf(event.eventType()).trim().toUpperCase();
+        Long taskId = event.taskId();
+        return switch (eventType) {
+            case "TASK_STARTED" -> List.of(baseMessage(taskId, "task_started", Map.of("status", resolveTaskStatus(taskId))));
+            case "AGENT_CARD_RUNNING", "AGENT_CARD_COMPLETED" -> {
+                AgentRunLog log = findLatestAgentLog(taskId, agentNameFromPayload(event.payload()));
+                yield log == null ? List.of() : List.of(toAgentCard(taskId, log));
+            }
+            case "TASK_COMPLETED", "TASK_MANUAL_REVIEW" -> {
+                PricingTask task = taskMapper.selectById(taskId);
+                PricingResult result = getResultByTaskId(taskId);
+                if (task == null || result == null) {
+                    yield List.of();
+                }
+                yield List.of(baseMessage(taskId, "task_completed", Map.of(
+                        "status", normalizeStatus(task),
+                        "result", buildResultPayload(result)
+                )));
+            }
+            case "TASK_FAILED" -> {
                 PricingTask task = taskMapper.selectById(taskId);
                 if (task == null) {
-                    send(emitter, baseMessage(taskId, "task_failed", Map.of("message", "task not found", "status", "FAILED")));
-                    break;
+                    yield List.of(baseMessage(taskId, "task_failed", Map.of("message", "task not found", "status", "FAILED")));
                 }
-
-                if (!started) {
-                    send(emitter, baseMessage(taskId, "task_started", Map.of("status", task.getTaskStatus())));
-                    started = true;
-                }
-
-                LambdaQueryWrapper<AgentRunLog> logWrapper = new LambdaQueryWrapper<>();
-                logWrapper.eq(AgentRunLog::getTaskId, taskId)
-                        .gt(AgentRunLog::getId, lastLogId)
-                        .orderByAsc(AgentRunLog::getId);
-                List<AgentRunLog> logs = logMapper.selectList(logWrapper);
-                for (AgentRunLog logItem : logs) {
-                    send(emitter, toAgentCard(taskId, logItem));
-                    int order = resolveDisplayOrder(logItem);
-                    if (order >= 1 && order <= EXPECTED_AGENT_CARD_COUNT && isCompletedAgentCard(logItem)) {
-                        completedOrders.add(order);
-                    }
-                    lastLogId = logItem.getId() == null ? lastLogId : logItem.getId();
-                }
-
-                String status = normalizeStatus(task);
-                int completedCardCount = completedOrders.size();
-                PricingResult result = getResultByTaskId(taskId);
-                if (shouldEmitCompletedEvent(task, result, completedCardCount)) {
-                    send(emitter, baseMessage(taskId, "task_completed", Map.of(
-                            "status", status,
-                            "result", buildResultPayload(result)
-                    )));
-                    break;
-                }
-
-                if (shouldEmitTerminalFailure(task, result)) {
-                    String message = resolveTerminalMessage(task);
-                    send(emitter, baseMessage(taskId, "task_failed", Map.of("message", message, "status", status)));
-                    break;
-                }
-
-                Thread.sleep(resolvePollIntervalMs());
+                yield List.of(baseMessage(taskId, "task_failed", Map.of(
+                        "message", resolveTerminalMessage(task),
+                        "status", normalizeStatus(task)
+                )));
             }
-        } catch (Exception e) {
-            try {
-                send(emitter, baseMessage(taskId, "task_failed", Map.of("message", resolveExceptionMessage(e), "status", "FAILED")));
-            } catch (Exception ignore) {
-            }
-        } finally {
-            emitter.complete();
+            default -> List.of();
+        };
+    }
+
+    private AgentRunLog findLatestAgentLog(Long taskId, String agentName) {
+        LambdaQueryWrapper<AgentRunLog> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(AgentRunLog::getTaskId, taskId);
+        if (agentName != null && !agentName.isBlank()) {
+            wrapper.eq(AgentRunLog::getRoleName, agentName);
         }
+        wrapper.orderByDesc(AgentRunLog::getId).last("LIMIT 1");
+        return logMapper.selectOne(wrapper);
+    }
+
+    private boolean isCurrentExecution(Long taskId, String executionId) {
+        if (executionId == null || executionId.isBlank()) {
+            return true;
+        }
+        PricingTask task = taskMapper.selectById(taskId);
+        return task != null && executionId.equals(task.getCurrentExecutionId());
+    }
+
+    private String resolveTaskStatus(Long taskId) {
+        PricingTask task = taskMapper.selectById(taskId);
+        return task == null ? "FAILED" : normalizeStatus(task);
+    }
+
+    private String agentNameFromPayload(Map<String, Object> payload) {
+        if (payload == null) {
+            return null;
+        }
+        Object agentName = payload.get("agentName");
+        return agentName == null ? null : String.valueOf(agentName);
     }
 
     static boolean shouldEmitCompletedEvent(PricingTask task, PricingResult result, int completedCardCount) {
@@ -272,13 +345,6 @@ public class PricingTaskStreamService {
         LambdaQueryWrapper<PricingResult> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(PricingResult::getTaskId, taskId).last("LIMIT 1");
         return resultMapper.selectOne(wrapper);
-    }
-
-    private long resolvePollIntervalMs() {
-        if (streamPollIntervalMs < 100L) {
-            return 100L;
-        }
-        return streamPollIntervalMs;
     }
 
     private int resolveDisplayOrder(AgentRunLog item) {

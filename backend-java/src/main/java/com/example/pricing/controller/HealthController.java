@@ -2,6 +2,8 @@ package com.example.pricing.controller;
 
 import com.example.pricing.service.OperationsMetricsService;
 import com.example.pricing.service.PythonBackendHealthClient;
+import org.springframework.amqp.rabbit.connection.Connection;
+import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -17,15 +19,18 @@ public class HealthController {
     private final JdbcTemplate jdbcTemplate;
     private final PythonBackendHealthClient pythonBackendHealthClient;
     private final OperationsMetricsService operationsMetricsService;
+    private final ConnectionFactory connectionFactory;
 
     public HealthController(
             JdbcTemplate jdbcTemplate,
             PythonBackendHealthClient pythonBackendHealthClient,
-            OperationsMetricsService operationsMetricsService
+            OperationsMetricsService operationsMetricsService,
+            ConnectionFactory connectionFactory
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.pythonBackendHealthClient = pythonBackendHealthClient;
         this.operationsMetricsService = operationsMetricsService;
+        this.connectionFactory = connectionFactory;
     }
 
     @GetMapping
@@ -43,14 +48,20 @@ public class HealthController {
         Map<String, Object> payload = new LinkedHashMap<>();
         boolean databaseOk = false;
         boolean pythonOk = pythonBackendHealthClient.isReady();
+        boolean rabbitmqOk = false;
         try {
             jdbcTemplate.queryForObject("SELECT 1", Integer.class);
             databaseOk = true;
         } catch (Exception e) {
         }
-        payload.put("status", databaseOk && pythonOk ? "ok" : "degraded");
+        try (Connection ignored = connectionFactory.createConnection()) {
+            rabbitmqOk = true;
+        } catch (Exception ignore) {
+        }
+        payload.put("status", databaseOk && pythonOk && rabbitmqOk ? "ok" : "degraded");
         payload.put("database", databaseOk ? "ok" : "down");
         payload.put("pythonWorker", pythonOk ? "ok" : "down");
+        payload.put("rabbitmq", rabbitmqOk ? "ok" : "down");
         return payload;
     }
 

@@ -5,13 +5,12 @@ import com.example.pricing.entity.PricingResult;
 import com.example.pricing.entity.PricingTask;
 import com.example.pricing.entity.Product;
 import com.example.pricing.entity.UserLlmConfig;
-import com.example.pricing.common.AesGcmUtil;
+import com.example.pricing.dto.TaskDispatchEvent;
 import com.example.pricing.mapper.AgentRunLogMapper;
 import com.example.pricing.mapper.PricingResultMapper;
 import com.example.pricing.mapper.PricingTaskMapper;
 import com.example.pricing.mapper.ProductMapper;
 import com.example.pricing.mapper.UserLlmConfigMapper;
-import com.example.pricing.service.PricingTaskReuseSupport;
 import com.example.pricing.service.impl.DecisionTaskServiceImpl;
 import com.example.pricing.vo.PricingTaskSnapshotVO;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,23 +20,29 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class DecisionTaskServiceImplTest {
-
-    private static final String TEST_LLM_SECRET = "MGo++WTIw8a+iOkZAak7BVYIcE5DXix2uOjWsh1I4aY=";
 
     @Mock
     private PricingTaskMapper taskMapper;
@@ -55,7 +60,7 @@ class DecisionTaskServiceImplTest {
     private ShopService shopService;
 
     @Mock
-    private PythonDispatchClient pythonDispatchClient;
+    private TaskDispatchPublisher taskDispatchPublisher;
 
     @Mock
     private UserLlmConfigMapper userLlmConfigMapper;
@@ -73,15 +78,15 @@ class DecisionTaskServiceImplTest {
                 logMapper,
                 productMapper,
                 shopService,
-                pythonDispatchClient,
+                taskDispatchPublisher,
                 userLlmConfigMapper,
-                pricingTaskReuseSupport
+                pricingTaskReuseSupport,
+                noOpTransactionTemplate()
         );
-        ReflectionTestUtils.setField(service, "llmKeyEncryptionSecret", TEST_LLM_SECRET);
     }
 
     @Test
-    void startTaskDoesNotOverwritePythonQueuedStatusAfterSuccessfulDispatch() {
+    void startTaskPublishesDispatchAndMarksPendingTaskQueuedAfterConfirm() {
         Product product = new Product();
         product.setId(221L);
         product.setShopId(2L);
@@ -89,7 +94,7 @@ class DecisionTaskServiceImplTest {
 
         UserLlmConfig llmConfig = new UserLlmConfig();
         llmConfig.setUserId(1L);
-        llmConfig.setLlmApiKeyEnc(AesGcmUtil.encrypt("sk-test", TEST_LLM_SECRET));
+        llmConfig.setLlmApiKeyEnc("cipher-from-user-config");
         llmConfig.setLlmBaseUrl("https://dashscope.aliyuncs.com/compatible-mode/v1");
         llmConfig.setLlmModel("qwen3.5-122b-a10b");
 
@@ -107,13 +112,24 @@ class DecisionTaskServiceImplTest {
         Long taskId = service.startTask(List.of(221L), "MARKET_SHARE", "", 1L);
 
         assertEquals(113L, taskId);
-        verify(taskMapper).insert(any(PricingTask.class));
-        verify(pythonDispatchClient).dispatchTask(any(), any());
+        ArgumentCaptor<PricingTask> taskCaptor = ArgumentCaptor.forClass(PricingTask.class);
+        verify(taskMapper).insert(taskCaptor.capture());
+        PricingTask inserted = taskCaptor.getValue();
+        assertEquals("PENDING", inserted.getTaskStatus());
+        assertEquals("cipher-from-user-config", inserted.getLlmApiKeyEnc());
+        assertEquals("https://dashscope.aliyuncs.com/compatible-mode/v1", inserted.getLlmBaseUrl());
+        assertEquals("qwen3.5-122b-a10b", inserted.getLlmModel());
+
+        ArgumentCaptor<TaskDispatchEvent> eventCaptor = ArgumentCaptor.forClass(TaskDispatchEvent.class);
+        verify(taskDispatchPublisher).publishAndConfirm(eventCaptor.capture());
+        assertEquals(113L, eventCaptor.getValue().taskId());
+        assertEquals(inserted.getTraceId(), eventCaptor.getValue().traceId());
+        verify(taskMapper).updateStatusIfPending(113L, "QUEUED");
         verify(taskMapper, never()).updateById(any(PricingTask.class));
     }
 
     @Test
-    void startTaskRefreshesLlmConfigWhenReusingActiveTask() {
+    void startTaskDoesNotPublishWhenReusingActiveTask() {
         Product product = new Product();
         product.setId(221L);
         product.setShopId(2L);
@@ -121,7 +137,7 @@ class DecisionTaskServiceImplTest {
 
         UserLlmConfig llmConfig = new UserLlmConfig();
         llmConfig.setUserId(1L);
-        llmConfig.setLlmApiKeyEnc(AesGcmUtil.encrypt("sk-current", TEST_LLM_SECRET));
+        llmConfig.setLlmApiKeyEnc("cipher-current");
         llmConfig.setLlmBaseUrl("https://dashscope.aliyuncs.com/compatible-mode/v1");
         llmConfig.setLlmModel("qwen3.5-122b-a10b");
 
@@ -142,11 +158,37 @@ class DecisionTaskServiceImplTest {
 
         assertEquals(114L, taskId);
         verify(taskMapper, never()).insert(any(PricingTask.class));
-        ArgumentCaptor<Map<String, Object>> payloadCaptor = ArgumentCaptor.forClass(Map.class);
-        verify(pythonDispatchClient).dispatchTask(payloadCaptor.capture(), any());
-        assertEquals("sk-current", payloadCaptor.getValue().get("llmApiKey"));
-        assertEquals("https://dashscope.aliyuncs.com/compatible-mode/v1", payloadCaptor.getValue().get("llmBaseUrl"));
-        assertEquals("qwen3.5-122b-a10b", payloadCaptor.getValue().get("llmModel"));
+        verify(taskDispatchPublisher, never()).publishAndConfirm(any());
+    }
+
+    @Test
+    void startTaskMarksTaskFailedWhenDispatchPublishFails() {
+        Product product = new Product();
+        product.setId(221L);
+        product.setShopId(2L);
+        product.setCurrentPrice(new BigDecimal("250.06"));
+
+        UserLlmConfig llmConfig = new UserLlmConfig();
+        llmConfig.setUserId(1L);
+        llmConfig.setLlmApiKeyEnc("cipher-from-user-config");
+        llmConfig.setLlmBaseUrl("https://dashscope.aliyuncs.com/compatible-mode/v1");
+        llmConfig.setLlmModel("qwen3.5-122b-a10b");
+
+        when(shopService.getShopIdsByUser(1L)).thenReturn(List.of(2L));
+        when(productMapper.selectById(221L)).thenReturn(product);
+        when(userLlmConfigMapper.selectOne(any())).thenReturn(llmConfig);
+        when(pricingTaskReuseSupport.buildIdempotencyKey(List.of(221L), "MARKET_SHARE", "", 1L)).thenReturn("idem-221");
+        when(pricingTaskReuseSupport.findReusableTask("idem-221", 2L)).thenReturn(null);
+        doAnswer(invocation -> {
+            PricingTask task = invocation.getArgument(0);
+            task.setId(115L);
+            return 1;
+        }).when(taskMapper).insert(any(PricingTask.class));
+        doThrow(new IllegalStateException("rabbit down")).when(taskDispatchPublisher).publishAndConfirm(any());
+
+        assertThrows(IllegalStateException.class, () -> service.startTask(List.of(221L), "MARKET_SHARE", "", 1L));
+
+        verify(taskMapper).updateStatusAndReason(eq(115L), eq("FAILED"), contains("派发失败"));
     }
 
     @Test
@@ -157,12 +199,12 @@ class DecisionTaskServiceImplTest {
         task.setTaskStatus("QUEUED");
         when(taskMapper.selectById(12L)).thenReturn(task);
         when(shopService.getShopIdsByUser(99L)).thenReturn(List.of(3L));
+        when(taskMapper.cancelIfRunning(12L)).thenReturn(1);
 
         service.cancelTask(12L, 99L);
 
-        assertEquals("CANCELLED", task.getTaskStatus());
-        assertEquals("任务已取消", task.getFailureReason());
-        verify(taskMapper).updateById(task);
+        verify(taskMapper).cancelIfRunning(12L);
+        verify(taskMapper, never()).updateById(task);
     }
 
     @Test
@@ -173,12 +215,33 @@ class DecisionTaskServiceImplTest {
         task.setTaskStatus("RUNNING");
         when(taskMapper.selectById(13L)).thenReturn(task);
         when(shopService.getShopIdsByUser(88L)).thenReturn(List.of(5L));
+        when(taskMapper.cancelIfRunning(13L)).thenReturn(1);
 
         service.cancelTask(13L, 88L);
 
-        assertEquals("CANCELLED", task.getTaskStatus());
-        assertEquals("任务已取消", task.getFailureReason());
-        verify(taskMapper).updateById(task);
+        verify(taskMapper).cancelIfRunning(13L);
+        verify(taskMapper, never()).updateById(task);
+    }
+
+    private static TransactionTemplate noOpTransactionTemplate() {
+        return new TransactionTemplate(new AbstractPlatformTransactionManager() {
+            @Override
+            protected Object doGetTransaction() {
+                return new Object();
+            }
+
+            @Override
+            protected void doBegin(Object transaction, TransactionDefinition definition) {
+            }
+
+            @Override
+            protected void doCommit(DefaultTransactionStatus status) {
+            }
+
+            @Override
+            protected void doRollback(DefaultTransactionStatus status) {
+            }
+        });
     }
 
     @Test

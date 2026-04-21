@@ -61,6 +61,12 @@ public class PricingTask {
     @TableField("retry_count")
     private Integer retryCount;
 
+    @TableField("consumer_retry_count")
+    private Integer consumerRetryCount;
+
+    @TableField("current_execution_id")
+    private String currentExecutionId;
+
     @TableField("failure_reason")
     private String failureReason;
 

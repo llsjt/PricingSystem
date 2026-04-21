@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, DateTime, String, text
+from sqlalchemy import BigInteger, DateTime, Integer, String, text
 from sqlalchemy.dialects.mysql import DECIMAL
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,6 +27,8 @@ class PricingTask(Base):
     trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     retry_count: Mapped[int | None] = mapped_column(nullable=False, default=0, server_default="0")
+    consumer_retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    current_execution_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     llm_api_key_enc: Mapped[str | None] = mapped_column(String(512), nullable=True)
     llm_base_url: Mapped[str | None] = mapped_column(String(255), nullable=True)

@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.models.pricing_task import PricingTask
@@ -60,6 +60,103 @@ class TaskRepo:
 
         return None
 
+    def acquire_execution(self, task_id: int, execution_id: str, *, allow_reclaim: bool, max_retry: int) -> bool:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        filters = [
+            PricingTask.id == int(task_id),
+            PricingTask.task_status.notin_(("COMPLETED", "FAILED", "CANCELLED", "MANUAL_REVIEW")),
+            PricingTask.consumer_retry_count < int(max_retry),
+        ]
+        if allow_reclaim:
+            filters.append(PricingTask.current_execution_id.is_not(None) | PricingTask.current_execution_id.is_(None))
+        else:
+            filters.append(PricingTask.current_execution_id.is_(None))
+
+        updated = (
+            self.db.query(PricingTask)
+            .filter(*filters)
+            .update(
+                {
+                    PricingTask.current_execution_id: execution_id,
+                    PricingTask.task_status: "RUNNING",
+                    PricingTask.started_at: now,
+                    PricingTask.completed_at: None,
+                    PricingTask.failure_reason: None,
+                    PricingTask.consumer_retry_count: case(
+                        (PricingTask.current_execution_id.is_(None), PricingTask.consumer_retry_count),
+                        else_=PricingTask.consumer_retry_count + 1,
+                    ),
+                },
+                synchronize_session=False,
+            )
+        )
+        self.db.commit()
+        return updated == 1
+
+    def increment_consumer_retry_and_release(self, task_id: int, execution_id: str, reason: str | None) -> int:
+        updated = (
+            self.db.query(PricingTask)
+            .filter(
+                PricingTask.id == int(task_id),
+                PricingTask.current_execution_id == execution_id,
+                PricingTask.task_status.notin_(("COMPLETED", "FAILED", "CANCELLED", "MANUAL_REVIEW")),
+            )
+            .update(
+                {
+                    PricingTask.consumer_retry_count: PricingTask.consumer_retry_count + 1,
+                    PricingTask.current_execution_id: None,
+                    PricingTask.task_status: "RETRYING",
+                    PricingTask.started_at: None,
+                    PricingTask.completed_at: None,
+                    PricingTask.failure_reason: (reason or "")[:255] if reason else None,
+                },
+                synchronize_session=False,
+            )
+        )
+        self.db.commit()
+        return int(updated or 0)
+
+    def mark_failed_if_owner(self, task_id: int, execution_id: str, reason: str | None) -> int:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        updated = (
+            self.db.query(PricingTask)
+            .filter(
+                PricingTask.id == int(task_id),
+                PricingTask.current_execution_id == execution_id,
+                PricingTask.task_status.notin_(("COMPLETED", "FAILED", "CANCELLED", "MANUAL_REVIEW")),
+            )
+            .update(
+                {
+                    PricingTask.task_status: "FAILED",
+                    PricingTask.failure_reason: (reason or "")[:255] if reason else None,
+                    PricingTask.completed_at: now,
+                },
+                synchronize_session=False,
+            )
+        )
+        self.db.commit()
+        return int(updated or 0)
+
+    def mark_failed_force(self, task_id: int, reason: str | None) -> int:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        updated = (
+            self.db.query(PricingTask)
+            .filter(
+                PricingTask.id == int(task_id),
+                PricingTask.task_status.notin_(("COMPLETED", "FAILED", "CANCELLED", "MANUAL_REVIEW")),
+            )
+            .update(
+                {
+                    PricingTask.task_status: "FAILED",
+                    PricingTask.failure_reason: (reason or "")[:255] if reason else None,
+                    PricingTask.completed_at: now,
+                },
+                synchronize_session=False,
+            )
+        )
+        self.db.commit()
+        return int(updated or 0)
+
     def update_status(
         self,
         task: PricingTask,
@@ -67,7 +164,10 @@ class TaskRepo:
         *,
         failure_reason: str | None = None,
         clear_failure_reason: bool = False,
+        execution_id: str | None = None,
     ) -> PricingTask:
+        if execution_id and not self._can_write(task, execution_id):
+            return task
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         task.task_status = status
         if clear_failure_reason:
@@ -120,7 +220,9 @@ class TaskRepo:
     def mark_cancelled(self, task: PricingTask, failure_reason: str | None = None) -> PricingTask:
         return self.update_status(task, "CANCELLED", failure_reason=failure_reason or "任务已取消")
 
-    def set_suggested_range(self, task: PricingTask, min_price: Decimal, max_price: Decimal) -> PricingTask:
+    def set_suggested_range(self, task: PricingTask, min_price: Decimal, max_price: Decimal, execution_id: str | None = None) -> PricingTask:
+        if execution_id and not self._can_write(task, execution_id):
+            return task
         task.suggested_min_price = money(min_price)
         task.suggested_max_price = money(max_price)
         self.db.add(task)
@@ -131,6 +233,13 @@ class TaskRepo:
     def find_by_code(self, task_code: str) -> PricingTask | None:
         stmt = select(PricingTask).where(PricingTask.task_code == task_code).limit(1)
         return self.db.scalars(stmt).first()
+
+    @staticmethod
+    def _can_write(task: PricingTask, execution_id: str) -> bool:
+        status = str(task.task_status or "").upper()
+        if status in {"COMPLETED", "FAILED", "CANCELLED", "MANUAL_REVIEW"}:
+            return False
+        return str(task.current_execution_id or "") == execution_id
 
     def metrics_snapshot(self, now: datetime | None = None, stale_after_seconds: int = 900) -> dict[str, int | float | str | None]:
         current = now or datetime.now(timezone.utc).replace(tzinfo=None)

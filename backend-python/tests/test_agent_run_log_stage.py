@@ -36,6 +36,7 @@ def build_session(*tables) -> Session:
                     CREATE TABLE agent_run_log (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         task_id BIGINT NOT NULL,
+                        execution_id VARCHAR(64) DEFAULT NULL,
                         role_name VARCHAR(50) NOT NULL,
                         speak_order INT NOT NULL,
                         thought_content TEXT DEFAULT NULL,

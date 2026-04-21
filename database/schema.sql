@@ -172,6 +172,8 @@ CREATE TABLE pricing_task (
     trace_id VARCHAR(64) DEFAULT NULL COMMENT '链路追踪ID',
     idempotency_key VARCHAR(128) DEFAULT NULL COMMENT '幂等键',
     retry_count INT NOT NULL DEFAULT 0 COMMENT '重试次数',
+    consumer_retry_count INT NOT NULL DEFAULT 0 COMMENT 'RabbitMQ 消费层重试次数',
+    current_execution_id VARCHAR(64) DEFAULT NULL COMMENT '当前占用执行 id，用于 execution fencing',
     failure_reason VARCHAR(255) DEFAULT NULL COMMENT '失败原因',
     started_at DATETIME DEFAULT NULL COMMENT '开始时间',
     completed_at DATETIME DEFAULT NULL COMMENT '完成时间',
@@ -182,6 +184,8 @@ CREATE TABLE pricing_task (
     KEY idx_pricing_task_trace_id (trace_id),
     KEY idx_pricing_task_idempotency_key (idempotency_key),
     KEY idx_pricing_task_requested_user (requested_by_user_id),
+    KEY idx_pricing_task_execution (current_execution_id),
+    KEY idx_pricing_task_status_created (task_status, created_at),
     CONSTRAINT fk_pricing_task_shop FOREIGN KEY (shop_id) REFERENCES shop(id),
     CONSTRAINT fk_pricing_task_product FOREIGN KEY (product_id) REFERENCES product(id),
     CONSTRAINT fk_pricing_task_sku FOREIGN KEY (sku_id) REFERENCES product_sku(id)
@@ -190,6 +194,7 @@ CREATE TABLE pricing_task (
 CREATE TABLE agent_run_log (
     id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '日志ID',
     task_id BIGINT NOT NULL COMMENT '定价任务ID',
+    execution_id VARCHAR(64) DEFAULT NULL COMMENT '产生该日志的 execution id',
     role_name VARCHAR(50) NOT NULL COMMENT '智能体角色名称',
     speak_order INT NOT NULL COMMENT '发言顺序',
     thought_content TEXT DEFAULT NULL COMMENT '完整思考内容',
@@ -212,6 +217,7 @@ CREATE TABLE agent_run_log (
 CREATE TABLE pricing_result (
     id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '定价结果ID',
     task_id BIGINT NOT NULL COMMENT '定价任务ID',
+    execution_id VARCHAR(64) DEFAULT NULL COMMENT '产生该结果的 execution id',
     final_price DECIMAL(10,2) NOT NULL COMMENT '最终建议价',
     expected_sales INT DEFAULT NULL COMMENT '预期销量',
     expected_profit DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT '预期利润',
@@ -311,6 +317,7 @@ INSERT INTO schema_migration_history (version, checksum, description, applied_at
     ('migration_20260418_agent_run_attempt', REPEAT('0', 64), 'baseline schema includes agent run retry attempt', CURRENT_TIMESTAMP),
     ('migration_20260418_product_category_titles', REPEAT('0', 64), 'baseline schema includes product category and title profile fields', CURRENT_TIMESTAMP),
     ('migration_20260419_agent_raw_output', REPEAT('0', 64), 'baseline schema includes per-Agent raw output JSON for partial retry', CURRENT_TIMESTAMP),
-    ('migration_20260420_pricing_batch', REPEAT('0', 64), 'baseline schema includes batch pricing tables', CURRENT_TIMESTAMP);
+    ('migration_20260420_pricing_batch', REPEAT('0', 64), 'baseline schema includes batch pricing tables', CURRENT_TIMESTAMP),
+    ('migration_20260421_rabbitmq_async', REPEAT('0', 64), 'baseline schema includes RabbitMQ async task columns', CURRENT_TIMESTAMP);
 
 SET FOREIGN_KEY_CHECKS = 1;

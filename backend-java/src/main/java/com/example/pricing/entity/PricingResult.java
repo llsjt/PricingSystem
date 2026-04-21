@@ -19,6 +19,9 @@ public class PricingResult {
     @TableField("task_id")
     private Long taskId;
 
+    @TableField("execution_id")
+    private String executionId;
+
     @TableField("final_price")
     private BigDecimal finalPrice;
 

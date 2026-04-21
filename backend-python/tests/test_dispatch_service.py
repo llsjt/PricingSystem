@@ -9,7 +9,7 @@ from app.models.pricing_task import PricingTask
 from app.repos.task_repo import TaskRepo
 from app.schemas.task import DispatchTaskRequest
 from app.services.dispatch_service import DispatchService
-from app.utils.crypto_utils import decrypt_api_key
+from app.utils.crypto_utils import decrypt_api_key, encrypt_api_key
 
 
 class StubQueueService:
@@ -188,3 +188,37 @@ def test_dispatch_refreshes_llm_config_for_already_queued_task():
     assert decrypt_api_key(refreshed.llm_api_key_enc) == "sk-current"
     assert refreshed.llm_base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
     assert refreshed.llm_model == "qwen3.5-122b-a10b"
+
+
+def test_execute_queued_by_task_id_builds_request_and_passes_execution_id():
+    db = build_session()
+    task = create_task(
+        db,
+        task_id=401,
+        status="QUEUED",
+        strategy_goal="MARKET_SHARE",
+        constraint_text="利润率不低于10%",
+    )
+    task.llm_api_key_enc = encrypt_api_key("sk-current")
+    task.llm_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    task.llm_model = "qwen3.5-122b-a10b"
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    service = DispatchService(db)
+    captured = {}
+
+    def _fake_execute_queued(req, worker_id=None, execution_id=None):  # noqa: ANN001
+        captured["req"] = req
+        captured["execution_id"] = execution_id
+
+    service.execute_queued = _fake_execute_queued  # type: ignore[method-assign]
+
+    service.execute_queued_by_task_id(task.id, "exec-401")
+
+    assert captured["req"].task_id == task.id
+    assert captured["req"].llm_api_key == "sk-current"
+    assert captured["req"].llm_base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert captured["req"].llm_model == "qwen3.5-122b-a10b"
+    assert captured["execution_id"] == "exec-401"

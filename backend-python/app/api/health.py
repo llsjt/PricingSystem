@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from app.db.session import SessionLocal
 from app.repos.task_repo import TaskRepo
 from app.schemas.common import HealthResponse
-from app.services.task_queue_service import get_task_queue_service
+from app.services.rabbitmq_worker_service import get_rabbitmq_worker_service
 
 router = APIRouter(tags=["health"])
 
@@ -29,7 +29,7 @@ def health() -> HealthResponse:
 def health_live() -> dict:
     return {
         "status": "ok",
-        "queue": get_task_queue_service().snapshot(),
+        "rabbitmq": get_rabbitmq_worker_service().snapshot(),
     }
 
 
@@ -43,11 +43,13 @@ def health_ready() -> dict:
     finally:
         db.close()
 
-    queue = get_task_queue_service().snapshot()
+    worker = get_rabbitmq_worker_service()
+    snapshot = worker.snapshot()
     return {
-        "status": "ok" if db_ok and queue["started"] else "degraded",
+        "status": "ok" if db_ok and worker.ready else "degraded",
         "dbOk": db_ok,
-        "queue": queue,
+        "rabbitmq": "ok" if worker.ready else "down",
+        "worker": snapshot,
     }
 
 
@@ -63,10 +65,11 @@ def health_metrics() -> dict:
     finally:
         db.close()
 
-    queue = get_task_queue_service().snapshot()
+    worker = get_rabbitmq_worker_service()
     return {
-        "status": "ok" if db_ok and queue["started"] else "degraded",
+        "status": "ok" if db_ok and worker.ready else "degraded",
         "dbOk": db_ok,
-        "queue": queue,
+        "rabbitmq": "ok" if worker.ready else "down",
+        "worker": worker.snapshot(),
         "tasks": task_metrics,
     }

@@ -11,6 +11,7 @@ class AgentRunLog(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     task_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    execution_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     role_name: Mapped[str] = mapped_column(String(50), nullable=False)
     speak_order: Mapped[int] = mapped_column(Integer, nullable=False)
     thought_content: Mapped[str | None] = mapped_column(Text, nullable=True)

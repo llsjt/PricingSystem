@@ -7,9 +7,10 @@ from app.utils.text_utils import MANUAL_REVIEW_STRATEGY
 
 
 class ResultWriterTool:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, execution_id: str | None = None):
         self.result_repo = ResultRepo(db)
         self.task_repo = TaskRepo(db)
+        self.execution_id = execution_id
 
     def write_final_result(self, payload: TaskFinalResult) -> None:
         task = self.task_repo.get_by_id(payload.task_id)
@@ -31,6 +32,7 @@ class ResultWriterTool:
             execute_strategy=execute_strategy,
             result_summary=payload.result_summary,
             review_required=review_required,
+            execution_id=self.execution_id,
         )
-        self.task_repo.set_suggested_range(task, payload.suggested_min_price, payload.suggested_max_price)
-        self.task_repo.update_status(task, "MANUAL_REVIEW" if review_required else "COMPLETED")
+        self.task_repo.set_suggested_range(task, payload.suggested_min_price, payload.suggested_max_price, execution_id=self.execution_id)
+        self.task_repo.update_status(task, "MANUAL_REVIEW" if review_required else "COMPLETED", execution_id=self.execution_id)
