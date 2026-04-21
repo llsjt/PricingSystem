@@ -1,94 +1,68 @@
-# === Java Backend ===
-backend-java/target/
-backend-java/.idea/
-backend-java/*.iml
-backend-java/server.err.log
-backend-java/server.out.log
-backend-java/.mvn/
-
-# === Python Backend ===
-backend-python/.venv/
-backend-python/.idea/
-backend-python/__pycache__/
-backend-python/**/__pycache__/
-backend-python/*.pyc
-backend-python/.pytest_cache/
-backend-python/.mypy_cache/
-backend-python/.ruff_cache/
-backend-python/.env
-backend-python/.env.local
-/.env.public-beta
-backend-python/.claude/
-
-# === Frontend ===
-frontend/dist/
-frontend/node_modules/
-frontend/.idea/
-frontend/.vite/
-frontend/coverage/
-frontend/.eslintcache
-frontend/.env.local
-
-# === IDE ===
-.vscode/
-.idea/
-**/.idea/
-*.swp
-*.swo
-*.iml
-
-# === Local Agent / Tooling ===
-.claude/
-.codex/
-AGENTS.md
-scripts/__pycache__/
-CLAUDE.md
-
-# === OS ===
+# OS / editor state
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/
+.idea/**/workspace.xml
+backend-java/.idea/
+backend-python/.idea/
+frontend/.idea/
+backend-java/.settings/
+backend-java/.classpath
+backend-java/.project
 
-# === Temp / Logs / Artifacts (non-source) ===
-tmp/
-temp/
-*.tmp
-*.temp
-*.bak
-*.orig
+# Local agent / workspace tooling
+.claude/
+.codex/
+codex-smoke/
+
+# Secrets / local env
+.env
+.env.local
+.env.public-beta
+backend-python/.env
+backend-python/.env.local
+frontend/.env.local
+
+# Python
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+backend-python/.venv/
+
+# Java
+backend-java/target/
+
+# Frontend / Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.cache/
+frontend/coverage/
+frontend/.eslintcache
+
+# Logs / temp files
 *.log
 *.out
 *.err
 *.pid
-*.zip
-*.tar
-*.gz
-*.7z
-*.rar
-coverage/
+*.tmp
+*.temp
+*.bak
+*.orig
+tmp/
+temp/
 .cache/
-**/.cache/
 backups/
 ops/reports/
+docs/superpowers/
 
-# === Docs / Notes (non-source) ===
-docs/
-
-# === Project Files To Exclude (non-source) ===
-.github/
-ops/
-scripts/
-!backend-python/scripts/
-!backend-python/scripts/**
-backend-python/scripts/**/__pycache__/
-backend-python/scripts/**/*.pyc
+# Local data / generated artifacts
 backend-python/app/data/competitor_index.sqlite
 数据集/
-README.md
-backend-python/README.md
-frontend/.env
-.env.public-beta.example
-docker-compose.public-beta.yml
-backend-java/Dockerfile
-backend-python/Dockerfile
-frontend/Dockerfile
 简历项目经历_STAR.md

@@ -1,138 +1,151 @@
-# 智能定价平台
+# 电商智能定价平台
 
-这是一个“前端 + Java 业务后端 + Python Agent Worker”的电商智能定价系统。
+电商智能定价平台，采用前后端分离 + 双后端协作架构：
 
-## 架构
+- 前端：Vue 3 + TypeScript + Vite
+- 公共业务后端：Spring Boot 3.2 + Java 21
+- 内部智能任务后端：FastAPI + Python 3.12 + CrewAI
+- 数据层：MySQL 8.4
+- 异步派发：RabbitMQ 3.13
+- 部署入口：Nginx + Docker Compose
+
+## 文档入口
+
+- [技术栈](./技术栈.md)：按前端、后端、数据库、消息中间件、部署方式整理的完整技术栈清单
+- [AGENTS](./AGENTS.md)：仓库内协作和代码变更约束
+
+## 项目结构
+
+- `frontend/`：Vue 3 前端工程，负责页面展示、交互、任务发起和结果查看
+- `backend-java/`：Spring Boot 业务 API，负责鉴权、业务编排、SSE 推送、数据读取
+- `backend-python/`：FastAPI 内部工作器，负责多智能体定价任务执行
+- `database/`：基线建表 SQL 和增量迁移脚本
+- `scripts/`：本地开发、部署、回滚、检查、备份等脚本
+- `ops/`：运行手册、容量与告警说明
+
+## 运行架构
 
 ```text
-Frontend (Vue3, :5173)
-  -> Java Backend (Spring Boot, :8080)
-    -> Python Worker (FastAPI, :8000)
-      -> 4 个定价 Agent
-        -> MySQL (pricing_system2.0)
+Browser
+  -> Frontend (Vue 3)
+    -> Java Backend (:8080, public API + SSE)
+      -> RabbitMQ / internal HTTP
+        -> Python Worker (:8000, internal only)
+          -> MySQL
 ```
 
-当前实时链路已经统一为 `SSE/实时流`：
+关键边界：
 
-- 前端只访问 Java
-- Java 从数据库读取任务状态、Agent 日志和最终结果
-- Java 通过 `/api/pricing/tasks/{taskId}/events` 向前端推送 SSE 事件
-- Python 不再向浏览器提供旧版双向实时接口
+- 浏览器只访问 Java 暴露的 `/api/**`
+- Python 是内部服务，不直接暴露给浏览器
+- Java 负责 SSE 事件流，前端不直接连 Python
+- Python 负责执行智能定价流程并写入任务日志与结果
+- Java 读取任务状态、日志和结果并对外提供查询与流式更新
 
-## 目录结构
+## 核心能力
 
-```text
-graduation_project/
-  frontend/
-  backend-java/
-  backend-python/
-  database/
-  scripts/
-  ops/
-```
+- 用户登录、刷新、登出与会话管理
+- 店铺、商品、SKU、导入数据管理
+- 单商品定价任务
+- 批量定价任务
+- 多智能体定价分析与风控
+- 实时任务流和 Agent 卡片展示
+- 历史归档与结果查看
+- 用户级模型配置管理
 
-## 启动方式
+## 本地开发
 
-### Java
+### 依赖
 
-```bash
+- Node.js 20+
+- Java 21
+- Maven 3.9+
+- Python 3.12
+- MySQL 8+
+- RabbitMQ 3.13+
+
+### 推荐启动顺序
+
+1. MySQL
+2. RabbitMQ
+3. Python worker
+4. Java backend
+5. Frontend
+
+### 手动启动
+
+```powershell
+# Java
 cd backend-java
 mvn spring-boot:run
-```
 
-### Python
-
-```bash
+# Python
 cd backend-python
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
+python run_server.py
 
-### Frontend
-
-```bash
+# Frontend
 cd frontend
 npm install
 npm run dev
 ```
 
-也可以直接使用：
+### 一键启动
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/start-local-dev.ps1
+scripts/start-local-dev.ps1
 ```
 
-## 数据库
+说明：
 
-初始化或新环境：
+- 该脚本会拉起前端、Java、Python 三个应用进程
+- 基础设施依赖如 MySQL、RabbitMQ 需要预先可用
 
-1. 执行 `database/schema.sql`
-2. 再按日期顺序执行 `database/migration_*.sql`
+## 测试与验证
 
-关键表：
+```powershell
+# Java
+cd backend-java
+mvn test
 
-- `pricing_task`
-- `agent_run_log`
-- `pricing_result`
-- `auth_refresh_session`
-- `login_audit_log`
+# Python
+cd backend-python
+python -m pytest tests -q
 
-## 关键能力
+# Frontend
+cd frontend
+npm run build
 
-- 显式角色鉴权、refresh/logout、登录审计、登录限流
-- Java 统一公网入口
-- Python 基于数据库认领的 worker 调度
-- 任务状态支持 `QUEUED/RUNNING/RETRYING/MANUAL_REVIEW/FAILED/CANCELLED`
-- 支持取消任务和取消后重新配置
-- 支持人工审核后再应用建议价格
-- SSE 实时展示 Agent 分析过程
+# 全量预发布检查
+scripts/run-prelaunch-checks.ps1
+```
 
-## 健康检查与指标
+## 部署
 
-### Java
+Public Beta 编排入口：
 
-- `GET /api/health/live`
-- `GET /api/health/ready`
-- `GET /api/health/metrics`
+```powershell
+docker compose -f docker-compose.public-beta.yml up -d --build
+```
 
-### Python
+相关文件：
 
-- `GET /health`
-- `GET /health/live`
-- `GET /health/ready`
-- `GET /health/metrics`
+- `docker-compose.public-beta.yml`
+- `.env.public-beta.example`
+- `frontend/nginx.default.conf`
+- `scripts/deploy-public-beta.ps1`
+- `scripts/rollback-public-beta.ps1`
 
-当前指标重点关注：
+## 通信与安全
 
-- 队列深度
-- 活跃执行数
-- `MANUAL_REVIEW` / `FAILED` / `CANCELLED` 数量
-- 超时未完成任务数量
-- 平均执行时长和最大执行时长
+- 前端通过 `Bearer Token` 访问受保护接口
+- 会话续期使用 Refresh Token Cookie
+- Java 与 Python 间内部调用使用 `X-Internal-Token`
+- 实时任务更新通过 SSE：`GET /api/pricing/tasks/{taskId}/events`
+- 生产部署时需要显式配置数据库密钥、JWT 密钥、内部令牌和跨域白名单
 
-## 运维脚本
+## 一句话总结
 
-- 公测部署：`scripts/deploy-public-beta.ps1`
-- 数据库迁移：`scripts/apply-db-migrations.ps1`
-- 数据库备份：`scripts/db-backup.ps1`
-- 数据库恢复：`scripts/db-restore.ps1`
-- 回滚：`scripts/rollback-public-beta.ps1`
-- 数据保留清理：`scripts/apply-retention-policy.ps1`
-- 压测：`scripts/load-test-public-beta.py`
-- 告警阈值检查：`scripts/check-operational-alerts.py`
-
-## 运维文档
-
-- 公测 runbook：`ops/public-beta-runbook.md`
-- 压测说明：`ops/load-test-runbook.md`
-- 告警阈值：`ops/alert-thresholds.md`
-- 隐私与数据保留策略：`ops/privacy-retention-policy.md`
-
-## 当前边界
-
-以下两项仍未纳入当前交付范围：
-
-- 验证码
-- 灰度发布机制
+这是一个以 `Vue 3 + Spring Boot + FastAPI + CrewAI + MySQL + RabbitMQ + Docker + Nginx` 为核心栈构建的电商智能定价平台，其中 Java 是统一对外业务入口，Python 负责内部智能定价执行。
