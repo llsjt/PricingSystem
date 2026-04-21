@@ -59,7 +59,7 @@ public class DataBootstrap {
         admin = new SysUser();
         admin.setUsername("admin");
         admin.setAccount("admin");
-        admin.setPassword(BCrypt.hashpw("Admin123!", BCrypt.gensalt()));
+        admin.setPassword(BCrypt.hashpw("123456", BCrypt.gensalt()));
         admin.setEmail("admin@example.com");
         admin.setStatus(1);
         admin.setRole("ADMIN");

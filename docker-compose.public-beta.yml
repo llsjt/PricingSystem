@@ -1,0 +1,165 @@
+# Public Beta 部署编排文件。
+# 首次运行前请先填写 `.env.public-beta`。
+#
+# 以下变量必须在 `.env.public-beta` 中明确设置：
+# - APP_ENV
+# - DB_PASSWORD
+# - JWT_SECRET
+# - JWT_REFRESH_SECRET
+# - INTERNAL_API_TOKEN
+# - LLM_KEY_ENCRYPTION_SECRET
+# - ALLOWED_ORIGINS
+#
+# 以下变量仅在本机端口冲突时需要修改：
+# - MYSQL_PUBLIC_PORT
+# - RABBITMQ_PUBLIC_PORT
+# - RABBITMQ_MANAGEMENT_PUBLIC_PORT
+# - JAVA_PUBLIC_PORT
+# - FRONTEND_PUBLIC_PORT
+#
+# `LLM_API_KEY` / `LLM_BASE_URL` / `MODEL` 只作为 Python 侧兜底配置。
+# 正常任务执行应优先使用系统内保存的用户模型配置。
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: pricing_system2.0
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "${MYSQL_PUBLIC_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/00-schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DB_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    ports:
+      - "${RABBITMQ_PUBLIC_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PUBLIC_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  backend-python:
+    build:
+      context: ./backend-python
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-prod}
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DB: pricing_system2.0
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
+      ALLOW_DEV_INTERNAL_TOKEN_BYPASS: "false"
+      AGENT_WORKER_CONCURRENCY: ${AGENT_WORKER_CONCURRENCY:-2}
+      AGENT_QUEUE_MAXSIZE: ${AGENT_QUEUE_MAXSIZE:-100}
+      AGENT_POLL_INTERVAL_MS: ${AGENT_POLL_INTERVAL_MS:-500}
+      AGENT_MAX_RETRIES: ${AGENT_MAX_RETRIES:-2}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
+      RABBITMQ_PREFETCH: ${RABBITMQ_PREFETCH:-1}
+      WORKER_MAX_RETRY: ${WORKER_MAX_RETRY:-3}
+      WORKER_RETRY_BACKOFF_MAX_SECONDS: ${WORKER_RETRY_BACKOFF_MAX_SECONDS:-30}
+      PROGRESS_PUBLISH_ENABLED: ${PROGRESS_PUBLISH_ENABLED:-true}
+      # 必填：必须与 Java 侧保持一致，否则无法解密用户保存的模型密钥。
+      LLM_KEY_ENCRYPTION_SECRET: ${LLM_KEY_ENCRYPTION_SECRET}
+      # 可选兜底：产品主流程优先使用用户级模型配置，而不是这里的系统默认值。
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      MODEL: ${MODEL}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import json, sys, urllib.request; data = json.load(urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5)); sys.exit(0 if data.get('status') == 'ok' else 1)
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  backend-java:
+    build:
+      context: ./backend-java
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-prod}
+      DB_URL: jdbc:mysql://mysql:3306/pricing_system2.0?useUnicode=true&characterEncoding=utf-8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2b8&allowPublicKeyRetrieval=true
+      DB_USERNAME: root
+      DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
+      PYTHON_AGENT_BASE_URL: http://backend-python:8000
+      PYTHON_AGENT_MAX_ATTEMPTS: ${PYTHON_AGENT_MAX_ATTEMPTS:-3}
+      PYTHON_AGENT_RETRY_BACKOFF_MS: ${PYTHON_AGENT_RETRY_BACKOFF_MS:-300}
+      PYTHON_AGENT_CIRCUIT_FAILURE_THRESHOLD: ${PYTHON_AGENT_CIRCUIT_FAILURE_THRESHOLD:-3}
+      PYTHON_AGENT_CIRCUIT_OPEN_MS: ${PYTHON_AGENT_CIRCUIT_OPEN_MS:-30000}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_VHOST: ${RABBITMQ_VHOST:-/}
+      # 必填：用户保存模型密钥后必须长期保持稳定，否则历史数据将无法解密。
+      LLM_KEY_ENCRYPTION_SECRET: ${LLM_KEY_ENCRYPTION_SECRET}
+      # 仅供本地开发使用；公网部署必须保持 false。
+      ALLOW_DEV_BOOTSTRAP: ${ALLOW_DEV_BOOTSTRAP:-false}
+      # 本地 HTTP 用 false，公网 HTTPS 用 true。
+      SECURE_COOKIE: ${SECURE_COOKIE:-true}
+      # 必填：浏览器跨域白名单。本地填本机地址，公网填真实域名。
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS}
+    ports:
+      - "${JAVA_PUBLIC_PORT:-8080}:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      backend-python:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'curl -fsS http://127.0.0.1:8080/api/health/ready | grep -q ''"status":"ok"'' || exit 1'
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PUBLIC_PORT:-8081}:80"
+    depends_on:
+      backend-java:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mysql_data:
