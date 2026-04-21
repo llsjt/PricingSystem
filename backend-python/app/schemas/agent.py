@@ -1,3 +1,5 @@
+﻿"""智能体输出 Schema，约束各 Agent 返回 JSON 的结构。"""
+
 from datetime import date
 from decimal import Decimal
 from typing import Literal

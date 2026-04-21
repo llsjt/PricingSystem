@@ -9,6 +9,9 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
+/**
+ * 用户大模型配置实体，保存用户自己的模型地址、模型名和密钥密文。
+ */
 @Data
 @TableName("user_llm_config")
 public class UserLlmConfig {

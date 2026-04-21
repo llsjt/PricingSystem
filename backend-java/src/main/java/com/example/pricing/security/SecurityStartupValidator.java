@@ -6,6 +6,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+/**
+ * 安全启动校验服务，在生产环境启动前检查关键安全配置。
+ */
 @Component
 @RequiredArgsConstructor
 public class SecurityStartupValidator {

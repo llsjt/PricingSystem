@@ -1,2 +1,2 @@
-"""Core settings and runtime utilities."""
-
+"""核心配置与运行时工具包入口。"""
+# 核心基础设施包入口。

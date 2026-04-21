@@ -1,3 +1,7 @@
+﻿/**
+ * 商品管理接口封装，负责商品列表、趋势与导入相关请求。
+ */
+
 import request from './request'
 
 export type ImportDataType = 'AUTO' | 'PRODUCT_BASE' | 'PRODUCT_SKU' | 'PRODUCT_DAILY_METRIC' | 'TRAFFIC_PROMO_DAILY'

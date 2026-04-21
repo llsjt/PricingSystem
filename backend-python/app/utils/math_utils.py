@@ -1,3 +1,5 @@
+﻿"""数学工具模块，集中处理金额、比例和数值安全计算。"""
+
 from decimal import Decimal, ROUND_HALF_UP
 
 
@@ -19,4 +21,3 @@ def clamp_decimal(value: Decimal, floor: Decimal, ceiling: Decimal) -> Decimal:
     if value > ceiling:
         return ceiling
     return value
-

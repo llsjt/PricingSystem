@@ -1,3 +1,7 @@
+/*
+ * AES-GCM 加解密工具，用于保护敏感配置字段的存储安全。
+ */
+
 package com.example.pricing.common;
 
 import javax.crypto.Cipher;
@@ -7,10 +11,10 @@ import java.security.SecureRandom;
 import java.util.Base64;
 
 /**
- * AES-256-GCM encryption/decryption utility for protecting user LLM API keys at rest.
+ * AES-256-GCM 加解密工具，用于保护用户大模型 API Key 等敏感字段的落库存储。
  *
- * <p>Cipher output layout: {@code IV (12 bytes) || ciphertext || GCM auth tag (16 bytes)},
- * returned as a single Base64 string.</p>
+ * <p>密文布局为 {@code IV(12字节) + ciphertext + GCM认证标签(16字节)}，
+ * 最终统一编码成一个 Base64 字符串进行保存。</p>
  */
 public final class AesGcmUtil {
 
@@ -22,16 +26,16 @@ public final class AesGcmUtil {
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private AesGcmUtil() {
-        // utility class
+        // 工具类不允许创建实例。
     }
 
     /**
-     * Encrypt plaintext with AES-256-GCM.
+     * 使用 AES-256-GCM 加密明文。
      *
-     * @param plaintext    the string to encrypt
-     * @param base64Secret Base64-encoded 32-byte AES key
-     * @return Base64-encoded bytes of {@code IV + ciphertext + tag}
-     * @throws IllegalStateException if encryption fails
+     * @param plaintext    待加密的原始字符串
+     * @param base64Secret Base64 编码的 32 字节 AES 密钥
+     * @return Base64 编码后的 {@code IV + ciphertext + tag}
+     * @throws IllegalStateException 加密失败时抛出
      */
     public static String encrypt(String plaintext, String base64Secret) {
         try {
@@ -47,7 +51,7 @@ public final class AesGcmUtil {
 
             byte[] ciphertext = cipher.doFinal(plaintext.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
-            // Concatenate IV + ciphertext (which already includes the GCM auth tag)
+            // 将随机 IV 与密文拼接，密文本身已经包含 GCM 认证标签。
             byte[] result = new byte[IV_LENGTH_BYTES + ciphertext.length];
             System.arraycopy(iv, 0, result, 0, IV_LENGTH_BYTES);
             System.arraycopy(ciphertext, 0, result, IV_LENGTH_BYTES, ciphertext.length);
@@ -59,12 +63,12 @@ public final class AesGcmUtil {
     }
 
     /**
-     * Decrypt a Base64-encoded AES-256-GCM ciphertext.
+     * 解密一个经过 Base64 编码的 AES-256-GCM 密文。
      *
-     * @param cipherBase64 Base64-encoded bytes of {@code IV + ciphertext + tag}
-     * @param base64Secret Base64-encoded 32-byte AES key
-     * @return the original plaintext
-     * @throws IllegalStateException if decryption fails (wrong key, tampered data, etc.)
+     * @param cipherBase64 Base64 编码后的 {@code IV + ciphertext + tag}
+     * @param base64Secret Base64 编码的 32 字节 AES 密钥
+     * @return 解密得到的原始明文
+     * @throws IllegalStateException 解密失败时抛出，例如密钥错误或密文被篡改
      */
     public static String decrypt(String cipherBase64, String base64Secret) {
         try {
@@ -96,13 +100,13 @@ public final class AesGcmUtil {
     }
 
     /**
-     * Mask an API key for safe display, e.g. {@code sk-****abcd}.
+     * 将 API Key 脱敏后用于界面展示，例如 {@code sk-****abcd}。
      *
-     * <p>Shows the first 3 characters, four asterisks, and the last 4 characters.
-     * If the key is shorter than 8 characters, returns all asterisks of the same length.</p>
+     * <p>默认保留前 3 位和后 4 位，中间替换为四个星号；
+     * 如果原始长度不足 8 位，则返回等长星号字符串。</p>
      *
-     * @param apiKey the raw API key
-     * @return masked representation
+     * @param apiKey 原始 API Key
+     * @return 脱敏后的展示字符串
      */
     public static String maskApiKey(String apiKey) {
         if (apiKey == null || apiKey.isEmpty()) {

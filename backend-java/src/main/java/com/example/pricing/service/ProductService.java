@@ -1,3 +1,7 @@
+/*
+ * 商品服务接口，定义商品查询、导入和维护相关业务能力。
+ */
+
 package com.example.pricing.service;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;

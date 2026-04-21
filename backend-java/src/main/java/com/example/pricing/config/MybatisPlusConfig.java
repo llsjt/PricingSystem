@@ -1,3 +1,7 @@
+/*
+ * MyBatis-Plus 配置类，负责分页等基础插件注册。
+ */
+
 package com.example.pricing.config;
 
 import com.baomidou.mybatisplus.annotation.DbType;

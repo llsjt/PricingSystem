@@ -1,3 +1,7 @@
+/*
+ * 商品手工新增或编辑请求对象。
+ */
+
 package com.example.pricing.dto;
 
 import lombok.Data;

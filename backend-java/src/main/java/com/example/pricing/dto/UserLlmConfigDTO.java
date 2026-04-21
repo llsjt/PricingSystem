@@ -1,3 +1,7 @@
+/*
+ * 用户大模型配置请求对象。
+ */
+
 package com.example.pricing.dto;
 
 import lombok.Data;

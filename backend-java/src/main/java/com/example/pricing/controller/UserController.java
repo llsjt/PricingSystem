@@ -32,6 +32,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 用户管理控制器，负责登录、刷新令牌、用户维护和会话注销。
+ */
 @RestController
 @RequestMapping("/api/user")
 @RequiredArgsConstructor

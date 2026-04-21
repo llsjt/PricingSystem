@@ -24,6 +24,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+/**
+ * 定价任务流服务，把数据库快照和异步进度转换成前端 SSE 消息。
+ */
 @Service
 @RequiredArgsConstructor
 public class PricingTaskStreamService {
@@ -41,6 +44,9 @@ public class PricingTaskStreamService {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Map<Long, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
 
+    /**
+     * 创建某个任务的 SSE 连接，先推一次当前快照，再把连接注册到内存订阅表中。
+     */
     public SseEmitter streamTask(Long taskId, Long userId) {
         decisionTaskService.getTaskDetail(taskId, userId);
         SseEmitter emitter = new SseEmitter(0L);
@@ -51,6 +57,9 @@ public class PricingTaskStreamService {
         return emitter;
     }
 
+    /**
+     * 接收异步进度事件并广播给当前在线的浏览器订阅者。
+     */
     public void handleProgressEvent(TaskProgressEvent event) {
         if (event == null || event.taskId() == null) {
             return;
@@ -84,6 +93,9 @@ public class PricingTaskStreamService {
         }
     }
 
+    /**
+     * 首次建立连接时把任务状态、已有智能体卡片和最终结果一次性补发，避免前端必须从零等待。
+     */
     private void emitSnapshot(Long taskId, SseEmitter emitter) {
         try {
             PricingTask task = taskMapper.selectById(taskId);
@@ -125,6 +137,9 @@ public class PricingTaskStreamService {
         }
     }
 
+    /**
+     * 把不同来源的进度事件映射成统一的前端消息结构，保证实时流和快照结构一致。
+     */
     private List<Map<String, Object>> payloadsForEvent(TaskProgressEvent event) {
         String eventType = String.valueOf(event.eventType()).trim().toUpperCase();
         Long taskId = event.taskId();
@@ -232,6 +247,9 @@ public class PricingTaskStreamService {
         return String.valueOf(task == null ? null : task.getTaskStatus()).toUpperCase();
     }
 
+    /**
+     * 把数据库里的单条 agent_run_log 转成前端消费的 agent_card 事件载荷。
+     */
     private Map<String, Object> toAgentCard(Long taskId, AgentRunLog item) {
         int order = resolveDisplayOrder(item);
         String agentCode = switch (order) {
@@ -316,6 +334,9 @@ public class PricingTaskStreamService {
         return payload;
     }
 
+    /**
+     * 任务结束时只向前端暴露结果页真正需要的字段，避免把数据库实体直接透出。
+     */
     static Map<String, Object> buildResultPayload(PricingResult result) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("finalPrice", scaleMoney(result.getFinalPrice()));

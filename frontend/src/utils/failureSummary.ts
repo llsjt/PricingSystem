@@ -1,3 +1,7 @@
+﻿/**
+ * 失败摘要工具，用于从智能体日志和任务状态中提炼可读的失败原因。
+ */
+
 export interface FailureSummarySource {
   thinking?: unknown
   outputSummary?: unknown

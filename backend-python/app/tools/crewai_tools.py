@@ -1,3 +1,5 @@
+"""CrewAI 工具集合模块，负责组装可被智能体调用的工具对象。"""
+
 import json
 from decimal import Decimal
 from typing import Any
@@ -24,7 +26,7 @@ def estimate_sales_volume(
     target_price: float,
     strategy_goal: str,
 ) -> str:
-    """Estimate monthly sales volume after a price change."""
+    """估算调价后的月销量。"""
     estimated = _elasticity_tool.estimate_sales(
         baseline_sales=int(baseline_sales),
         current_price=Decimal(str(current_price)),
@@ -40,7 +42,7 @@ def estimate_profit(
     cost_price: float,
     expected_sales: int,
 ) -> str:
-    """Estimate monthly profit from price, cost, and expected sales."""
+    """根据售价、成本价和预期销量估算月利润。"""
     profit = _elasticity_tool.estimate_profit(
         price=Decimal(str(price)),
         cost_price=Decimal(str(cost_price)),
@@ -59,7 +61,7 @@ def evaluate_risk_rules(
     min_price: float = 0.0,
     max_price: float = 0.0,
 ) -> str:
-    """Evaluate hard pricing risk rules for a candidate price."""
+    """评估候选价格是否满足硬性风控规则。"""
     constraints: dict[str, Any] = {
         "min_profit_rate": min_profit_rate,
         "max_discount_rate": max_discount_rate,

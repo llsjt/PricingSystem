@@ -1,7 +1,9 @@
+<!-- 登录页，处理账号登录、令牌落库与登录失败提示。 -->
+
 <template>
   <div class="login-container">
     <div class="login-wrapper">
-      <!-- Left side: Branding and Project Info -->
+      <!-- 左侧用于展示系统定位、能力亮点和品牌信息。 -->
       <div class="info-section">
         <div class="info-content">
           <div class="brand-logo">
@@ -42,12 +44,12 @@
           </div>
         </div>
         
-        <!-- Decorative background elements -->
+        <!-- 装饰性背景元素，只承担视觉氛围，不参与交互。 -->
         <div class="decoration circle-1"></div>
         <div class="decoration circle-2"></div>
       </div>
 
-      <!-- Right side: Login Form -->
+      <!-- 右侧为登录表单区域，负责账号输入和登录提交。 -->
       <div class="form-section">
         <div class="form-wrapper">
           <div class="form-header">
@@ -138,6 +140,7 @@ const rules: FormRules = {
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
 }
 
+// 登录成功后统一刷新店铺状态并跳转首页；失败时尽量把接口异常转成可读提示。
 const handleLogin = async () => {
   if (!loginFormRef.value) return
 
@@ -198,7 +201,7 @@ const handleForgotPwd = () => {
   z-index: 1;
 }
 
-/* --- Left Section (Info) --- */
+/* 左侧品牌与项目信息区域 */
 .info-section {
   flex: 1;
   background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
@@ -284,7 +287,7 @@ const handleForgotPwd = () => {
   line-height: 1.5;
 }
 
-/* Decorations */
+/* 装饰性背景圆形 */
 .decoration {
   position: absolute;
   border-radius: 50%;
@@ -308,7 +311,7 @@ const handleForgotPwd = () => {
   right: -50px;
 }
 
-/* --- Right Section (Form) --- */
+/* 右侧登录表单区域 */
 .form-section {
   width: 440px;
   padding: 50px 40px;
@@ -414,7 +417,7 @@ const handleForgotPwd = () => {
   margin-left: 4px;
 }
 
-/* Responsive adjustments */
+/* 小屏幕下切换为上下布局，避免品牌区和表单区挤压 */
 @media screen and (max-width: 800px) {
   .login-wrapper {
     width: 90%;

@@ -1,3 +1,7 @@
+/*
+ * 决策任务列表项视图对象。
+ */
+
 package com.example.pricing.vo;
 
 import lombok.Data;

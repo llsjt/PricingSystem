@@ -1,3 +1,7 @@
+﻿/**
+ * 认证会话工具，负责浏览器侧令牌与会话字段的读写。
+ */
+
 export interface AuthSessionSnapshot {
   token: string
   username: string

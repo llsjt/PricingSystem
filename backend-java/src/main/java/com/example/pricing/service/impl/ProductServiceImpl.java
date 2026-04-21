@@ -1,3 +1,7 @@
+/*
+ * 商品服务实现，负责商品分页、导入、趋势和手工维护逻辑。
+ */
+
 package com.example.pricing.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;

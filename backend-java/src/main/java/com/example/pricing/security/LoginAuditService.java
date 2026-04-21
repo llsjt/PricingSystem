@@ -6,6 +6,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+/**
+ * 登录审计服务，负责写入登录成功、失败和注销等审计记录。
+ */
 @Service
 @RequiredArgsConstructor
 public class LoginAuditService {

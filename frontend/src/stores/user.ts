@@ -1,3 +1,7 @@
+﻿/**
+ * 用户状态仓库，负责登录态、用户信息和鉴权辅助逻辑。
+ */
+
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { clearAuthSession, readAuthSession, saveAuthSession, type AuthSessionPayload } from '../utils/authSession'

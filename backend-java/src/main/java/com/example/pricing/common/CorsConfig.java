@@ -9,6 +9,9 @@ import org.springframework.web.filter.CorsFilter;
 
 import java.util.Arrays;
 
+/**
+ * 跨域配置类，统一放行前端访问 Java API 所需的来源、方法与请求头。
+ */
 @Configuration
 public class CorsConfig {
 

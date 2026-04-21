@@ -1,3 +1,7 @@
+﻿/**
+ * 前端路由表，负责页面访问路径、登录拦截和布局挂载关系。
+ */
+
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import BasicLayout from '../layout/BasicLayout.vue'
 import { APP_TITLE, getNavTitleByPath } from '../config/navigation'

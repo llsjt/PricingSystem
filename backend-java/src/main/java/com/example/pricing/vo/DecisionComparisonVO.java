@@ -1,3 +1,7 @@
+/*
+ * 决策结果对比视图对象。
+ */
+
 package com.example.pricing.vo;
 
 import com.alibaba.excel.annotation.ExcelIgnore;

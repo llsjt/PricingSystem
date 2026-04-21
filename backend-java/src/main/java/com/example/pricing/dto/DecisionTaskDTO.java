@@ -1,3 +1,7 @@
+/*
+ * 决策任务创建请求对象。
+ */
+
 package com.example.pricing.dto;
 
 import lombok.Data;

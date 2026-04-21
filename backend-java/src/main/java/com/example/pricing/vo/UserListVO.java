@@ -4,6 +4,9 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
+/**
+ * 用户列表视图对象。
+ */
 @Data
 public class UserListVO {
     private Long id;

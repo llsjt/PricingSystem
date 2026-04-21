@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="page-shell shop-page">
     <section class="panel-card filter-panel">
       <div class="filter-head">
@@ -89,6 +89,8 @@
 </template>
 
 <script setup lang="ts">
+// 店铺管理页：负责店铺的新增、编辑、删除与平台筛选。
+
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { createShop, deleteShop, updateShop, type Shop, type ShopCreateDTO } from '../api/shop'

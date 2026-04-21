@@ -1,3 +1,5 @@
+"""数据库迁移辅助模块，用于启动时执行或检查迁移逻辑。"""
+
 import logging
 
 from sqlalchemy import text
@@ -46,7 +48,7 @@ def _has_index(table_name: str, schema_name: str, index_name: str) -> bool:
 
 
 def ensure_agent_run_log_schema(schema_name: str) -> None:
-    """Startup fallback migration for agent_run_log card fields."""
+    """启动时兜底补齐 agent_run_log 的卡片字段和索引。"""
     table_name = "agent_run_log"
     existing = _list_columns(table_name, schema_name)
 

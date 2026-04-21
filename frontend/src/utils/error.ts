@@ -1,3 +1,7 @@
+﻿/**
+ * 错误信息清洗工具，把接口和运行时异常整理成适合界面提示的文本。
+ */
+
 const TECHNICAL_MESSAGE_PATTERNS = [
   /\b(invalid username or password|network error|failed to fetch|stream failed|request failed|internal server error|unauthorized|forbidden|bad request|not found)\b/i,
   /\b(timeout of \d+ms exceeded|read timed out|timed out|connection refused|socket hang up|econnreset|econnrefused|enotfound|etimedout)\b/i,

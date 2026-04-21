@@ -239,6 +239,7 @@ const typewriterSpeed = 24
 const shopStore = useShopStore()
 const route = useRoute()
 const router = useRouter()
+// 任务配置、约束表单与页面主状态集中放在这里，便于启动任务、刷新快照和结果页共用。
 const taskConfig = reactive({ platform: '', shopId: undefined as number | undefined, productId: undefined as number | undefined, strategyGoal: undefined as typeof goalOptions[number]['label'] | undefined })
 const constraintForm = reactive(createDefaultPricingConstraintForm())
 const state = reactive({ taskStatus: 'IDLE' as PricingTaskStatus, cards: emptyCards(), finalPrice: null as number | null, strategy: '', finalSummary: '', errorMessage: '' })
@@ -303,6 +304,7 @@ const isArchivedTaskStatus = (status: PricingTaskStatus) => ['COMPLETED', 'MANUA
 const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
 const stopRealtime = () => { if (aborter) { aborter.abort(); aborter = null } stopPolling() }
 const hasRevealInProgress = () => Boolean(revealQueue.active || revealQueue.queue.length)
+// 流式动画状态与卡片内容解耦：停止动画时只清理展示队列，不影响后续用快照重建卡片。
 const clearRevealState = () => { liveRevealEnabled.value = false; streamArrivedCards.clear(); clearRevealQueue(revealQueue); agents.forEach((agent) => { delete revealStages[agent.code]; delete revealLineCounts[agent.code]; delete pendingRevealCards[agent.code] }) }
 const clearAgentRevealProgress = () => { streamArrivedCards.clear(); clearRevealQueue(revealQueue); agents.forEach((agent) => { delete revealStages[agent.code]; delete revealLineCounts[agent.code]; delete pendingRevealCards[agent.code] }) }
 const toRunAttempt = (value: unknown): number | null => { const n = Number(value); return Number.isFinite(n) && n >= 0 ? n : null }
@@ -494,6 +496,7 @@ const prefillFromRoute = async () => {
 }
 
 const applySnapshotDetail = (detail?: PricingTaskSnapshot['detail'] | null) => { if (!detail) return; state.taskStatus = (detail.taskStatus || 'RUNNING') as PricingTaskStatus; state.finalPrice = detail.finalPrice != null ? Number(detail.finalPrice) : null; state.strategy = String(detail.strategy || ''); state.finalSummary = String(detail.finalSummary || '') }
+// 快照是断线重连、页面刷新和跳过动画时的兜底来源，需要把日志重建成当前最新一轮智能体卡片。
 const applySnapshotLogs = (logs: DecisionLogItem[]) => {
   clearRevealState()
   const cards = emptyCards()
@@ -530,6 +533,7 @@ const openExistingTaskArchive = async (id: number) => {
   await router.push({ path: '/archive', query: { taskId: String(id) } })
 }
 
+// SSE 只负责推进状态，不直接假设本地 UI 完整；完成或失败后仍会回拉一次快照做最终对齐。
 const handleStream = async (payload: PricingTaskStreamMessage) => {
   if (payload.type === 'task_started') state.taskStatus = (payload.status || 'RUNNING') as PricingTaskStatus
   if (payload.type === 'agent_card') {
@@ -565,6 +569,7 @@ const handleStream = async (payload: PricingTaskStreamMessage) => {
   }
 }
 
+// 轮询是 SSE 的补偿通道：当流式消息丢失、页面后台挂起或网络抖动时，仍能逐步追上最新状态。
 const startPolling = () => {
   if (pollTimer || !taskId.value) return
   pollTimer = setInterval(async () => {
@@ -580,6 +585,7 @@ const startPolling = () => {
     }
   }, 2000)
 }
+// 这里手动解析 event-stream 数据块，把后端按 data: 推送的 JSON 消息逐条交给 handleStream。
 const startStream = async (id: number) => {
   stopRealtime()
   const controller = new AbortController()
@@ -612,6 +618,7 @@ const startStream = async (id: number) => {
   }
 }
 
+// 启动任务时先做本地约束校验，再创建任务、加载首个快照，并同时拉起 SSE 与轮询两条同步链路。
 const startTask = async () => {
   if (!taskConfig.platform) return ElMessage.warning('请选择平台')
   if (!taskConfig.shopId) return ElMessage.warning('请选择店铺')
@@ -711,7 +718,7 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 .constraint-control :deep(.el-input-number){width:100%}
 .constraint-unit{font-size:14px;font-weight:700;color:#64748b}
 
-/* ========== Agent decision chat ========== */
+/* ========== 智能体决策对话区 ========== */
 .decision-chat-panel{background:#f8fafc;border-color:#e2e8f0;box-shadow:none}
 .decision-chat-head{align-items:flex-start;padding-bottom:12px;margin-bottom:14px;border-bottom:1px solid #e2e8f0}
 .decision-chat-title{display:grid;gap:4px;min-width:0}
@@ -765,7 +772,7 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 @keyframes fadeSlideIn{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:translateX(0)}}
 @keyframes typing-dot{0%,80%,100%{opacity:.35;transform:translateY(0)}40%{opacity:1;transform:translateY(-4px)}}
 
-/* ========== Report page ========== */
+/* ========== 结果报告区 ========== */
 .report-page,.metric-grid{display:grid;gap:12px}
 .metric-grid{grid-template-columns:repeat(4,minmax(0,1fr))}
 .metric-card{position:relative;padding:18px 18px 16px;border-radius:14px;background:#fff;border:1px solid rgba(15,23,42,.06);box-shadow:0 1px 2px rgba(15,23,42,.04),0 8px 22px rgba(15,23,42,.05);display:grid;gap:8px;transition:box-shadow .25s ease,transform .25s ease,border-color .25s ease}

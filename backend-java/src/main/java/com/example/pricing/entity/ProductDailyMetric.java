@@ -1,3 +1,7 @@
+/*
+ * 商品日指标实体，对应按天汇总的经营指标数据。
+ */
+
 package com.example.pricing.entity;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;

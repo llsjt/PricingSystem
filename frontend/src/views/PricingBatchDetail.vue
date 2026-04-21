@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="page-shell batch-page">
     <section class="panel-card batch-hero">
       <div class="section-head">
@@ -125,6 +125,8 @@
 </template>
 
 <script setup lang="ts">
+// 批量定价详情页：展示批次执行进度、批次内任务状态与结果汇总。
+
 import { computed, onActivated, onBeforeUnmount, onDeactivated, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'

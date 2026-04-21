@@ -9,6 +9,9 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
+/**
+ * 批量定价主任务实体，对应一次批量定价批次。
+ */
 @Data
 @TableName("pricing_batch")
 public class PricingBatch {

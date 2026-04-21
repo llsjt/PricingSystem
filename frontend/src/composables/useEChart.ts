@@ -1,3 +1,7 @@
+﻿/**
+ * ECharts 组合式封装，统一处理实例创建、销毁和自适应刷新。
+ */
+
 import { onBeforeUnmount, ref } from 'vue'
 import { BarChart, LineChart } from 'echarts/charts'
 import {

@@ -1,3 +1,7 @@
+/*
+ * 淘宝 Excel 导入服务，负责把导入文件解析为商品和指标数据。
+ */
+
 package com.example.pricing.service.impl;
 
 import com.alibaba.excel.EasyExcel;

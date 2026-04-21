@@ -1,3 +1,5 @@
+﻿"""商品 SKU 模型，对应商品的规格与库存单元数据。"""
+
 from datetime import datetime
 from decimal import Decimal
 
@@ -23,4 +25,3 @@ class ProductSku(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"), server_onupdate=text("CURRENT_TIMESTAMP")
     )
-

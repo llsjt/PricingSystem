@@ -1,3 +1,5 @@
+﻿"""日志配置模块，统一初始化结构化日志和输出格式。"""
+
 from __future__ import annotations
 
 import logging

@@ -1,3 +1,7 @@
+/*
+ * 导入批次实体，对应一次商品或报表导入任务。
+ */
+
 package com.example.pricing.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;

@@ -14,6 +14,9 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * 启动对账服务，用于应用启动后修复遗留中的任务状态。
+ */
 @Component
 @RequiredArgsConstructor
 @Slf4j

@@ -1,3 +1,5 @@
+﻿"""定价任务模型，对应 pricing_task 表。"""
+
 from datetime import datetime
 from decimal import Decimal
 

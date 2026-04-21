@@ -1,3 +1,7 @@
+﻿/**
+ * 侧边导航配置，集中声明页面菜单、路由和图标映射。
+ */
+
 import { Connection, DataLine, Document, Files, Shop, User, UserFilled } from '@element-plus/icons-vue'
 import type { Component } from 'vue'
 

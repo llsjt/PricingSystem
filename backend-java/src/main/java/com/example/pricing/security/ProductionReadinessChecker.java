@@ -5,6 +5,9 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 生产就绪检查器，用于汇总当前环境是否满足上线条件。
+ */
 @Component
 public class ProductionReadinessChecker {
 

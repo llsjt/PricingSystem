@@ -1,3 +1,5 @@
+"""日志仓储模块，负责智能体日志的查询与清理。"""
+
 from typing import Any
 
 from sqlalchemy import asc, delete, desc, func, select

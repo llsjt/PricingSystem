@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="page-shell profile-page">
     <section class="panel-card profile-card">
       <div class="profile-header">
@@ -26,6 +26,8 @@
 </template>
 
 <script setup lang="ts">
+// 个人中心页：展示账户信息并聚合个人配置相关入口。
+
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'

@@ -1,3 +1,7 @@
+/*
+ * 商品实体，对应商品主表记录。
+ */
+
 package com.example.pricing.entity;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;

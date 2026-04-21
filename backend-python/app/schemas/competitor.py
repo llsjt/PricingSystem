@@ -1,3 +1,5 @@
+﻿"""竞品数据 Schema，约束竞品抓取与聚合分析使用的结构。"""
+
 from typing import Literal
 from decimal import Decimal
 

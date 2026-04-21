@@ -1,3 +1,5 @@
+﻿"""定价结果模型，对应 pricing_result 表。"""
+
 from datetime import datetime
 from decimal import Decimal
 

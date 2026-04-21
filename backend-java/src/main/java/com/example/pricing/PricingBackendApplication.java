@@ -1,3 +1,7 @@
+/*
+ * 应用启动入口，负责拉起 Spring Boot 定价后端服务。
+ */
+
 package com.example.pricing;
 
 import org.mybatis.spring.annotation.MapperScan;

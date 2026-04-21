@@ -21,6 +21,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.validation.annotation.Validated;
 
+/**
+ * 批量定价控制器，提供批次创建、列表、详情和取消等接口。
+ */
 @RestController
 @RequestMapping("/api/pricing/batches")
 @RequiredArgsConstructor

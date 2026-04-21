@@ -1,3 +1,7 @@
+﻿/**
+ * Axios 请求基座，统一处理鉴权、刷新令牌和错误兜底。
+ */
+
 import axios, { type AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
 import { clearAuthSession, getAuthToken, saveAuthSession } from '../utils/authSession'

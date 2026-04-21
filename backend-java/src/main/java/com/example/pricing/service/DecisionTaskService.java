@@ -1,3 +1,7 @@
+/*
+ * 决策任务服务接口，定义单商品智能定价的核心业务能力。
+ */
+
 package com.example.pricing.service;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;

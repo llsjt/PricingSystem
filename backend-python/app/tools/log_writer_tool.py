@@ -1,3 +1,5 @@
+"""日志写入工具，负责把智能体运行阶段和卡片内容写入数据库。"""
+
 from typing import Any
 
 from sqlalchemy.orm import Session

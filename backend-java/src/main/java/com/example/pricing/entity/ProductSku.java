@@ -1,3 +1,7 @@
+/*
+ * 商品 SKU 实体，对应规格库存维度的数据。
+ */
+
 package com.example.pricing.entity;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;

@@ -10,6 +10,9 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 定价任务实体，对应单商品智能定价执行主记录。
+ */
 @Data
 @TableName("pricing_task")
 public class PricingTask {

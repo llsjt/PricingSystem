@@ -1,3 +1,7 @@
+/*
+ * 决策任务服务实现，负责任务创建、日志查询、结果应用与导出。
+ */
+
 package com.example.pricing.service.impl;
 
 import com.alibaba.excel.EasyExcel;
@@ -116,6 +120,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         }
         String normalizedGoal = (strategyGoal == null || strategyGoal.isBlank()) ? "MAX_PROFIT" : strategyGoal.trim();
         String normalizedConstraints = constraints == null ? "" : constraints.trim();
+        // 用幂等键把“用户 + 商品 + 目标 + 约束”绑定起来，尽量复用仍可查看的历史任务。
         String idempotencyKey = pricingTaskReuseSupport.buildIdempotencyKey(productIds, normalizedGoal, normalizedConstraints, userId);
 
         PricingTask existingTask = pricingTaskReuseSupport.findReusableTask(idempotencyKey, product.getShopId());
@@ -123,6 +128,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
             return existingTask.getId();
         }
 
+        // 任务创建时就把模型配置快照写入任务，避免后续用户修改个人配置影响正在执行的任务。
         PricingTask task = new PricingTask();
         task.setTaskCode("TASK-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase());
         task.setShopId(product.getShopId());
@@ -151,6 +157,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
             throw new IllegalStateException("任务创建失败");
         }
 
+        // 派发成功后任务才会从 PENDING 进入 QUEUED；如果消息未成功发布，就明确标记成 FAILED。
         TaskDispatchEvent event = new TaskDispatchEvent(
                 UUID.randomUUID().toString(),
                 taskId,
@@ -466,6 +473,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         if (task == null) {
             return new ArrayList<>();
         }
+        // 当前单任务只对应一个商品，因此结果页和导出页都复用这一行对比数据。
         Product product = productMapper.selectById(task.getProductId());
         PricingResult result = getResultByTaskId(taskId);
         if (product == null || result == null) {

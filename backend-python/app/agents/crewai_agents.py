@@ -1,6 +1,8 @@
 """
 CrewAI agent definitions.
 """
+# CrewAI 智能体定义模块，负责声明四个定价智能体的角色和提示词。
+
 
 from crewai import Agent
 

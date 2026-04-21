@@ -1,3 +1,7 @@
+/*
+ * 流量促销 Mapper，负责 traffic_promo_daily 表的数据访问。
+ */
+
 package com.example.pricing.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;

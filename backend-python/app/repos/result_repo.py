@@ -1,3 +1,5 @@
+﻿"""结果仓储模块，封装定价结果的查询与持久化操作。"""
+
 from decimal import Decimal
 
 from sqlalchemy import select

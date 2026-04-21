@@ -1,3 +1,7 @@
+/*
+ * 店铺实体，对应用户管理的店铺记录。
+ */
+
 package com.example.pricing.entity;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;

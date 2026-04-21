@@ -6,6 +6,9 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 商品日指标分页结果视图对象。
+ */
 @Data
 public class ProductDailyMetricPageVO {
     private long page;

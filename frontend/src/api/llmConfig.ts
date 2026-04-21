@@ -1,3 +1,7 @@
+﻿/**
+ * 大模型配置接口封装，供个人中心读取、校验和保存用户自己的模型参数。
+ */
+
 import request, { type ApiResponse } from './request'
 
 export interface LlmConfigPayload {

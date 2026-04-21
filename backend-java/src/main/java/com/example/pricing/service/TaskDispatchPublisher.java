@@ -17,6 +17,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * 任务派发发布器，负责把待执行任务写入异步消息通道并确认投递。
+ */
 @Service
 @RequiredArgsConstructor
 public class TaskDispatchPublisher {

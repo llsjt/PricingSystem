@@ -9,6 +9,9 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
+/**
+ * 批量定价子项实体，对应批次内的单商品执行记录。
+ */
 @Data
 @TableName("pricing_batch_item")
 public class PricingBatchItem {

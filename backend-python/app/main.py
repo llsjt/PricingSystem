@@ -1,3 +1,5 @@
+"""FastAPI 应用入口，负责注册路由、中间件与启动事件。"""
+
 import asyncio
 import logging
 import sys
@@ -26,6 +28,7 @@ app = FastAPI(title=settings.app_name)
 
 @app.middleware("http")
 async def trace_logging_middleware(request: Request, call_next):
+    """为每个 HTTP 请求补充 trace_id，并记录请求开始/结束日志。"""
     trace_id = (request.headers.get("X-Trace-Id") or "").strip() or f"req-{int(time.time() * 1000)}"
     request.state.trace_id = trace_id
     started_at = time.perf_counter()
@@ -46,6 +49,7 @@ async def trace_logging_middleware(request: Request, call_next):
 
 @app.on_event("startup")
 async def startup_migrations() -> None:
+    """启动时先校验生产安全配置，再补齐数据库字段并拉起 RabbitMQ Worker。"""
     settings.validate_production_safety()
     ensure_agent_run_log_schema(settings.mysql_db)
     await get_rabbitmq_worker_service().start()
@@ -53,6 +57,7 @@ async def startup_migrations() -> None:
 
 @app.on_event("shutdown")
 async def shutdown_queue() -> None:
+    """服务关闭时主动停止 Worker，避免连接与消费协程残留。"""
     await get_rabbitmq_worker_service().stop()
 
 

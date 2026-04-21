@@ -1,3 +1,7 @@
+/*
+ * 流量促销日数据实体，对应外部导入的投流和促销指标。
+ */
+
 package com.example.pricing.entity;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;

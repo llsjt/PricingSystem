@@ -1,3 +1,7 @@
+/*
+ * 决策日志视图对象。
+ */
+
 package com.example.pricing.vo;
 
 import lombok.Data;

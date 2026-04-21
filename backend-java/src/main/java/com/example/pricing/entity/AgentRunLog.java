@@ -1,3 +1,7 @@
+/*
+ * 智能体运行日志实体，对应单次智能体输出记录。
+ */
+
 package com.example.pricing.entity;
 
 import com.baomidou.mybatisplus.annotation.FieldFill;

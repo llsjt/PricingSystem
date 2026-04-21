@@ -1,3 +1,5 @@
+﻿"""商品数据工具，供智能体读取商品基础信息与经营指标。"""
+
 from decimal import Decimal
 
 from app.schemas.agent import DailyMetricSnapshot, ProductContext, TrafficSnapshot
@@ -34,4 +36,3 @@ class ProductDataTool:
             "total_visitors": total_visitors,
             "traffic_ctr": ctr.quantize(Decimal("0.0000")),
         }
-

@@ -7,6 +7,9 @@ import com.example.pricing.vo.PricingBatchCreateVO;
 import com.example.pricing.vo.PricingBatchDetailVO;
 import com.example.pricing.vo.PricingBatchItemVO;
 
+/**
+ * 批量定价服务接口，定义批次创建、查询和取消的业务能力。
+ */
 public interface PricingBatchService {
 
     PricingBatchCreateVO createBatch(PricingBatchCreateDTO request, Long userId);

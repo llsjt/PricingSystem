@@ -190,6 +190,8 @@
 </template>
 
 <script setup lang="ts">
+// 数据导入页：负责上传淘宝数据、识别导入类型并展示导入结果。
+
 import { computed, onMounted, ref } from 'vue'
 import { Document, UploadFilled } from '@element-plus/icons-vue'
 import { ElMessage, type UploadInstance, type UploadProps, type UploadRequestOptions } from 'element-plus'
@@ -293,6 +295,7 @@ const selectedTypeInfo = computed(() => importTypes.find((item) => item.code ===
 const requestType = computed<ImportDataType>(() => (autoDetect.value ? 'AUTO' : selectedType.value))
 const hasBatchResults = computed(() => importBatchFiles.value.length > 0)
 const completedFileStatuses: FileImportStatus[] = ['success', 'partial', 'failed']
+// 导入结果优先按实际处理顺序展示；未开始处理的文件退回到选择顺序，便于用户理解批次执行过程。
 const sortedBatchFiles = computed(() =>
   [...importBatchFiles.value].sort((left, right) => {
     const leftOrder = left.processingOrder ?? Number.MAX_SAFE_INTEGER
@@ -303,6 +306,7 @@ const sortedBatchFiles = computed(() =>
     return left.sequence - right.sequence
   })
 )
+// 批次摘要把“文件维度”和“行维度”的结果统一汇总，供页头统计与完成提示共用。
 const batchSummary = computed(() => {
   const successFiles = importBatchFiles.value.filter((item) => item.status === 'success').length
   const partialFiles = importBatchFiles.value.filter((item) => item.status === 'partial').length
@@ -414,6 +418,7 @@ const resolveLocalErrorMessage = (error: unknown) => {
 const isImportResponseSuccessful = (result?: ImportResultVO) =>
   result?.uploadStatus === 'SUCCESS' || result?.uploadStatus === 'PARTIAL_SUCCESS'
 
+// 上传入口先把文件注册到本地批次队列，再交给自动识别和串行处理流程，避免多个文件并发写乱状态。
 const handleCustomUpload: UploadProps['httpRequest'] = async (options) => {
   const sequence = uploadSequence.value++
   const fileItem: ImportBatchFileItem = {

@@ -1,3 +1,5 @@
+﻿"""进度事件服务，负责把任务和智能体阶段事件发布给 Java 后端。"""
+
 import asyncio
 import json
 from datetime import datetime, timezone

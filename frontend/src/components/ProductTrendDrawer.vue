@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <el-drawer
     v-model="visible"
     :size="drawerSize"
@@ -116,6 +116,8 @@
 </template>
 
 <script setup lang="ts">
+// 商品趋势抽屉组件，负责展示商品近期销量、流量和价格趋势。
+
 import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import request from '../api/request'

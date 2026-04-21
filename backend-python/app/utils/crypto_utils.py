@@ -1,4 +1,6 @@
-"""Symmetric encryption helpers for per-user LLM API keys."""
+"""对称加解密工具，负责保护每个用户自己的 LLM API Key。"""
+# 加解密工具模块，负责 LLM 密钥的加密与解密。
+
 
 import base64
 import hashlib
@@ -13,18 +15,17 @@ TAG_LENGTH = 16
 
 
 def _fernet_key() -> bytes:
-    """Derive a valid 32-byte URL-safe base64 Fernet key from the raw secret."""
+    """根据原始密钥派生出 Fernet 需要的 32 字节 URL-safe Base64 密钥。"""
     secret = get_settings().llm_key_encryption_secret
     raw = hashlib.sha256(secret.encode()).digest()
     return base64.urlsafe_b64encode(raw)
 
 
 def encrypt_api_key(plaintext: str) -> str:
-    """Encrypt an API key using Fernet.
+    """使用 Fernet 加密 API Key。
 
-    Returns a base64-encoded ciphertext string.
-    If no encryption secret is configured, returns the plaintext as-is
-    (dev-mode fallback).
+    返回 Base64 编码后的密文字符串。
+    如果当前没有配置加密密钥，则直接回传原文，作为开发环境兜底行为。
     """
     if not get_settings().llm_key_encryption_secret:
         return plaintext
@@ -33,10 +34,9 @@ def encrypt_api_key(plaintext: str) -> str:
 
 
 def decrypt_api_key(ciphertext: str) -> str:
-    """Decrypt an API key previously encrypted with :func:`encrypt_api_key`.
+    """解密由 :func:`encrypt_api_key` 加密过的 API Key。
 
-    If no encryption secret is configured, returns the ciphertext as-is
-    (dev-mode fallback).
+    如果当前没有配置加密密钥，则直接回传原始输入，作为开发环境兜底行为。
     """
     if not get_settings().llm_key_encryption_secret:
         return ciphertext

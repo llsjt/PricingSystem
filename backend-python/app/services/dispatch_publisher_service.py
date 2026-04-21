@@ -1,3 +1,5 @@
+﻿"""派发发布服务，负责把待执行任务投递到异步工作队列。"""
+
 import json
 from datetime import datetime, timezone
 from uuid import uuid4

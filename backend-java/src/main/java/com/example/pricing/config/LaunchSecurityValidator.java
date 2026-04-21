@@ -3,6 +3,9 @@ package com.example.pricing.config;
 import com.example.pricing.security.ProductionReadinessChecker;
 import org.springframework.stereotype.Component;
 
+/**
+ * 启动安全校验器，在应用启动阶段阻止不安全配置进入运行态。
+ */
 @Component
 public class LaunchSecurityValidator {
 

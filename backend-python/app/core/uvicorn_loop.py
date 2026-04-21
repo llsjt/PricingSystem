@@ -1,3 +1,5 @@
+"""Uvicorn 运行辅助模块，用于启动或复用事件循环。"""
+
 import asyncio
 
 

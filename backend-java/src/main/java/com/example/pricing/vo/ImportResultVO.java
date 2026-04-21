@@ -1,3 +1,7 @@
+/*
+ * 导入结果视图对象。
+ */
+
 package com.example.pricing.vo;
 
 import lombok.Data;

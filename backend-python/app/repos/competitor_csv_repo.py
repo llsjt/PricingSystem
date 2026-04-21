@@ -3,6 +3,8 @@
 `scripts/build_competitor_index.py` 把天猫 CSV 转成 `competitor_index.sqlite`，
 本仓储负责按类目/标题关键词查询，并按销量降序返回 top-N 行。
 """
+# 竞品 CSV 仓储模块，负责读取和整理本地竞品 CSV 数据。
+
 from __future__ import annotations
 
 import sqlite3

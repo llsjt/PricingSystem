@@ -11,6 +11,9 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.io.IOException;
 
+/**
+ * JWT 鉴权拦截器，在进入控制器前解析令牌并写入当前用户信息。
+ */
 @Component
 @RequiredArgsConstructor
 public class JwtAuthInterceptor implements HandlerInterceptor {

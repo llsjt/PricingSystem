@@ -12,6 +12,9 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+/**
+ * 健康检查控制器，对外提供存活、就绪和指标查询接口。
+ */
 @RestController
 @RequestMapping("/api/health")
 public class HealthController {

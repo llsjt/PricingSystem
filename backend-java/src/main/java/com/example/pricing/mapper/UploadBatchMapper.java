@@ -1,3 +1,7 @@
+/*
+ * 导入批次 Mapper，负责 upload_batch 表的数据访问。
+ */
+
 package com.example.pricing.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;

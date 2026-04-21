@@ -10,6 +10,8 @@
 brandBreakdown / shopTypeBreakdown / salesWeightedAverage / promotionDensity，
 供 prompt summary 与前端 evidence 使用。
 """
+# 天猫 CSV 竞品提供者，用于从本地竞品数据源生成市场情报输入。
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -283,7 +285,7 @@ class TmallCsvCompetitorProvider:
             result.append(normalized)
         return result
 
-    # ── Empty result ─────────────────────────────────────────
+# ── 空结果兜底 ─────────────────────────────────────────
     def _empty_result(self, source_status: str, *, message: str) -> dict[str, Any]:
         return {
             "sourceStatus": source_status,

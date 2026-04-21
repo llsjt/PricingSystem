@@ -1,3 +1,5 @@
+﻿"""结果写入工具，负责把最终定价结果持久化到数据库。"""
+
 from sqlalchemy.orm import Session
 
 from app.repos.result_repo import ResultRepo

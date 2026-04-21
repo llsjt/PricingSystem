@@ -1,3 +1,7 @@
+﻿/**
+ * 应用前端入口，负责注册状态管理、路由并挂载根组件。
+ */
+
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'

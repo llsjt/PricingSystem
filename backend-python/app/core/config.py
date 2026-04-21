@@ -1,3 +1,5 @@
+﻿"""应用配置模块，负责从环境变量读取 Python 协作端的运行参数。"""
+
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal

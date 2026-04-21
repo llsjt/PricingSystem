@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="page-shell model-page">
     <section class="panel-card model-card">
       <div class="section-head">
@@ -61,6 +61,8 @@
 </template>
 
 <script setup lang="ts">
+// 模型管理页：负责维护用户个人大模型配置和连通性校验。
+
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteLlmConfig, getLlmConfig, saveLlmConfig, verifyLlmConfig, type LlmConfigVO } from '../api/llmConfig'

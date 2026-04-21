@@ -1,3 +1,7 @@
+/*
+ * MyBatis 自动填充处理器，用于统一填充创建和更新时间字段。
+ */
+
 package com.example.pricing.handler;
 
 import com.baomidou.mybatisplus.core.handlers.MetaObjectHandler;

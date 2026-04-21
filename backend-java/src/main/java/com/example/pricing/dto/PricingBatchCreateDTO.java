@@ -7,6 +7,9 @@ import lombok.Data;
 
 import java.util.List;
 
+/**
+ * 批量定价创建请求对象。
+ */
 @Data
 public class PricingBatchCreateDTO {
     @NotEmpty(message = "至少选择一个商品")

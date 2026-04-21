@@ -1,3 +1,7 @@
+﻿/**
+ * 店铺状态仓库，统一缓存当前用户可见的店铺列表。
+ */
+
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { getShopList, type Shop } from '../api/shop'

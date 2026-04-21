@@ -1,3 +1,7 @@
+/*
+ * 商品控制器，负责商品列表、手工维护、导入和趋势查询接口。
+ */
+
 package com.example.pricing.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;

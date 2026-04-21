@@ -1,3 +1,7 @@
+/*
+ * 店铺新增请求对象。
+ */
+
 package com.example.pricing.dto;
 
 import lombok.Data;

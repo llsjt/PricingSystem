@@ -1,3 +1,7 @@
+/*
+ * 批量定价服务实现，负责批次创建、批次进度统计和批次取消。
+ */
+
 package com.example.pricing.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -57,7 +61,7 @@ public class PricingBatchServiceImpl implements PricingBatchService {
 
     @Override
     public PricingBatchCreateVO createBatch(PricingBatchCreateDTO request, Long userId) {
-        // Intentionally not transactional: each item records its own creation/recovery result.
+        // 这里故意不包整批事务：单个商品创建失败时，也要保留其他商品的建链结果和失败原因。
         List<Long> productIds = normalizeProductIds(request == null ? null : request.getProductIds());
         String strategyGoal = normalizeRequiredStrategyGoal(request == null ? null : request.getStrategyGoal());
         String constraints = normalizeConstraints(request == null ? null : request.getConstraints());
@@ -79,6 +83,7 @@ public class PricingBatchServiceImpl implements PricingBatchService {
         List<Long> linkedTaskIds = new ArrayList<>();
         int createFailedCount = 0;
         int itemOrder = 1;
+        // 逐商品建立批次子项，保证每个商品都能记录到“成功建链”或“建链失败”的最终状态。
         for (Long productId : productIds) {
             PricingBatchItem item = new PricingBatchItem();
             item.setBatchId(batch.getId());

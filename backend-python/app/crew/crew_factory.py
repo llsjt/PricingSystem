@@ -7,6 +7,8 @@ CrewAI Crew 构建工厂
 优化：预计算数据摘要和竞品数据，直接注入到 prompt，
 减少 Agent 的工具调用次数和 LLM 往返，大幅降低总耗时。
 """
+# Crew 构造工厂，负责把 Agent、Task 和工具组装成一次定价编排实例。
+
 
 from collections.abc import Callable
 from dataclasses import dataclass

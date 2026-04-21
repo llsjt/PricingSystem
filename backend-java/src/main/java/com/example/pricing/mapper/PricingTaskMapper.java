@@ -1,3 +1,7 @@
+/*
+ * 定价任务 Mapper，负责 pricing_task 表的数据访问与状态更新。
+ */
+
 package com.example.pricing.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;

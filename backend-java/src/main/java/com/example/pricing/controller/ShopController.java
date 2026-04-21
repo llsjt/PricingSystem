@@ -1,3 +1,7 @@
+/*
+ * 店铺控制器，负责店铺列表、新增、修改和删除接口。
+ */
+
 package com.example.pricing.controller;
 
 import com.example.pricing.common.Result;

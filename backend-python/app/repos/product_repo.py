@@ -1,3 +1,5 @@
+﻿"""商品仓储模块，封装商品与商品指标相关的数据库读取逻辑。"""
+
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
@@ -39,4 +41,3 @@ class ProductRepo:
             .limit(limit)
         )
         return list(reversed(list(self.db.scalars(stmt).all())))
-

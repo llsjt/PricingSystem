@@ -1,3 +1,5 @@
+<!-- 应用根组件，负责承载全局布局与路由视图出口。 -->
+
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'

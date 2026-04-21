@@ -10,6 +10,9 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 
+/**
+ * JWT 工具类，负责令牌生成、解析和基础校验。
+ */
 @Component
 public class JwtUtil {
 

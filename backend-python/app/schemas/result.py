@@ -1,3 +1,5 @@
+﻿"""最终定价结果 Schema，约束落库和返回给 Java 的结果格式。"""
+
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,4 +18,3 @@ class TaskFinalResult(BaseModel):
     result_summary: str = Field(alias="resultSummary")
     suggested_min_price: Decimal = Field(alias="suggestedMinPrice")
     suggested_max_price: Decimal = Field(alias="suggestedMaxPrice")
-

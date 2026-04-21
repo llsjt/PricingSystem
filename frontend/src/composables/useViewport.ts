@@ -1,3 +1,7 @@
+﻿/**
+ * 视口信息组合式工具，用于响应式布局判断和窗口尺寸监听。
+ */
+
 import { computed, onBeforeUnmount, onMounted, ref, type ComputedRef, type Ref } from 'vue'
 
 export interface ViewportState {

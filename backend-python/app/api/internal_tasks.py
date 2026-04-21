@@ -1,3 +1,5 @@
+﻿"""内部任务接口模块，提供任务状态、详情、日志和重试等仅供 Java 后端调用的入口。"""
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 

@@ -1,3 +1,7 @@
+/*
+ * 用户大模型配置控制器，负责查询、保存、删除和校验个人模型配置。
+ */
+
 package com.example.pricing.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;

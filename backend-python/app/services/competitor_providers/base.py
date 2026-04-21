@@ -1,3 +1,5 @@
+﻿"""竞品提供者抽象定义，约束不同竞品来源的统一调用接口。"""
+
 from decimal import Decimal
 from typing import Any, Protocol
 

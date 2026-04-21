@@ -5,6 +5,9 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 批量定价子项视图对象。
+ */
 @Data
 public class PricingBatchItemVO {
     private Long id;

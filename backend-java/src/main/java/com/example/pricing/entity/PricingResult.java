@@ -10,6 +10,9 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+/**
+ * 定价结果实体，对应最终输出的价格建议与收益测算。
+ */
 @Data
 @TableName("pricing_result")
 public class PricingResult {

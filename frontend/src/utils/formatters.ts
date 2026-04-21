@@ -1,3 +1,7 @@
+﻿/**
+ * 通用格式化工具，集中处理金额、时间、百分比等展示格式。
+ */
+
 export interface NumericFormatOptions {
   fractionDigits?: number
   fallbackText?: string

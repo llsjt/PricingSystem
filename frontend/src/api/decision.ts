@@ -1,4 +1,8 @@
-﻿import request from './request'
+﻿/**
+ * 定价任务接口封装，统一维护任务创建、结果查询、日志查询与 SSE 消息类型。
+ */
+
+import request from './request'
 
 export interface DecisionTaskRequest {
   productIds: number[]

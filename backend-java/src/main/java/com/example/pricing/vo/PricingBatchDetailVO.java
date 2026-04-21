@@ -4,6 +4,9 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
+/**
+ * 批量定价详情视图对象。
+ */
 @Data
 public class PricingBatchDetailVO {
     private Long batchId;

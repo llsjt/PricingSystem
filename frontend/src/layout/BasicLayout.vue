@@ -1,3 +1,5 @@
+<!-- 后台基础布局组件，负责导航、顶部栏和内容区域的统一壳层。 -->
+
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -39,6 +41,7 @@ const cacheNames = computed(() =>
 )
 
 const shopStore = useShopStore()
+// 如果用户还没有任何店铺，布局层直接弹出首店创建守卫，避免进入业务页后才发现无法操作。
 const showShopGuard = computed(
   () => shopStore.loadSucceeded && !shopStore.loading && shopStore.shops.length === 0 && route.path !== '/login'
 )
@@ -83,6 +86,7 @@ const navigateTo = (path: string) => {
 
 const isNavItemActive = (path: string) => route.path.startsWith(path)
 
+// 标签页由布局统一维护，确保菜单点击、路由跳转和 keep-alive 缓存名称始终同步。
 const upsertTab = (tab: OpenTab) => {
   const index = openTabs.value.findIndex((item) => item.path === tab.path)
   if (index >= 0) {
@@ -103,6 +107,7 @@ const ensureCurrentTab = () => {
   })
 }
 
+// 关闭当前激活标签时，优先回退到相邻标签，保持后台多页签浏览的连续体验。
 const openTab = (path: string) => {
   if (route.path === path) return
   navigateTo(path)
@@ -142,7 +147,7 @@ const handleCommand = async (command: string) => {
     try {
       await logout()
     } catch {
-      // fall through and clear local state regardless
+      // 即使后端注销接口失败，也要继续清理本地会话，避免页面残留旧登录态。
     }
     shopStore.resetState()
     userStore.clearSession()

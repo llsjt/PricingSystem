@@ -8,6 +8,9 @@ import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 
+/**
+ * 登录尝试服务，用于限制暴力尝试并统计登录失败次数。
+ */
 @Component
 public class LoginAttemptService {
 

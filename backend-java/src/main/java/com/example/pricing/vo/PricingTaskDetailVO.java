@@ -1,3 +1,7 @@
+/*
+ * 定价任务详情视图对象。
+ */
+
 package com.example.pricing.vo;
 
 import lombok.Data;

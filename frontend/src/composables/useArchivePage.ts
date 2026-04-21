@@ -1,3 +1,7 @@
+﻿/**
+ * 决策档案页组合式逻辑，集中管理列表查询、详情抽屉、图表和结果应用。
+ */
+
 import { computed, nextTick, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'

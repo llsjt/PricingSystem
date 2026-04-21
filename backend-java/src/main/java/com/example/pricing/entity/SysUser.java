@@ -9,6 +9,9 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
+/**
+ * 系统用户实体，对应平台登录账号及其基础属性。
+ */
 @Data
 @TableName("sys_user")
 public class SysUser {

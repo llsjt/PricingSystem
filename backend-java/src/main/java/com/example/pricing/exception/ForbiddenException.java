@@ -1,3 +1,7 @@
+/*
+ * 无权限异常类型，用于表达当前用户没有访问权限的场景。
+ */
+
 package com.example.pricing.exception;
 
 /**

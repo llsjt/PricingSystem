@@ -1,3 +1,7 @@
+/*
+ * 决策任务控制器，提供旧版定价任务的启动、查询、导出与应用接口。
+ */
+
 package com.example.pricing.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;

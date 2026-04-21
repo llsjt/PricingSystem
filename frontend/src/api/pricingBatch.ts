@@ -1,3 +1,7 @@
+﻿/**
+ * 批量定价接口封装，集中定义批次列表、详情和操作相关请求。
+ */
+
 import request from './request'
 
 export interface PricingBatchCreateRequest {

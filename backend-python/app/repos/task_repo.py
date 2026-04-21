@@ -1,3 +1,5 @@
+﻿"""任务仓储模块，封装定价任务状态流转与查询操作。"""
+
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 

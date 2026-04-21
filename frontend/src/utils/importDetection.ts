@@ -1,3 +1,7 @@
+﻿/**
+ * 导入结果识别工具，辅助前端判断导入来源和导入状态。
+ */
+
 import type { ImportDataType } from '../api/product'
 
 export type SupportedImportType = Exclude<ImportDataType, 'AUTO'>

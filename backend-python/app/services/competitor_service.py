@@ -1,3 +1,5 @@
+"""竞品服务，负责聚合不同竞品来源并生成统一竞品上下文。"""
+
 import logging
 from decimal import Decimal
 from statistics import median
@@ -23,7 +25,7 @@ QUALITY_REASON_CN = {
 
 
 class CompetitorService:
-    """Market intelligence service backed by the Tmall CSV index."""
+    """竞品服务，基于当前配置的数据源生成统一的市场情报结果。"""
 
     def __init__(
         self,

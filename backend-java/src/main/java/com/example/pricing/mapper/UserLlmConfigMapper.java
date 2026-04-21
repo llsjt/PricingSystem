@@ -1,3 +1,7 @@
+/*
+ * 用户模型配置 Mapper，负责 user_llm_config 表的数据访问。
+ */
+
 package com.example.pricing.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;

@@ -10,6 +10,9 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 
+/**
+ * 任务进度订阅器，负责消费异步进度事件并交给 SSE 流服务。
+ */
 @Service
 @RequiredArgsConstructor
 public class PricingTaskProgressSubscriber {

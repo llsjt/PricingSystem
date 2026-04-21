@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="page-shell archive-page">
     <section class="panel-card archive-hero">
       <div class="section-title">
@@ -352,6 +352,8 @@
 </template>
 
 <script setup lang="ts">
+// 决策档案页：整合任务筛选、批次追踪、详情抽屉、图表与结果应用入口。
+
 import CountUp from '../components/CountUp.vue'
 import { useArchivePage } from '../composables/useArchivePage'
 

@@ -1,3 +1,7 @@
+/*
+ * 操作日志切面，用于在控制器或服务调用后统一记录关键操作日志。
+ */
+
 package com.example.pricing.aspect;
 
 import lombok.extern.slf4j.Slf4j;

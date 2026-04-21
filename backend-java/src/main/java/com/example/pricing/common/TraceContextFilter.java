@@ -11,6 +11,9 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.UUID;
 
+/**
+ * 链路追踪过滤器，为每个请求补充 traceId 并透传到日志上下文。
+ */
 @Component
 public class TraceContextFilter extends OncePerRequestFilter {
 

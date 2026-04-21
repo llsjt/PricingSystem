@@ -1,3 +1,5 @@
+﻿"""价格弹性与利润测算工具，供智能体推导不同价格下的销量和利润变化。"""
+
 from decimal import Decimal
 
 from app.utils.math_utils import money
@@ -32,4 +34,3 @@ class ElasticityProfitTool:
     def estimate_profit(self, price: Decimal, cost_price: Decimal, expected_sales: int) -> Decimal:
         unit_profit = Decimal(str(price or 0)) - Decimal(str(cost_price or 0))
         return money(unit_profit * Decimal(max(int(expected_sales or 0), 0)))
-

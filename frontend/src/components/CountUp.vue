@@ -1,8 +1,10 @@
-<template>
+﻿<template>
   <span class="count-up" :class="{ 'count-up-animating': animating }">{{ display }}</span>
 </template>
 
 <script setup lang="ts">
+// 数字滚动组件，用于把价格、销量和利润等指标以动画形式展示出来。
+
 import { onBeforeUnmount, ref, watch } from 'vue'
 
 const props = withDefaults(defineProps<{

@@ -1,3 +1,7 @@
+/*
+ * 未认证异常类型，用于表达用户尚未登录或登录态失效的场景。
+ */
+
 package com.example.pricing.exception;
 
 /**

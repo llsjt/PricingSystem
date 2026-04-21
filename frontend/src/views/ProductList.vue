@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="page-shell">
     <section class="panel-card table-card product-card">
       <div class="section-head">
@@ -558,6 +558,8 @@
 </template>
 
 <script setup lang="ts">
+// 商品列表页：负责商品查询、筛选、趋势查看与基础维护操作。
+
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { createPricingBatch } from '../api/pricingBatch'
 import {

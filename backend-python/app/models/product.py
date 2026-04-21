@@ -1,3 +1,5 @@
+﻿"""商品模型，对应商品主数据表。"""
+
 from datetime import datetime
 from decimal import Decimal
 

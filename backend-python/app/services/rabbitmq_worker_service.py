@@ -1,3 +1,5 @@
+"""RabbitMQ Worker 服务，负责消费异步任务并驱动本地执行。"""
+
 import asyncio
 import json
 import logging
@@ -17,7 +19,7 @@ FAILURE_REASON_MAX_LEN = 255
 
 
 class RecoverableError(Exception):
-    """Transient worker error that should be requeued."""
+    """可恢复的 Worker 异常，出现后应把消息重新放回队列。"""
 
 
 def _truncate(msg: str | None, limit: int = FAILURE_REASON_MAX_LEN) -> str:
@@ -106,6 +108,7 @@ class RabbitMqWorkerService:
         import aio_pika
 
         backoff = 1
+        # 常驻连接 RabbitMQ；一旦连接失败就按退避策略重连，直到服务被显式停止。
         while self._started:
             try:
                 self._connection = await aio_pika.connect_robust(
@@ -136,6 +139,7 @@ class RabbitMqWorkerService:
                 backoff = min(backoff * 2, 30)
 
     async def on_message(self, message: Any) -> None:
+        """消费单条派发消息，并完成抢占执行权、执行任务、确认或重入队列。"""
         try:
             payload = json.loads(message.body)
             task_id = int(payload["taskId"])
@@ -161,6 +165,7 @@ class RabbitMqWorkerService:
                 return
 
             execution_id = str(uuid.uuid4())
+            # 只有成功抢到 current_execution_id 的 Worker 才能继续执行，避免同一任务被重复消费。
             acquired = await asyncio.to_thread(
                 repo.acquire_execution,
                 task_id,
@@ -177,6 +182,7 @@ class RabbitMqWorkerService:
                 await self.dispatch_service.run_task(task_id, execution_id)
                 await message.ack()
             except RecoverableError as exc:
+                # 可恢复错误走“释放执行权 + 增加消费重试次数 + 重新入队”这条路径。
                 await asyncio.to_thread(
                     repo.increment_consumer_retry_and_release,
                     task_id,

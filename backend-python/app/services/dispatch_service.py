@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 
 class DispatchService:
+    """任务派发服务，负责队列接入、失败重试、日志整理和进入编排前的上下文准备。"""
+
     def __init__(self, db: Session):
         self.db = db
         self.task_repo = TaskRepo(db)
@@ -61,6 +63,7 @@ class DispatchService:
         self.db.refresh(task)
 
     def dispatch(self, req: DispatchTaskRequest, queue_service) -> DispatchTaskResponse:
+        """把 Java 侧送来的任务纳入本地执行队列，并同步保存本次执行需要的 LLM 配置。"""
         task = self.task_repo.get_by_id(req.task_id)
         if task is None:
             return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="NOT_FOUND", message="task not found")
@@ -119,6 +122,7 @@ class DispatchService:
         )
 
     def handle_worker_failure(self, req: DispatchTaskRequest, reason: str, max_retries: int) -> DispatchTaskResponse:
+        """处理 Worker 执行失败后的重试状态流转，并保留可用于断点续跑的成功卡片。"""
         task = self.task_repo.get_by_id(req.task_id)
         if task is None:
             return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="NOT_FOUND", message="task not found")
@@ -188,6 +192,7 @@ class DispatchService:
         )
 
     def get_logs(self, task_id: int, limit: int = 200) -> TaskLogsResponse:
+        """把数据库日志整理成前端日志卡片结构，补齐运行阶段和人工审核等兼容字段。"""
         logs = self.log_repo.list_by_task_id(task_id, limit=limit)
         items: list[AgentLogItem] = []
         for item in logs:
@@ -228,6 +233,7 @@ class DispatchService:
         return TaskLogsResponse(taskId=task_id, total=len(items), logs=items)
 
     def build_dispatch_request(self, task) -> DispatchTaskRequest:
+        """把数据库任务实体重新组装成一次可执行的派发请求，供重试和恢复场景复用。"""
         llm_api_key = None
         if task.llm_api_key_enc:
             try:
@@ -251,6 +257,7 @@ class DispatchService:
         task = self.task_repo.get_by_id(task_id)
         if task is None:
             raise ValueError(f"task not found: {task_id}")
+        # RabbitMQ 消费、重试和恢复场景都会先收敛成统一的派发请求，再复用主执行流程。
         request = self.build_dispatch_request(task)
         self.execute_queued(request, execution_id=execution_id)
 
@@ -260,6 +267,7 @@ class DispatchService:
         worker_id: int | None = None,
         execution_id: str | None = None,
     ) -> None:
+        """真正执行队列中的任务：补齐上下文、进入 CrewAI 编排，并在结束后清理临时密钥。"""
         task = self.task_repo.get_by_id(req.task_id)
         if task is None:
             raise ValueError(f"task not found: {req.task_id}")
@@ -274,6 +282,7 @@ class DispatchService:
             self.db.add(task)
             self.db.commit()
 
+            # 先把商品上下文、近 30 天指标和基线利润算出来，再交给多智能体编排层统一消费。
             context_service = ContextService(self.db)
             try:
                 product = context_service.load_product_context(req.product_id or 0)
@@ -302,6 +311,7 @@ class DispatchService:
                     llm_base_url=req.llm_base_url,
                     llm_model=req.llm_model,
                 )
+                # 编排前再做一次取消判断，避免用户取消后仍继续调用大模型和写日志。
                 if str(self.task_repo.get_by_id(req.task_id).task_status or "").upper() == "CANCELLED":
                     logger.info("Worker %s aborted cancelled task %s before orchestration", worker_id, req.task_id)
                     return

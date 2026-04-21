@@ -1,2 +1,2 @@
-"""Python multi-agent backend package."""
-
+"""Python 定价协作端主包。"""
+# 应用包入口，用于标识 Python 定价协作端主包。

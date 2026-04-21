@@ -1,3 +1,5 @@
+﻿"""风险规则工具，供智能体执行成本底线和风控约束判断。"""
+
 from decimal import Decimal
 
 from app.utils.math_utils import money
@@ -46,4 +48,3 @@ class RiskRuleTool:
             "need_manual_review": (not is_pass) or force_manual_review,
             "margin": margin.quantize(Decimal("0.0000")),
         }
-

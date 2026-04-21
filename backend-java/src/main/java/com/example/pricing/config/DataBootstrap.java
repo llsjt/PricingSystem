@@ -13,6 +13,9 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
+/**
+ * 开发期数据引导器，按启动条件自动补齐本地演示数据。
+ */
 @Component
 @RequiredArgsConstructor
 @Slf4j

@@ -13,6 +13,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 运行指标服务，汇总任务、批次和后端协作相关的运营指标。
+ */
 @Service
 @RequiredArgsConstructor
 public class OperationsMetricsService {

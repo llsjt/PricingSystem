@@ -1,8 +1,10 @@
-<template>
+﻿<template>
   <p class="typewriter-text" :class="{ 'typewriter-done': done }">{{ displayed }}</p>
 </template>
 
 <script setup lang="ts">
+// 打字机文本组件，用于按字符渐进展示智能体输出内容。
+
 import { onBeforeUnmount, ref, watch } from 'vue'
 
 const props = withDefaults(defineProps<{

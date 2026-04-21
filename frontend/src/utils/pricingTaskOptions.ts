@@ -1,3 +1,7 @@
+﻿/**
+ * 定价任务选项常量，集中定义策略目标等前端可选项。
+ */
+
 export const PRICING_GOAL_OPTIONS = [
   { label: 'MAX_PROFIT', name: '利润优先' },
   { label: 'CLEARANCE', name: '清仓促销' },

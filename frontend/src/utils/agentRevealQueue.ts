@@ -1,3 +1,7 @@
+﻿/**
+ * 智能体卡片展示队列工具，控制逐卡片逐段落的动画播放顺序。
+ */
+
 export interface RevealQueueState<T extends string = string> {
   active: T | null
   queue: T[]

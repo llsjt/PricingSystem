@@ -1,3 +1,7 @@
+/*
+ * 商品 Mapper，负责 product 表的数据访问。
+ */
+
 package com.example.pricing.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;

@@ -1,5 +1,8 @@
 package com.example.pricing.security;
 
+/**
+ * 安全域密码策略校验器，服务于注册、重置和修改密码场景。
+ */
 public final class PasswordPolicyValidator {
 
     private PasswordPolicyValidator() {

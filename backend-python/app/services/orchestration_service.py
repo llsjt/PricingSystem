@@ -13,6 +13,8 @@
   5. 每个 Agent 成功后立即写入 agent_run_log（带 raw_output_json）供下次重试复用
   6. 经理 Agent 完成后 → 解析最终决策 → 强制硬约束校验 → 写入 pricing_result
 """
+# 编排服务，负责串行驱动四个智能体完成一次完整定价决策。
+
 
 import json
 import logging

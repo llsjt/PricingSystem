@@ -1,3 +1,5 @@
+﻿"""上下文服务，负责装载商品、指标、流量和基线测算等编排输入。"""
+
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -65,4 +67,3 @@ class ContextService:
     @staticmethod
     def infer_baseline_profit(current_price: Decimal, cost_price: Decimal, monthly_sales: int) -> Decimal:
         return money((money(current_price) - money(cost_price)) * Decimal(max(monthly_sales, 0)))
-

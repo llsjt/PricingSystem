@@ -1,3 +1,7 @@
+﻿/**
+ * 店铺管理接口封装，负责店铺列表、新增、修改和删除请求。
+ */
+
 import request from './request'
 
 export interface Shop {

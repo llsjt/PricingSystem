@@ -3,6 +3,9 @@ package com.example.pricing.common;
 import lombok.Data;
 import org.slf4j.MDC;
 
+/**
+ * 统一接口返回体，约定 code、message 和 data 的响应结构。
+ */
 @Data
 public class Result<T> {
     private Integer code;

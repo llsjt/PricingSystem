@@ -18,6 +18,9 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+/**
+ * RabbitMQ 配置类，集中声明交换机、队列与绑定关系。
+ */
 @Configuration
 public class RabbitMqConfig {
 

@@ -1,3 +1,5 @@
+﻿"""内部安全模块，负责校验 Java 调用 Python 内部接口时使用的访问令牌。"""
+
 from fastapi import Header, HTTPException, status
 
 from app.core.config import get_settings

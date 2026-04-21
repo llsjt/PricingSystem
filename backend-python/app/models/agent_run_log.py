@@ -1,3 +1,5 @@
+﻿"""智能体运行日志模型，对应 agent_run_log 表。"""
+
 from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, Integer, JSON, String, Text, text

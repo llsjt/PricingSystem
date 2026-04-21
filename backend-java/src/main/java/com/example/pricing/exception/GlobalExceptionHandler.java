@@ -10,6 +10,9 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 
+/**
+ * 全局异常处理器，统一把未捕获异常转换为接口可读的错误响应。
+ */
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {

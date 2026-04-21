@@ -1,3 +1,7 @@
+﻿/**
+ * 定价决策展示工具，把日志原始字段转换成页面可直接渲染的中文文案。
+ */
+
 import type { DecisionLogItem, PricingAgentCode } from '../api/decision'
 import { formatCurrency, formatPercent } from './formatters.ts'
 

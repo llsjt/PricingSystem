@@ -1,3 +1,5 @@
+"""任务请求与响应 Schema，约束内部任务接口的数据结构。"""
+
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -60,7 +62,7 @@ class AgentLogItem(BaseModel):
     speak_order: int = Field(alias="speakOrder")
     thought_content: str | None = Field(default=None, alias="thoughtContent")
 
-    # Legacy compatibility fields for current consumers.
+    # 兼容当前前端和历史调用方仍在读取的旧字段命名。
     agent_code: str | None = Field(default=None, alias="agentCode")
     agent_name: str | None = Field(default=None, alias="agentName")
     run_attempt: int | None = Field(default=None, alias="runAttempt")

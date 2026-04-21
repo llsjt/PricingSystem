@@ -1,3 +1,7 @@
+/*
+ * 系统用户 Mapper，负责 sys_user 表的数据访问。
+ */
+
 package com.example.pricing.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;

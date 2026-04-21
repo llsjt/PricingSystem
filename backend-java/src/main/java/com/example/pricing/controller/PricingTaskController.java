@@ -1,3 +1,7 @@
+/*
+ * 定价任务桥接控制器，负责单商品任务创建、取消、详情和实时流接口。
+ */
+
 package com.example.pricing.controller;
 
 import com.example.pricing.common.Result;

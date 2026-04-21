@@ -9,6 +9,9 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
+/**
+ * 刷新令牌会话实体，对应持久化的登录刷新会话记录。
+ */
 @Data
 @TableName("auth_refresh_session")
 public class AuthRefreshSession {

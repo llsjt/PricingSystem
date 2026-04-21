@@ -9,6 +9,9 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
+/**
+ * 登录审计日志实体，记录账号登录相关的关键安全事件。
+ */
 @Data
 @TableName("login_audit_log")
 public class LoginAuditLog {

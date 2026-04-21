@@ -1,3 +1,7 @@
+﻿/**
+ * 定价约束表单工具，统一生成默认值、序列化结果和前置校验。
+ */
+
 export interface PricingConstraintForm {
   minProfitRatePercent: number | null
   minPrice?: number | null

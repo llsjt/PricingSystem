@@ -19,6 +19,9 @@ import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.UUID;
 
+/**
+ * 认证会话服务，负责刷新令牌的创建、轮换和失效控制。
+ */
 @Service
 @RequiredArgsConstructor
 public class AuthSessionService {

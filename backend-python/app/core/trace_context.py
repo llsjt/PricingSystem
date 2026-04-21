@@ -1,3 +1,5 @@
+﻿"""链路上下文模块，负责在日志上下文中绑定 traceId 和 taskId。"""
+
 from __future__ import annotations
 
 from contextlib import contextmanager

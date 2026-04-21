@@ -11,6 +11,9 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * Python 后端健康探测客户端，用于 Java 就绪检查时探测 Python 协作端。
+ */
 @Component
 public class PythonBackendHealthClient {
 

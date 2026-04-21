@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="page-shell user-page">
     <section class="panel-card table-card">
       <div class="section-head">
@@ -107,6 +107,8 @@
 </template>
 
 <script setup lang="ts">
+// 用户管理页：负责后台用户列表、账号维护与状态管理。
+
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { addUser, batchDeleteUsers, deleteUser, getUserList, updateUser, type UserListItem, type UserPayload } from '../api/user'

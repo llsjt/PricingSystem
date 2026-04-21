@@ -1,6 +1,8 @@
 """
-CrewAI runtime helpers for OpenAI-compatible chat completion APIs.
+CrewAI 运行时辅助模块，负责适配兼容 OpenAI Chat Completions 协议的模型接口。
 """
+# CrewAI 运行时工具模块，负责 LLM 构建、调试日志和 JSON 提取等辅助逻辑。
+
 
 import json
 import os
@@ -14,7 +16,7 @@ from crewai.llms.base_llm import BaseLLM
 
 from app.core.config import get_settings
 
-# Disable telemetry in local/runtime environments.
+# 在本地开发和当前运行环境中默认关闭遥测，避免把调试信息发送到外部服务。
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
@@ -30,7 +32,7 @@ def debug_log(message: str) -> None:
 
 class OpenAICompatibleCrewAILLM(BaseLLM):
     """
-    Adapter for OpenAI-compatible Chat Completions endpoints.
+    面向 OpenAI 兼容聊天补全接口的 CrewAI 适配器。
     """
 
     def __init__(

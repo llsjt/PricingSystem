@@ -1,3 +1,7 @@
+﻿/**
+ * 用户管理接口封装，供后台用户列表与账户维护页面复用。
+ */
+
 import request from './request'
 
 export interface LoginPayload {

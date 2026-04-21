@@ -1,3 +1,5 @@
+﻿"""流量与促销日指标模型，对应外部导入的流量促销数据。"""
+
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -24,4 +26,3 @@ class TrafficPromoDaily(Base):
     roi: Mapped[Decimal | None] = mapped_column(DECIMAL(10, 4), nullable=True, default=0)
     upload_batch_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-

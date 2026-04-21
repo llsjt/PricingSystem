@@ -12,6 +12,9 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * 定价任务复用支持服务，用于基于幂等键复用可重复利用的历史任务。
+ */
 @Component
 @RequiredArgsConstructor
 public class PricingTaskReuseSupport {

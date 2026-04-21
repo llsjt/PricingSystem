@@ -1,3 +1,7 @@
+/*
+ * 店铺服务接口，定义店铺管理和用户店铺关联查询能力。
+ */
+
 package com.example.pricing.service;
 
 import com.example.pricing.dto.ShopCreateDTO;

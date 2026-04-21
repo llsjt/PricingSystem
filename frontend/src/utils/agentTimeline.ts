@@ -1,3 +1,7 @@
+﻿/**
+ * 智能体时间线工具，用于整理日志顺序、轮次和前端展示结构。
+ */
+
 export interface AgentTimelineItem<TCode extends string = string> {
   code: TCode
   name: string

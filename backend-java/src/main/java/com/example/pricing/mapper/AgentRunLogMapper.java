@@ -1,3 +1,7 @@
+/*
+ * 智能体日志 Mapper，负责 agent_run_log 表的数据访问。
+ */
+
 package com.example.pricing.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;

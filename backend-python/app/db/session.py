@@ -1,3 +1,5 @@
+﻿"""数据库会话模块，负责创建 Session 工厂并向接口层提供依赖。"""
+
 from collections.abc import Generator
 
 from sqlalchemy import create_engine
@@ -16,4 +18,3 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
-

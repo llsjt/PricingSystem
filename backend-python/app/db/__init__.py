@@ -1,2 +1,2 @@
-"""Database bootstrap package."""
-
+"""数据库初始化与迁移包入口。"""
+# 数据库包入口。

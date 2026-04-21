@@ -1,3 +1,5 @@
+"""健康检查接口模块，对外提供存活、就绪和指标状态入口。"""
+
 from sqlalchemy import text
 
 from fastapi import APIRouter
@@ -27,6 +29,7 @@ def health() -> HealthResponse:
 
 @router.get("/health/live")
 def health_live() -> dict:
+    """存活检查：只确认进程仍可响应，并回传当前 Worker 快照。"""
     return {
         "status": "ok",
         "rabbitmq": get_rabbitmq_worker_service().snapshot(),
@@ -35,6 +38,7 @@ def health_live() -> dict:
 
 @router.get("/health/ready")
 def health_ready() -> dict:
+    """就绪检查：同时要求数据库可访问且 RabbitMQ Worker 已进入 ready 状态。"""
     db_ok = False
     db = SessionLocal()
     try:
@@ -55,6 +59,7 @@ def health_ready() -> dict:
 
 @router.get("/health/metrics")
 def health_metrics() -> dict:
+    """指标快照：汇总数据库、Worker 和任务状态统计，供运维页面或探针采集。"""
     db_ok = False
     task_metrics = {}
     db = SessionLocal()

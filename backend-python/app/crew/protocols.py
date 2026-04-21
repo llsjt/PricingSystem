@@ -1,3 +1,5 @@
+﻿"""CrewAI 协作协议定义，集中声明编排层传递的核心数据结构。"""
+
 from dataclasses import dataclass
 from decimal import Decimal
 

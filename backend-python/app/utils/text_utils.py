@@ -1,3 +1,5 @@
+﻿"""文本工具模块，负责策略目标、风险级别和约束文本的转换。"""
+
 import json
 import re
 from decimal import Decimal

@@ -17,6 +17,9 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongSupplier;
 
+/**
+ * Python 派发客户端，用于把定价任务同步下发到 Python 内部接口。
+ */
 @Component
 public class PythonDispatchClient {
 

@@ -1,3 +1,7 @@
+/*
+ * 店铺服务实现，负责店铺增删改查和用户授权店铺查询。
+ */
+
 package com.example.pricing.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
