@@ -103,6 +103,7 @@ scripts/start-local-dev.ps1
 
 - 该脚本会拉起前端、Java、Python 三个应用进程
 - 基础设施依赖如 MySQL、RabbitMQ 需要预先可用
+- 如需提高批量定价任务的并发消费能力，可通过环境变量 `RABBITMQ_WORKER_CONCURRENCY` 调整 Python Worker 的 RabbitMQ consumer 数量；默认值为 `1`
 - Windows 本地如遇 uvicorn `accept` / `WinError 10014` 一类问题，可改用 `python run_server.py`，它会补充本仓库使用的 Selector loop 与 `h11` 参数
 
 ## 测试与验证

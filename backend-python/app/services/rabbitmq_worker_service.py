@@ -58,12 +58,13 @@ class RabbitMqWorkerService:
         self.dispatch_service = dispatch_service or _DispatchRunner()
         self.progress_service = progress_service or _NoopProgressService()
         self.sleep_func = sleep_func or asyncio.sleep
+        self._configured_concurrency = max(int(getattr(self.settings, "rabbitmq_worker_concurrency", 1) or 1), 1)
         self._started = False
         self._ready = False
         self._runner_task: asyncio.Task | None = None
         self._connection = None
-        self._channel = None
-        self._queue = None
+        self._consumer_channels: list[Any] = []
+        self._consumer_queues: list[Any] = []
 
     @property
     def ready(self) -> bool:
@@ -73,6 +74,8 @@ class RabbitMqWorkerService:
         return {
             "started": self._started,
             "ready": self._ready,
+            "workerConcurrency": self._configured_concurrency,
+            "activeConsumers": len(self._consumer_channels),
             "prefetch": int(self.settings.rabbitmq_prefetch),
             "maxRetry": int(self.settings.worker_max_retry),
         }
@@ -95,12 +98,45 @@ class RabbitMqWorkerService:
             self._runner_task.cancel()
             await asyncio.gather(self._runner_task, return_exceptions=True)
             self._runner_task = None
-        if self._channel is not None:
-            await self._channel.close()
-            self._channel = None
+        await self._close_consumers()
+        await self._close_connection()
+
+    async def _close_consumers(self) -> None:
+        while self._consumer_channels:
+            channel = self._consumer_channels.pop()
+            try:
+                await channel.close()
+            except Exception:
+                logger.warning("close RabbitMQ consumer channel failed", exc_info=True)
+        self._consumer_queues.clear()
+
+    async def _close_connection(self) -> None:
         if self._connection is not None:
-            await self._connection.close()
-            self._connection = None
+            try:
+                await self._connection.close()
+            finally:
+                self._connection = None
+
+    async def _setup_consumer(self, connection: Any) -> None:
+        import aio_pika
+
+        channel = await connection.channel()
+        await channel.set_qos(prefetch_count=int(self.settings.rabbitmq_prefetch))
+        exchange = await channel.declare_exchange(
+            self.settings.task_dispatch_exchange,
+            aio_pika.ExchangeType.DIRECT,
+            durable=True,
+        )
+        queue = await channel.declare_queue(self.settings.task_dispatch_queue, durable=True)
+        await queue.bind(exchange, routing_key=self.settings.task_dispatch_routing_key)
+        await queue.consume(self.on_message)
+        self._consumer_channels.append(channel)
+        self._consumer_queues.append(queue)
+
+    async def _setup_consumers(self) -> None:
+        await self._close_consumers()
+        for _ in range(self._configured_concurrency):
+            await self._setup_consumer(self._connection)
 
     async def _run(self) -> None:
         if self.repo is not None:
@@ -118,25 +154,20 @@ class RabbitMqWorkerService:
                     password=self.settings.rabbitmq_password,
                     virtualhost=self.settings.rabbitmq_vhost,
                 )
-                self._channel = await self._connection.channel()
-                await self._channel.set_qos(prefetch_count=int(self.settings.rabbitmq_prefetch))
-                exchange = await self._channel.declare_exchange(
-                    self.settings.task_dispatch_exchange,
-                    aio_pika.ExchangeType.DIRECT,
-                    durable=True,
-                )
-                self._queue = await self._channel.declare_queue(self.settings.task_dispatch_queue, durable=True)
-                await self._queue.bind(exchange, routing_key=self.settings.task_dispatch_routing_key)
-                await self._queue.consume(self.on_message)
+                await self._setup_consumers()
                 self._ready = True
+                backoff = 1
                 await asyncio.Future()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("RabbitMQ worker connection failed")
                 self._ready = False
-                await self.sleep_func(backoff)
-                backoff = min(backoff * 2, 30)
+                await self._close_consumers()
+                await self._close_connection()
+                if self._started:
+                    await self.sleep_func(backoff)
+                    backoff = min(backoff * 2, 30)
 
     async def on_message(self, message: Any) -> None:
         """消费单条派发消息，并完成抢占执行权、执行任务、确认或重入队列。"""

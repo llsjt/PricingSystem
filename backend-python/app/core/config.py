@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     rabbitmq_username: str = Field(default="guest", alias="RABBITMQ_USERNAME")
     rabbitmq_password: str = Field(default="guest", alias="RABBITMQ_PASSWORD")
     rabbitmq_vhost: str = Field(default="/", alias="RABBITMQ_VHOST")
+    rabbitmq_worker_concurrency: int = Field(default=1, alias="RABBITMQ_WORKER_CONCURRENCY")
     rabbitmq_prefetch: int = Field(default=1, alias="RABBITMQ_PREFETCH")
     task_dispatch_exchange: str = Field(default="pricing.task.dispatch.exchange", alias="TASK_DISPATCH_EXCHANGE")
     task_dispatch_queue: str = Field(default="pricing.task.dispatch.queue", alias="TASK_DISPATCH_QUEUE")
