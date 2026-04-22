@@ -48,7 +48,6 @@ class _ExplodingProvider:
 def test_competitor_settings_defaults_to_tmall_csv_source():
     settings = Settings.model_validate({"COMPETITOR_DATA_SOURCE": "tmall_csv"})
     assert settings.competitor_data_source == "tmall_csv"
-    assert settings.validate_competitor_source() == []
 
 
 def test_competitor_settings_rejects_unknown_source_value():

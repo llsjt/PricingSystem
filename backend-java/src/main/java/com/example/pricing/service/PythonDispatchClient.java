@@ -18,7 +18,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.LongSupplier;
 
 /**
- * Python 派发客户端，用于把定价任务同步下发到 Python 内部接口。
+ * 遗留的 Python 同步派发客户端，主要保留给兼容/测试场景。
+ * 当前主任务创建链路已经改为 RabbitMQ 异步派发，不再依赖此客户端。
  */
 @Component
 public class PythonDispatchClient {

@@ -4,7 +4,7 @@
 
 ## 角色定位
 
-- 接收 Java 派发的内部任务
+- 接收 Java 创建后经 RabbitMQ 派发的内部任务
 - 从 MySQL 中认领 `QUEUED/RETRYING` 任务
 - 执行多 Agent 定价编排
 - 写入 `agent_run_log` 和 `pricing_result`
@@ -33,7 +33,13 @@ cd backend-python
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+python -m uvicorn app.main:app --reload --port 8000
+```
+
+Windows 本地如遇 uvicorn `accept` / `WinError 10014` 一类问题，可改用：
+
+```bash
+python run_server.py
 ```
 
 ## 环境变量
@@ -65,11 +71,14 @@ uvicorn app.main:app --reload --port 8000
 
 主要接口：
 
-- `POST /internal/tasks/dispatch`
 - `POST /internal/tasks/{taskId}/retry`
 - `GET /internal/tasks/{taskId}/status`
 - `GET /internal/tasks/{taskId}/detail`
 - `GET /internal/tasks/{taskId}/logs`
+
+说明：
+
+- 主任务创建不经过 Python HTTP dispatch 接口，当前由 Java 发布 RabbitMQ 消息，Python Worker 异步消费
 
 健康与指标：
 
@@ -83,11 +92,10 @@ uvicorn app.main:app --reload --port 8000
 当前不是浏览器实时服务，而是数据库认领式 worker：
 
 1. Java 创建任务并写入 `pricing_task`
-2. Java 调用 Python `/internal/tasks/dispatch`
-3. Python 将任务置为 `QUEUED` 或 `RETRYING`
-4. Worker 从数据库认领任务并转为 `RUNNING`
-5. 执行完成后写入 `agent_run_log` / `pricing_result`
-6. Java 轮询数据库并通过 SSE 推给前端
+2. Java 发布 RabbitMQ 派发消息
+3. Python Worker 消费消息并把任务推进到 `QUEUED/RUNNING`
+4. 执行完成后写入 `agent_run_log` / `pricing_result`
+5. Java 读取数据库和异步进度，并通过 SSE 推给前端
 
 ## 可观测性
 

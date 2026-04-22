@@ -18,7 +18,7 @@
 
 - `frontend/`：Vue 3 前端工程，负责页面展示、交互、任务发起和结果查看
 - `backend-java/`：Spring Boot 业务 API，负责鉴权、业务编排、SSE 推送、数据读取
-- `backend-python/`：FastAPI 内部工作器，负责多智能体定价任务执行
+- `backend-python/`：FastAPI 内部工作器，负责多智能体定价任务执行，市场情报当前基于本地天猫 CSV 竞品索引
 - `database/`：基线建表 SQL 和增量迁移脚本
 - `scripts/`：本地开发、部署、回滚、检查、备份等脚本
 - `ops/`：运行手册、容量与告警说明
@@ -49,6 +49,7 @@ Browser
 - 单商品定价任务
 - 批量定价任务
 - 多智能体定价分析与风控
+- 基于本地天猫 CSV 竞品索引的市场情报汇总
 - 实时任务流和 Agent 卡片展示
 - 历史归档与结果查看
 - 用户级模型配置管理
@@ -84,7 +85,7 @@ cd backend-python
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python run_server.py
+python -m uvicorn app.main:app --reload --port 8000
 
 # Frontend
 cd frontend
@@ -102,6 +103,7 @@ scripts/start-local-dev.ps1
 
 - 该脚本会拉起前端、Java、Python 三个应用进程
 - 基础设施依赖如 MySQL、RabbitMQ 需要预先可用
+- Windows 本地如遇 uvicorn `accept` / `WinError 10014` 一类问题，可改用 `python run_server.py`，它会补充本仓库使用的 Selector loop 与 `h11` 参数
 
 ## 测试与验证
 
@@ -143,6 +145,7 @@ docker compose -f docker-compose.public-beta.yml up -d --build
 - 前端通过 `Bearer Token` 访问受保护接口
 - 会话续期使用 Refresh Token Cookie
 - Java 与 Python 间内部调用使用 `X-Internal-Token`
+- 主任务派发走 RabbitMQ；Python 内部 HTTP 当前主要用于健康检查、任务状态/详情/日志查询和重试
 - 实时任务更新通过 SSE：`GET /api/pricing/tasks/{taskId}/events`
 - 生产部署时需要显式配置数据库密钥、JWT 密钥、内部令牌和跨域白名单
 

@@ -94,9 +94,6 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.app_env.strip().lower() == "prod"
 
-    def validate_competitor_source(self) -> list[str]:
-        return []
-
     def validate_production_safety(self) -> None:
         if not self.is_production:
             return

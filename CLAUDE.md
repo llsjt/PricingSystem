@@ -16,9 +16,9 @@ Frontend (Vue3, :5173)
         → MySQL (pricing_system2.0)
 ```
 
-- **Java** is the only backend the frontend talks to. It owns product CRUD, Excel import (EasyExcel/淘宝 format), user auth, and exposes `/api/**` endpoints. It dispatches pricing tasks to Python via `POST /internal/tasks/dispatch`.
-- **Python** receives dispatch calls, runs the 4-agent CrewAI crew, and writes `agent_run_log` / `pricing_result` rows directly to MySQL. It also exposes a WebSocket endpoint for real-time log streaming.
-- **Frontend** uses Axios to call Java, with a WebSocket connection to Python for live agent logs.
+- **Java** is the only backend the frontend talks to. It owns product CRUD, Excel import (EasyExcel/淘宝 format), user auth, exposes `/api/**` endpoints, publishes task-dispatch events to RabbitMQ, and streams task progress to the browser over SSE.
+- **Python** consumes RabbitMQ dispatch events, runs the 4-agent CrewAI crew, and writes `agent_run_log` / `pricing_result` rows directly to MySQL. Its internal HTTP surface is limited to health, status/detail/logs, and retry-style endpoints for Java-side coordination.
+- **Frontend** uses Axios to call Java and receives live task updates from Java SSE endpoints.
 
 ## Build & Run Commands
 
@@ -38,10 +38,11 @@ mvn test -Dtest=ProductServiceImplTest#methodName  # single test method
 cd backend-python
 python -m venv .venv && .venv/Scripts/activate  # Windows
 pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
+python -m uvicorn app.main:app --reload --port 8000
 ```
 - Copy `.env.example` to `.env` and fill in `LLM_API_KEY`, `LLM_BASE_URL`, `MODEL`
 - Config is loaded via pydantic-settings from `.env` (see `app/core/config.py`)
+- On Windows, `python run_server.py` is the fallback when you need the local Selector loop / `h11` settings used by this repo's compatibility wrapper.
 
 ### Frontend
 ```bash
@@ -64,14 +65,17 @@ Key domains:
 
 ## Java-Python Integration
 
-Java calls Python at `agent.python.base-url` + `agent.python.dispatch-path` (configured in `application.yml`). Both share `INTERNAL_API_TOKEN` for auth. They share the same MySQL database — Java reads results that Python writes.
+The main task-creation path is RabbitMQ-based: Java publishes a dispatch event and the Python worker consumes it asynchronously. Java still calls Python over internal HTTP for readiness checks and task coordination endpoints, and both sides share `INTERNAL_API_TOKEN` for auth. They also share the same MySQL database — Java reads results that Python writes.
 
 ## Python Agent Architecture
 
 - `app/agents/` — 4 agent definitions (data_analysis, market_intel, risk_control, manager)
 - `app/crew/` — CrewAI crew factory, runtime wrapper, protocol interfaces
-- `app/tools/` — agent tools (product data queries, risk rules, competitor simulation, log/result writers)
-- `app/services/dispatch_service.py` — entry point that receives tasks from Java
+- `app/tools/` — agent tools (product data queries, elasticity/profit, risk rules, log/result writers)
+- `app/services/competitor_service.py` + `app/services/competitor_providers/` — competitor lookup and enrichment based on the local Tmall CSV index
+- `app/api/internal_tasks.py` — internal HTTP routes for task status/detail/logs and retry
+- `app/services/rabbitmq_worker_service.py` — consumes RabbitMQ dispatch events and drives worker execution
+- `app/services/dispatch_service.py` — prepares task context, normalizes state transitions, and enters orchestration
 - `app/services/orchestration_service.py` — runs the CrewAI crew with timeout/budget controls
 - CrewAI budget settings (max iterations, session timeout, second-round negotiation) are all configurable via `.env`
 
@@ -80,5 +84,5 @@ Java calls Python at `agent.python.base-url` + `agent.python.dispatch-path` (con
 - Java entities use Lombok `@Data`; mappers extend MyBatis-Plus `BaseMapper`
 - Java follows controller → service → mapper layering; VOs for API responses, DTOs for imports
 - Python uses SQLAlchemy models in `app/models/`, Pydantic schemas in `app/schemas/`, repository pattern in `app/repos/`
-- The market intelligence agent uses simulated competitor data (`MARKET_SIMULATION_ENABLED=true`); the tool layer is designed for future swap to real crawlers
+- The market intelligence path uses competitor summaries derived from the local Tmall CSV index (`COMPETITOR_DATA_SOURCE=tmall_csv`); when the index is missing or no rows match, it returns an empty result rather than generating simulated competitors
 - All LLM calls go through an OpenAI-compatible endpoint (default: Alibaba DashScope / Qwen)

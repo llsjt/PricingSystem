@@ -79,7 +79,8 @@ Java (`backend-java`):
 
 Python (`backend-python`):
 
-- Internal task APIs: `/internal/tasks/dispatch`, `/{taskId}/retry`, `/{taskId}/status`, `/{taskId}/detail`, `/{taskId}/logs`
+- Internal task APIs: `/internal/tasks/{taskId}/retry`, `/{taskId}/status`, `/{taskId}/detail`, `/{taskId}/logs`
+- Main task dispatch: RabbitMQ exchange/queue flow between Java publisher and Python worker
 - Health/metrics: `/health`, `/health/live`, `/health/ready`, `/health/metrics`
 
 ## Database and Migrations
@@ -142,7 +143,7 @@ cd backend-python
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python run_server.py
+python -m uvicorn app.main:app --reload --port 8000
 
 # Frontend
 cd frontend
@@ -156,6 +157,7 @@ Note:
 
 - `scripts/start-local-dev.ps1` launches the three app processes
 - infra dependencies such as MySQL and RabbitMQ must already be available
+- On Windows, `python run_server.py` remains the fallback when you need the repo's Selector loop / `h11` wrapper around uvicorn
 
 ## Testing and Verification
 
@@ -199,7 +201,7 @@ When changing these areas, keep cross-module consistency:
 
 - Auth/session: `JwtAuthInterceptor`, refresh cookie handling, frontend token refresh interceptor
 - LLM config: Java encryption/decryption (`AesGcmUtil`), `user_llm_config` schema, frontend personal center APIs
-- Task dispatch: Java publisher/client payloads must match Python dispatch schemas and worker expectations
+- Task dispatch: Java RabbitMQ publisher payloads, Python consumer expectations, and retry/inspection HTTP schemas must stay in sync
 - SSE contracts: Java emitter payloads must stay compatible with frontend stream handlers
 - Metrics/health: Java `/api/health/ready` depends on Python `/health/ready`; do not break readiness semantics
 - RabbitMQ async flow: Java publisher, Python consumer, DB retry fields, and health checks must stay in sync

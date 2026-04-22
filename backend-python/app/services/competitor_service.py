@@ -152,21 +152,6 @@ class CompetitorService:
             )
         return self._normalize_result(raw_result)
 
-    def get_competitors(
-        self,
-        product_id: int,
-        product_title: str | None,
-        category_name: str | None,
-        current_price: Decimal,
-    ) -> list[dict[str, Any]]:
-        return self.get_competitor_result(
-            product_id=product_id,
-            product_title=product_title,
-            category_name=category_name,
-            current_price=current_price,
-        )["competitors"]
-
-
 def _unique(values: list[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
