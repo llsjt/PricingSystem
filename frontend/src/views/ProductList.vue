@@ -565,18 +565,12 @@ import { createPricingBatch } from '../api/pricingBatch'
 import {
   addProductManual,
   batchDeleteProducts,
-  getProductDailyMetrics,
   getProductList,
-  getProductSkus,
-  getTrafficPromoDaily,
-  type ProductDailyMetricPageVO,
-  type ProductDailyMetricVO,
   type ProductListVO,
-  type ProductSkuVO,
-  type TrafficPromoDailyVO
 } from '../api/product'
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus'
 import ProductTrendDrawer from '../components/ProductTrendDrawer.vue'
+import { useProductDetailDrawer, calcGrossProfit } from '../composables/product-list/useProductDetailDrawer'
 import { useViewport } from '../composables/useViewport'
 import { resolveRequestErrorMessage } from '../utils/error'
 import { formatCount, formatCurrency as sharedFormatCurrency, formatPercent as sharedFormatPercent } from '../utils/formatters'
@@ -606,19 +600,6 @@ const selectedIds = ref<number[]>([])
 const dialogVisible = ref(false)
 const batchPricingVisible = ref(false)
 const batchStarting = ref(false)
-const detailVisible = ref(false)
-const detailLoading = ref(false)
-const detailTab = ref('base')
-const currentProduct = ref<ProductListVO | null>(null)
-const dailyMetrics = ref<ProductDailyMetricVO[]>([])
-const dailyMetricSummary = ref<ProductDailyMetricPageVO['summary']>({
-  days: 0,
-  totalVisitors: 0,
-  totalTurnover: 0,
-  avgConversionRate: 0
-})
-const skus = ref<ProductSkuVO[]>([])
-const trafficPromos = ref<TrafficPromoDailyVO[]>([])
 const formRef = ref<FormInstance>()
 const tableRef = ref<any>(null)
 const trendDrawerRef = ref<InstanceType<typeof ProductTrendDrawer>>()
@@ -627,12 +608,6 @@ let syncingTableSelection = false
 const queryParams = reactive({
   page: 1,
   size: 10
-})
-
-const dailyMetricPagination = reactive({
-  page: 1,
-  size: 10,
-  total: 0
 })
 
 const filters = reactive({
@@ -668,6 +643,22 @@ const rules = {
 
 const isMobile = computed(() => width.value <= 768)
 const isVeryNarrowDesktop = computed(() => width.value <= 1024)
+const {
+  currentProduct,
+  dailyMetricPagination,
+  dailyMetrics,
+  dailySummary,
+  detailLoading,
+  detailTab,
+  detailVisible,
+  handleDailyMetricPageChange,
+  handleDailyMetricSizeChange,
+  openDetailDrawer,
+  skuSummary,
+  skus,
+  trafficPromos,
+  trafficSummary
+} = useProductDetailDrawer()
 
 const platformOptions = computed(() => {
   const defaults = ['淘宝', '天猫', '京东', '拼多多', '抖音']
@@ -683,49 +674,11 @@ const displayData = computed(() => tableData.value)
 const formatCurrency = (value?: number | null) => sharedFormatCurrency(value)
 const formatPercent = (value?: number | null) => sharedFormatPercent(value)
 const formatStatusText = (status?: string) => status || '-'
-const average = (sum: number, count: number) => (count > 0 ? sum / count : 0)
 const calcRate = (numerator?: number | null, denominator?: number | null) => {
   const den = Number(denominator || 0)
   if (den <= 0) return 0
   return Number(numerator || 0) / den
 }
-const calcGrossProfit = (salePrice?: number | null, costPrice?: number | null) =>
-  Number(salePrice || 0) - Number(costPrice || 0)
-
-const dailySummary = computed(() => dailyMetricSummary.value)
-
-const skuSummary = computed(() => {
-  const rows = skus.value
-  const totalStock = rows.reduce((sum, row) => sum + Number(row.stock || 0), 0)
-  const avgStock = Math.round(average(totalStock, rows.length))
-  const avgSalePrice = average(
-    rows.reduce((sum, row) => sum + Number(row.salePrice || 0), 0),
-    rows.length
-  )
-  return {
-    count: rows.length,
-    totalStock,
-    avgStock,
-    avgSalePrice
-  }
-})
-
-const trafficSummary = computed(() => {
-  const rows = trafficPromos.value
-  const sourceCount = new Set(rows.map((row) => row.trafficSource).filter(Boolean)).size
-  const totalCost = rows.reduce((sum, row) => sum + Number(row.costAmount || 0), 0)
-  const totalPay = rows.reduce((sum, row) => sum + Number(row.payAmount || 0), 0)
-  const avgRoi = average(
-    rows.reduce((sum, row) => sum + Number(row.roi || 0), 0),
-    rows.length
-  )
-  return {
-    sourceCount,
-    totalCost,
-    totalPay,
-    avgRoi
-  }
-})
 
 const statusTagType = (status?: string) => {
   if (status === '出售中') return 'success'
@@ -969,90 +922,6 @@ const submitProduct = async () => {
 
 const openTrendDrawer = (row: ProductListVO) => {
   trendDrawerRef.value?.open(row)
-}
-
-const resetDailyMetricState = () => {
-  dailyMetrics.value = []
-  dailyMetricPagination.page = 1
-  dailyMetricPagination.size = 10
-  dailyMetricPagination.total = 0
-  dailyMetricSummary.value = {
-    days: 0,
-    totalVisitors: 0,
-    totalTurnover: 0,
-    avgConversionRate: 0
-  }
-}
-
-const loadDailyMetricsPage = async (productId: number) => {
-  const dailyRes: any = await getProductDailyMetrics(productId, {
-    page: dailyMetricPagination.page,
-    size: dailyMetricPagination.size
-  })
-
-  if (dailyRes?.code !== 200) {
-    throw new Error(dailyRes?.message || '加载商品日指标失败')
-  }
-
-  const pageData = dailyRes.data || {}
-  dailyMetrics.value = pageData.records || []
-  dailyMetricPagination.page = Number(pageData.page || dailyMetricPagination.page)
-  dailyMetricPagination.size = Number(pageData.size || dailyMetricPagination.size)
-  dailyMetricPagination.total = Number(pageData.total || 0)
-  dailyMetricSummary.value = pageData.summary || {
-    days: 0,
-    totalVisitors: 0,
-    totalTurnover: 0,
-    avgConversionRate: 0
-  }
-}
-
-const loadDetailData = async (productId: number) => {
-  detailLoading.value = true
-  try {
-    const [, skuRes, trafficRes] = await Promise.all([
-      loadDailyMetricsPage(productId),
-      getProductSkus(productId),
-      getTrafficPromoDaily(productId, { limit: 90 })
-    ])
-
-    skus.value = skuRes?.code === 200 ? skuRes.data || [] : []
-    trafficPromos.value = trafficRes?.code === 200 ? trafficRes.data || [] : []
-  } catch (error) {
-    ElMessage.error(await resolveRequestErrorMessage(error, '加载商品明细数据失败'))
-    resetDailyMetricState()
-    skus.value = []
-    trafficPromos.value = []
-  } finally {
-    detailLoading.value = false
-  }
-}
-
-const handleDailyMetricPageChange = async (page: number) => {
-  if (!currentProduct.value) return
-  dailyMetricPagination.page = page
-  try {
-    detailLoading.value = true
-    await loadDailyMetricsPage(currentProduct.value.id)
-  } catch (error) {
-    ElMessage.error(await resolveRequestErrorMessage(error, '加载商品日指标失败'))
-  } finally {
-    detailLoading.value = false
-  }
-}
-
-const handleDailyMetricSizeChange = async (size: number) => {
-  dailyMetricPagination.page = 1
-  dailyMetricPagination.size = size
-  await handleDailyMetricPageChange(1)
-}
-
-const openDetailDrawer = async (row: ProductListVO) => {
-  currentProduct.value = row
-  detailTab.value = 'base'
-  detailVisible.value = true
-  resetDailyMetricState()
-  await loadDetailData(row.id)
 }
 
 handleSearch()
