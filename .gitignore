@@ -14,6 +14,7 @@ backend-java/.project
 # Local agent / workspace tooling
 .claude/
 .codex/
+.agents/
 codex-smoke/
 
 # Secrets / local env
@@ -66,3 +67,4 @@ docs/superpowers/
 backend-python/app/data/competitor_index.sqlite
 数据集/
 简历项目经历_STAR.md
+docs/openapi-apifox.json
