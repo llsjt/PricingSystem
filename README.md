@@ -127,11 +127,23 @@ scripts/run-prelaunch-checks.ps1
 
 ## 部署
 
-Public Beta 编排入口：
+Public Beta 推荐使用仓库脚本启动，它会显式加载 `.env.public-beta`、执行镜像构建、等待关键服务就绪并自动应用数据库迁移：
 
 ```powershell
-docker compose -f docker-compose.public-beta.yml up -d --build
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy-public-beta.ps1
 ```
+
+如需手动执行 Docker Compose，请务必显式指定环境变量文件：
+
+```powershell
+docker compose --env-file .env.public-beta -f docker-compose.public-beta.yml up -d --build
+```
+
+说明：
+
+- 首次部署前先基于 `.env.public-beta.example` 复制并填写 `.env.public-beta`
+- 不要直接执行 `docker compose -f docker-compose.public-beta.yml up -d --build`，该写法不会读取 `.env.public-beta`
+- `docker-compose.public-beta.yml` 中 MySQL 对外端口使用 `${MYSQL_PUBLIC_PORT:-3306}:3306`，而示例环境文件默认将 `MYSQL_PUBLIC_PORT` 设为 `3307`，用于避免与宿主机已运行的本地 MySQL `3306` 端口冲突
 
 相关文件：
 

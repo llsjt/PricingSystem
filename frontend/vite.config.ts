@@ -49,40 +49,9 @@ export default defineConfig({
             id.includes('node_modules/@element-plus') ||
             id.includes('node_modules/@floating-ui')
           ) {
-            if (
-              id.includes('/table') ||
-              id.includes('/pagination') ||
-              id.includes('/drawer') ||
-              id.includes('/dialog') ||
-              id.includes('/descriptions') ||
-              id.includes('/empty')
-            ) {
-              return 'ui-data'
-            }
-            if (
-              id.includes('/form') ||
-              id.includes('/input') ||
-              id.includes('/select') ||
-              id.includes('/option') ||
-              id.includes('/radio') ||
-              id.includes('/checkbox') ||
-              id.includes('/upload') ||
-              id.includes('/date-picker') ||
-              id.includes('/input-number')
-            ) {
-              return 'ui-form'
-            }
-            if (
-              id.includes('/message') ||
-              id.includes('/message-box') ||
-              id.includes('/notification') ||
-              id.includes('/loading') ||
-              id.includes('/progress') ||
-              id.includes('/skeleton')
-            ) {
-              return 'ui-feedback'
-            }
-            return 'ui-base'
+            // Element Plus internals have cross-module references. Splitting them into
+            // multiple manual chunks can create runtime TDZ failures between UI chunks.
+            return 'ui'
           }
           return 'vendor-misc'
         }
