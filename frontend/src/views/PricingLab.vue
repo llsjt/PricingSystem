@@ -201,7 +201,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { applyDecision, cancelPricingTask, createPricingTask, getPricingTaskSnapshot, getPricingTaskStreamUrl, type AgentCardContent, type DecisionComparisonItem, type DecisionLogItem, type PricingAgentCode, type PricingTaskSnapshot, type PricingTaskStatus, type PricingTaskStreamMessage } from '../api/decision'
@@ -252,6 +252,7 @@ const comparisonData = ref<DecisionComparisonItem[]>([])
 const archiveReportSummary = ref('')
 const applyingIds = ref<number[]>([])
 const hasLlmConfig = ref(false)
+const hasSyncedLlmConfigOnce = ref(false)
 const currentRunAttempt = ref<number | null>(null)
 let aborter: AbortController | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -670,10 +671,19 @@ const refreshSnapshot = async () => {
 const resetTask = () => { resetState(); activeStep.value = 0 }
 const applyPrice = async (row: DecisionComparisonItem) => { const id = Number(row.resultId || 0); if (!id) return ElMessage.error('未找到可应用的结果记录'); try { await ElMessageBox.confirm(`确认将商品“${String(row.productTitle || '-')}”的售价更新为 ${currency(row.suggestedPrice)} 吗？`, '应用价格建议', { type: 'warning', confirmButtonText: '确认应用', cancelButtonText: '取消' }); applyingIds.value.push(id); const res = await applyDecision(id); if (res.code !== 200) return ElMessage.error(sanitizeErrorMessage(res.message, '应用失败')); ElMessage.success('价格建议已应用'); if (taskId.value) await loadSnapshot(taskId.value) } catch (error) { if (error !== 'cancel') ElMessage.error('应用失败') } finally { applyingIds.value = applyingIds.value.filter((item) => item !== id) } }
 
+const syncLlmConfig = async () => {
+  try {
+    const response = await getLlmConfig()
+    hasLlmConfig.value = hasConfiguredLlmApiKey(response)
+  } catch {
+    hasLlmConfig.value = false
+  } finally {
+    hasSyncedLlmConfigOnce.value = true
+  }
+}
+
 onMounted(async () => {
-  getLlmConfig()
-    .then((response) => { hasLlmConfig.value = hasConfiguredLlmApiKey(response) })
-    .catch(() => { hasLlmConfig.value = false })
+  void syncLlmConfig()
 
   const loaded = await shopStore.fetchShops()
   const hasPrefill = loaded ? await prefillFromRoute() : false
@@ -682,6 +692,10 @@ onMounted(async () => {
     taskConfig.platform = platformOptions.value[0]
     await onPlatformChange()
   }
+})
+onActivated(() => {
+  if (!hasSyncedLlmConfigOnce.value) return
+  void syncLlmConfig()
 })
 onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 </script>
