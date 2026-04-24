@@ -92,3 +92,45 @@ def test_mark_failed_if_owner_does_not_override_cancelled_task():
     refreshed = db.get(PricingTask, 4)
     assert refreshed is not None
     assert refreshed.task_status == "CANCELLED"
+
+
+def test_mark_failed_if_owner_clears_llm_snapshot():
+    db = build_session()
+    task = create_task(db, task_id=5, status="RUNNING", execution_id="exec-5", consumer_retry_count=0)
+    task.llm_api_key_enc = "cipher"
+    task.llm_base_url = "https://persisted.example.com/v1"
+    task.llm_model = "persisted-model"
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    repo = TaskRepo(db)
+
+    assert repo.mark_failed_if_owner(5, "exec-5", "boom") == 1
+
+    refreshed = db.get(PricingTask, 5)
+    assert refreshed is not None
+    assert refreshed.task_status == "FAILED"
+    assert refreshed.llm_api_key_enc is None
+    assert refreshed.llm_base_url is None
+    assert refreshed.llm_model is None
+
+
+def test_mark_failed_force_clears_llm_snapshot():
+    db = build_session()
+    task = create_task(db, task_id=6, status="RUNNING", execution_id=None, consumer_retry_count=0)
+    task.llm_api_key_enc = "cipher"
+    task.llm_base_url = "https://persisted.example.com/v1"
+    task.llm_model = "persisted-model"
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    repo = TaskRepo(db)
+
+    assert repo.mark_failed_force(6, "boom") == 1
+
+    refreshed = db.get(PricingTask, 6)
+    assert refreshed is not None
+    assert refreshed.task_status == "FAILED"
+    assert refreshed.llm_api_key_enc is None
+    assert refreshed.llm_base_url is None
+    assert refreshed.llm_model is None

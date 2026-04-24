@@ -50,6 +50,9 @@ public interface PricingTaskMapper extends BaseMapper<PricingTask> {
                SET task_status = 'CANCELLED',
                    failure_reason = '任务已取消',
                    current_execution_id = NULL,
+                   llm_api_key_enc = NULL,
+                   llm_base_url = NULL,
+                   llm_model = NULL,
                    completed_at = NOW(),
                    updated_at = NOW()
              WHERE id = #{taskId}

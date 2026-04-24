@@ -1,5 +1,7 @@
 from inspect import signature
 
+import pytest
+
 from app.core.config import get_settings
 from app.crew.crewai_runtime import build_crewai_llm, debug_log, is_debug_logging_enabled
 
@@ -7,18 +9,17 @@ from app.crew.crewai_runtime import build_crewai_llm, debug_log, is_debug_loggin
 def _set_minimal_llm_env(monkeypatch) -> None:
     monkeypatch.setenv("LLM_API_KEY", "test-key")
     monkeypatch.setenv("LLM_BASE_URL", "https://example.com/v1")
-    monkeypatch.setenv("MODEL", "default-model")
 
 
-def test_build_crewai_llm_exposes_no_profile_split(monkeypatch):
+def test_build_crewai_llm_requires_explicit_model_even_if_model_env_exists(monkeypatch):
     _set_minimal_llm_env(monkeypatch)
+    monkeypatch.setenv("MODEL", "default-model")
     get_settings.cache_clear()
 
     assert "profile" not in signature(build_crewai_llm).parameters
 
-    llm = build_crewai_llm()
-
-    assert llm.model == "default-model"
+    with pytest.raises(RuntimeError, match="MODEL"):
+        build_crewai_llm()
 
 
 def test_analysis_agent_settings_prefer_new_env_names(monkeypatch):

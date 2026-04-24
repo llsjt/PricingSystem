@@ -43,7 +43,7 @@
         <el-form-item label="模型名称">
           <el-input
             v-model="llmForm.model"
-            placeholder="例如 qwen-plus"
+            placeholder="请输入你的模型名称"
             clearable
           />
         </el-form-item>

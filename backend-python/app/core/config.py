@@ -60,9 +60,6 @@ class Settings(BaseSettings):
     )
     competitor_csv_sample_size: int = Field(default=8, alias="COMPETITOR_CSV_SAMPLE_SIZE")
 
-    llm_api_key: str = Field(default="", alias="LLM_API_KEY")
-    llm_base_url: str = Field(default="", alias="LLM_BASE_URL")
-    llm_model: str = Field(default="qwen-plus", alias="MODEL")
     llm_retry_backoff_seconds: float = Field(default=1.2, alias="LLM_RETRY_BACKOFF_SECONDS")
 
     crewai_llm_timeout_seconds: int = Field(default=240, alias="CREWAI_LLM_TIMEOUT_SECONDS")

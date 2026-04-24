@@ -16,9 +16,6 @@ class DispatchTaskRequest(BaseModel):
     strategy_goal: str = Field(default="MAX_PROFIT", alias="strategyGoal")
     constraints: str = Field(default="")
     trace_id: str | None = Field(default=None, alias="traceId")
-    llm_api_key: str | None = Field(default=None, alias="llmApiKey")
-    llm_base_url: str | None = Field(default=None, alias="llmBaseUrl")
-    llm_model: str | None = Field(default=None, alias="llmModel")
 
     @model_validator(mode="after")
     def normalize_product_id(self) -> "DispatchTaskRequest":

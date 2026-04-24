@@ -193,10 +193,7 @@ function Get-RequiredPublicBetaVariables {
         'JWT_SECRET',
         'JWT_REFRESH_SECRET',
         'INTERNAL_API_TOKEN',
-        'ALLOWED_ORIGINS',
-        'LLM_API_KEY',
-        'LLM_BASE_URL',
-        'MODEL'
+        'ALLOWED_ORIGINS'
     )
 }
 

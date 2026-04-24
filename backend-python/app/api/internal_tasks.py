@@ -74,6 +74,10 @@ async def retry_task(
     )
     with bind_trace_context(trace_id=req.trace_id or f"task-{task_id}", task_id=task_id):
         service = DispatchService(db)
+        try:
+            service.refresh_task_llm_snapshot_from_user_config(task)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         updated = task_repo.mark_retrying(task, trace_id=req.trace_id)
         await get_dispatch_publisher_service().publish_task(updated.id, updated.trace_id)
         return DispatchTaskResponse(

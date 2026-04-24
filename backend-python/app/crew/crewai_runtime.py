@@ -261,13 +261,9 @@ def build_crewai_llm(
 ) -> OpenAICompatibleCrewAILLM:
     settings = get_settings()
 
-    effective_api_key = api_key.strip() if api_key else settings.llm_api_key.strip()
-    effective_base_url = base_url.strip() if base_url else settings.llm_base_url.strip()
-
-    if model:
-        selected_model = model.strip()
-    else:
-        selected_model = settings.llm_model.strip()
+    effective_api_key = api_key.strip() if api_key else ""
+    effective_base_url = base_url.strip() if base_url else ""
+    selected_model = model.strip() if model else ""
 
     missing: list[str] = []
     if not effective_api_key:

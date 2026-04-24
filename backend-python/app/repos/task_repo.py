@@ -131,6 +131,9 @@ class TaskRepo:
                 {
                     PricingTask.task_status: "FAILED",
                     PricingTask.failure_reason: (reason or "")[:255] if reason else None,
+                    PricingTask.llm_api_key_enc: None,
+                    PricingTask.llm_base_url: None,
+                    PricingTask.llm_model: None,
                     PricingTask.completed_at: now,
                 },
                 synchronize_session=False,
@@ -151,6 +154,9 @@ class TaskRepo:
                 {
                     PricingTask.task_status: "FAILED",
                     PricingTask.failure_reason: (reason or "")[:255] if reason else None,
+                    PricingTask.llm_api_key_enc: None,
+                    PricingTask.llm_base_url: None,
+                    PricingTask.llm_model: None,
                     PricingTask.completed_at: now,
                 },
                 synchronize_session=False,
@@ -182,6 +188,11 @@ class TaskRepo:
             task.completed_at = None
         elif status in {"FAILED", "CANCELLED", "COMPLETED", "MANUAL_REVIEW"}:
             task.completed_at = now
+
+        if status in {"FAILED", "CANCELLED"}:
+            task.llm_api_key_enc = None
+            task.llm_base_url = None
+            task.llm_model = None
 
         self.db.add(task)
         self.db.commit()

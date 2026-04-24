@@ -1,9 +1,11 @@
 import logging
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.trace_context import bind_trace_context
 from app.crew.protocols import CrewRunPayload
+from app.models.user_llm_config import UserLlmConfig
 from app.repos.log_repo import LogRepo
 from app.repos.result_repo import ResultRepo
 from app.repos.task_repo import TaskRepo
@@ -18,7 +20,7 @@ from app.schemas.task import (
 )
 from app.services.context_service import ContextService
 from app.services.orchestration_service import OrchestrationService
-from app.utils.crypto_utils import decrypt_task_api_key, encrypt_api_key
+from app.utils.crypto_utils import decrypt_task_api_key
 from app.utils.text_utils import MANUAL_REVIEW_STRATEGY, is_manual_review_action, parse_constraints
 
 logger = logging.getLogger(__name__)
@@ -52,18 +54,45 @@ class DispatchService:
             return "failed"
         return "completed"
 
-    def _store_llm_config(self, task, req: DispatchTaskRequest) -> None:
-        if not req.llm_api_key:
-            return
-        task.llm_api_key_enc = encrypt_api_key(req.llm_api_key)
-        task.llm_base_url = req.llm_base_url
-        task.llm_model = req.llm_model
+    @staticmethod
+    def _load_persisted_llm_snapshot(task) -> tuple[str, str, str]:
+        if not task.llm_api_key_enc:
+            raise RuntimeError(f"task {task.id} is missing persisted llm api key")
+        if not str(task.llm_base_url or "").strip():
+            raise RuntimeError(f"task {task.id} is missing persisted llm base url")
+        if not str(task.llm_model or "").strip():
+            raise RuntimeError(f"task {task.id} is missing persisted llm model")
+        try:
+            llm_api_key = decrypt_task_api_key(task.llm_api_key_enc)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(f"task {task.id} persisted llm api key decrypt failed") from exc
+        return llm_api_key, str(task.llm_base_url).strip(), str(task.llm_model).strip()
+
+    def refresh_task_llm_snapshot_from_user_config(self, task) -> None:
+        user_id = getattr(task, "requested_by_user_id", None)
+        if not user_id:
+            raise RuntimeError(f"task {task.id} is missing requested_by_user_id for llm snapshot refresh")
+
+        stmt = select(UserLlmConfig).where(UserLlmConfig.user_id == int(user_id)).limit(1)
+        config = self.db.scalars(stmt).first()
+        if config is None:
+            raise RuntimeError(f"task {task.id} user llm config not found")
+        if not str(config.llm_api_key_enc or "").strip():
+            raise RuntimeError(f"task {task.id} user llm api key is blank")
+        if not str(config.llm_base_url or "").strip():
+            raise RuntimeError(f"task {task.id} user llm base url is blank")
+        if not str(config.llm_model or "").strip():
+            raise RuntimeError(f"task {task.id} user llm model is blank")
+
+        task.llm_api_key_enc = str(config.llm_api_key_enc).strip()
+        task.llm_base_url = str(config.llm_base_url).strip()
+        task.llm_model = str(config.llm_model).strip()
         self.db.add(task)
         self.db.commit()
         self.db.refresh(task)
 
     def dispatch(self, req: DispatchTaskRequest, queue_service) -> DispatchTaskResponse:
-        """把 Java 侧送来的任务纳入本地执行队列，并同步保存本次执行需要的 LLM 配置。"""
+        """把 Java 侧送来的任务纳入本地执行队列。LLM 配置统一来自任务快照。"""
         task = self.task_repo.get_by_id(req.task_id)
         if task is None:
             return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="NOT_FOUND", message="task not found")
@@ -72,15 +101,10 @@ class DispatchService:
         if status == "COMPLETED":
             return DispatchTaskResponse(accepted=True, taskId=req.task_id, status="COMPLETED", message="already completed")
         if status in {"RUNNING", "QUEUED", "RETRYING"}:
-            self._store_llm_config(task, req)
             return DispatchTaskResponse(accepted=True, taskId=req.task_id, status=status, message="already accepted")
         if not queue_service.can_accept():
             self.task_repo.update_status(task, "FAILED", failure_reason="worker queue is full")
             return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="FAILED", message="worker queue is full")
-
-        # 先写入 LLM 配置，再设为 QUEUED —— 保证 worker 领到任务时 Key 已在 DB 中
-        # （Java 插入时状态为 PENDING，worker 只认 QUEUED，因此不存在竞态）
-        self._store_llm_config(task, req)
 
         self.task_repo.mark_queued(task, trace_id=req.trace_id)
 
@@ -113,6 +137,7 @@ class DispatchService:
             self.task_repo.update_status(task, "FAILED", failure_reason="worker queue is full")
             return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="FAILED", message="worker queue is full")
 
+        self.refresh_task_llm_snapshot_from_user_config(task)
         self.task_repo.mark_retrying(task, trace_id=req.trace_id)
         return DispatchTaskResponse(
             accepted=True,
@@ -234,13 +259,6 @@ class DispatchService:
 
     def build_dispatch_request(self, task) -> DispatchTaskRequest:
         """把数据库任务实体重新组装成一次可执行的派发请求，供重试和恢复场景复用。"""
-        llm_api_key = None
-        if task.llm_api_key_enc:
-            try:
-                llm_api_key = decrypt_task_api_key(task.llm_api_key_enc)
-            except Exception:
-                logger.warning("Failed to decrypt LLM API key for task %s", task.id)
-
         return DispatchTaskRequest(
             taskId=task.id,
             productId=task.product_id,
@@ -248,9 +266,6 @@ class DispatchService:
             strategyGoal=(task.strategy_goal or "MAX_PROFIT"),
             constraints=task.constraint_text or "",
             traceId=task.trace_id,
-            llmApiKey=llm_api_key,
-            llmBaseUrl=task.llm_base_url,
-            llmModel=task.llm_model,
         )
 
     def execute_queued_by_task_id(self, task_id: int, execution_id: str) -> None:
@@ -297,6 +312,7 @@ class DispatchService:
                 task.baseline_profit = baseline_profit
                 self.db.add(task)
                 self.db.commit()
+                llm_api_key, llm_base_url, llm_model = self._load_persisted_llm_snapshot(task)
 
                 payload = CrewRunPayload(
                     task_id=req.task_id,
@@ -307,9 +323,9 @@ class DispatchService:
                     traffic=traffic,
                     baseline_sales=baseline_sales,
                     baseline_profit=baseline_profit,
-                    llm_api_key=req.llm_api_key,
-                    llm_base_url=req.llm_base_url,
-                    llm_model=req.llm_model,
+                    llm_api_key=llm_api_key,
+                    llm_base_url=llm_base_url,
+                    llm_model=llm_model,
                 )
                 # 编排前再做一次取消判断，避免用户取消后仍继续调用大模型和写日志。
                 if str(self.task_repo.get_by_id(req.task_id).task_status or "").upper() == "CANCELLED":

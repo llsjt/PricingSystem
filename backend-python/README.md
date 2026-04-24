@@ -51,10 +51,12 @@ python run_server.py
 - `MYSQL_DB`
 - `MYSQL_USER`
 - `MYSQL_PASSWORD`
-- `LLM_API_KEY`
-- `LLM_BASE_URL`
-- `MODEL`
 - `INTERNAL_API_TOKEN`
+
+说明：
+
+- 大模型配置由用户在前端个人中心维护，并在任务创建时快照到 `pricing_task`
+- Python Worker 不再读取系统级 `LLM_API_KEY`、`LLM_BASE_URL`、`MODEL` 环境变量
 
 队列相关参数：
 

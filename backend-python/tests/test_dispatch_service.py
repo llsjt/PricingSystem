@@ -1,4 +1,5 @@
 from decimal import Decimal
+from types import SimpleNamespace
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -6,6 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.base import Base
 from app.models.agent_run_log import AgentRunLog
 from app.models.pricing_task import PricingTask
+from app.models.user_llm_config import UserLlmConfig
 from app.repos.task_repo import TaskRepo
 from app.schemas.task import DispatchTaskRequest
 from app.services.dispatch_service import DispatchService
@@ -22,7 +24,7 @@ class StubQueueService:
 
 def build_session() -> Session:
     engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine, tables=[PricingTask.__table__, AgentRunLog.__table__])
+    Base.metadata.create_all(engine, tables=[PricingTask.__table__, AgentRunLog.__table__, UserLlmConfig.__table__])
     return sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)()
 
 
@@ -156,7 +158,7 @@ def test_recover_pending_tasks_marks_stale_running_failed_after_retry_budget():
     assert refreshed.failure_reason == "worker restarted after retry budget exhausted"
 
 
-def test_dispatch_refreshes_llm_config_for_already_queued_task():
+def test_dispatch_keeps_persisted_llm_snapshot_for_already_queued_task():
     db = build_session()
     task = create_task(
         db,
@@ -165,6 +167,12 @@ def test_dispatch_refreshes_llm_config_for_already_queued_task():
         strategy_goal="MARKET_SHARE",
         constraint_text="利润率不低于10%",
     )
+    task.llm_api_key_enc = encrypt_api_key("sk-persisted")
+    task.llm_base_url = "https://persisted.example.com/v1"
+    task.llm_model = "persisted-model"
+    db.add(task)
+    db.commit()
+    db.refresh(task)
     request = DispatchTaskRequest(
         taskId=task.id,
         productId=task.product_id,
@@ -185,9 +193,9 @@ def test_dispatch_refreshes_llm_config_for_already_queued_task():
     assert response.status == "QUEUED"
     assert refreshed is not None
     assert refreshed.llm_api_key_enc is not None
-    assert decrypt_api_key(refreshed.llm_api_key_enc) == "sk-current"
-    assert refreshed.llm_base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    assert refreshed.llm_model == "qwen3.5-122b-a10b"
+    assert decrypt_api_key(refreshed.llm_api_key_enc) == "sk-persisted"
+    assert refreshed.llm_base_url == "https://persisted.example.com/v1"
+    assert refreshed.llm_model == "persisted-model"
 
 
 def test_execute_queued_by_task_id_builds_request_and_passes_execution_id():
@@ -218,7 +226,117 @@ def test_execute_queued_by_task_id_builds_request_and_passes_execution_id():
     service.execute_queued_by_task_id(task.id, "exec-401")
 
     assert captured["req"].task_id == task.id
-    assert captured["req"].llm_api_key == "sk-current"
-    assert captured["req"].llm_base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    assert captured["req"].llm_model == "qwen3.5-122b-a10b"
     assert captured["execution_id"] == "exec-401"
+
+
+def test_execute_queued_uses_persisted_llm_snapshot_from_task(monkeypatch):
+    db = build_session()
+    task = create_task(
+        db,
+        task_id=402,
+        status="QUEUED",
+        strategy_goal="MARKET_SHARE",
+        constraint_text="利润率不低于10%",
+    )
+    task.llm_api_key_enc = encrypt_api_key("sk-persisted")
+    task.llm_base_url = "https://persisted.example.com/v1"
+    task.llm_model = "persisted-model"
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    request = DispatchTaskRequest(
+        taskId=task.id,
+        productId=task.product_id,
+        productIds=[task.product_id],
+        strategyGoal=task.strategy_goal,
+        constraints=task.constraint_text,
+        traceId=task.trace_id,
+        llmApiKey="sk-request",
+        llmBaseUrl="https://request.example.com/v1",
+        llmModel="request-model",
+    )
+    service = DispatchService(db)
+    captured = {}
+
+    class StubContextService:
+        def __init__(self, db_session):  # noqa: ANN001
+            self.db_session = db_session
+
+        def load_product_context(self, product_id):  # noqa: ANN001
+            return SimpleNamespace(
+                product_id=product_id,
+                current_price=Decimal("19.90"),
+                cost_price=Decimal("10.00"),
+                stock=100,
+            )
+
+        def load_daily_metrics(self, product_id, limit=30):  # noqa: ANN001
+            return []
+
+        def load_traffic(self, product_id, limit=30):  # noqa: ANN001
+            return []
+
+        def infer_baseline_sales(self, metrics, stock):  # noqa: ANN001
+            return 12
+
+        def infer_baseline_profit(self, current_price, cost_price, monthly_sales):  # noqa: ANN001
+            return Decimal("118.80")
+
+    class StubOrchestrationService:
+        def __init__(self, db_session, execution_id=None):  # noqa: ANN001
+            self.db_session = db_session
+            self.execution_id = execution_id
+
+        def run(self, payload):  # noqa: ANN001
+            captured["payload"] = payload
+            return None
+
+    monkeypatch.setattr("app.services.dispatch_service.ContextService", StubContextService)
+    monkeypatch.setattr("app.services.dispatch_service.OrchestrationService", StubOrchestrationService)
+
+    service.execute_queued(request, execution_id="exec-402")
+
+    payload = captured["payload"]
+    assert payload.llm_api_key == "sk-persisted"
+    assert payload.llm_base_url == "https://persisted.example.com/v1"
+    assert payload.llm_model == "persisted-model"
+
+
+def test_handle_worker_failure_clears_llm_snapshot_when_retry_budget_exhausted():
+    db = build_session()
+    task = create_task(
+        db,
+        task_id=501,
+        status="RUNNING",
+        strategy_goal="MARKET_SHARE",
+        constraint_text="利润率不低于10%",
+        retry_count=1,
+    )
+    task.llm_api_key_enc = encrypt_api_key("sk-persisted")
+    task.llm_base_url = "https://persisted.example.com/v1"
+    task.llm_model = "persisted-model"
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+
+    request = DispatchTaskRequest(
+        taskId=task.id,
+        productId=task.product_id,
+        productIds=[task.product_id],
+        strategyGoal=task.strategy_goal,
+        constraints=task.constraint_text,
+        traceId=task.trace_id,
+    )
+    service = DispatchService(db)
+
+    response = service.handle_worker_failure(request, "boom", max_retries=1)
+    refreshed = db.get(PricingTask, task.id)
+
+    assert response.accepted is False
+    assert response.status == "FAILED"
+    assert refreshed is not None
+    assert refreshed.task_status == "FAILED"
+    assert refreshed.llm_api_key_enc is None
+    assert refreshed.llm_base_url is None
+    assert refreshed.llm_model is None
