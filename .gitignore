@@ -29,6 +29,7 @@ frontend/.env.local
 **/__pycache__/
 *.py[cod]
 .pytest_cache/
+**/.pytest-tmp/
 .mypy_cache/
 .ruff_cache/
 .coverage
@@ -60,6 +61,7 @@ tmp/
 temp/
 .cache/
 backups/
+resume_review_tmp/
 ops/reports/
 docs/superpowers/
 

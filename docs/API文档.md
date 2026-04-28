@@ -468,7 +468,7 @@
 | `/api/decision/tasks` | `GET` | Bearer | Query：`page=1`、`size=10`、`status?`、`startTime?`、`endTime?`、`sortOrder=desc` | `Result<Page<DecisionTaskItemVO>>` | 历史任务列表 |
 | `/api/decision/tasks/stats` | `GET` | Bearer | Query：`startTime?`、`endTime?` | `Result<DecisionTaskStats>` | 任务统计 |
 | `/api/decision/comparison/{taskId}` | `GET` | Bearer | Path：`taskId` | `Result<DecisionComparisonVO[]>` | 查询价格对比 |
-| `/api/decision/apply/{resultId}` | `POST` | Bearer | Path：`resultId` | `Result<null>` | 应用价格建议到商品当前售价 |
+| `/api/decision/apply/{resultId}` | `POST` | Bearer | Path：`resultId` | `Result<null>` | 应用价格建议到本系统商品当前售价，不调用外部电商平台改价接口 |
 | `/api/decision/export/{taskId}` | `GET` | Bearer | Path：`taskId` | Excel 二进制文件 | 导出报告 |
 
 #### 2.5.1 对象定义
