@@ -298,52 +298,162 @@
         </el-tab-pane>
 
         <el-tab-pane label="协同日志" name="logs">
-          <div class="logs-panel">
-            <article v-for="log in orderedLogs" :key="log.id" class="log-card">
-              <div class="log-head">
-                <div class="log-title">
-                  <strong>{{ getLogAgentName(log) }}</strong>
-                  <el-tag size="small" :type="getRunStatusType(log.runStatus)">
-                    {{ getRunStatusText(log.runStatus) }}
-                  </el-tag>
-                </div>
-                <span>{{ formatDateTime(log.createdAt) }}</span>
+          <div class="logs-panel archive-agent-timeline">
+            <article
+              v-for="card in orderedLogCards"
+              :key="card.log.id"
+              class="log-card archive-agent-card"
+              :class="card.agentCode ? `archive-agent-${card.agentCode.toLowerCase().replace('_', '-')}` : ''"
+            >
+              <div class="archive-agent-rail">
+                <span class="archive-agent-avatar">{{ card.agentMark }}</span>
               </div>
-              <section v-if="isFailedLog(log)" class="failed-log-card">
-                <div class="failed-log-title">执行失败</div>
-                <p class="failed-log-message">{{ getLogFailureSummary(log) }}</p>
-              </section>
-              <div v-else class="log-content">
-                <section class="log-section">
-                  <h4>思考过程</h4>
-                  <p>{{ getLogThinking(log) }}</p>
-                </section>
-                <section class="log-section">
-                  <h4>依据</h4>
-                  <ul class="info-list">
-                    <li v-for="(line, idx) in getLogEvidenceLines(log)" :key="`e-${log.id}-${idx}`">{{ line }}</li>
-                  </ul>
-                </section>
-                <section class="log-section">
-                  <h4>建议</h4>
-                  <div v-if="getLogSuggestionHighlightPrice(log) != null" class="result-strip">
-                    <span class="price-label">{{ getLogSuggestionHighlightLabel(log) }}</span>
-                    <span class="price-value">
-                      <span class="price-unit">¥</span>
-                      <CountUp :value="getLogSuggestionHighlightPrice(log)" :duration="700" />
-                    </span>
+
+              <div class="archive-agent-body">
+                <div class="log-head archive-agent-head">
+                  <div class="log-title archive-agent-title">
+                    <div>
+                      <strong>{{ card.agentName }}</strong>
+                      <span>{{ card.roleLabel }}</span>
+                    </div>
+                    <el-tag size="small" :type="card.runStatusType">
+                      {{ card.runStatusText }}
+                    </el-tag>
                   </div>
-                  <ul class="info-list">
-                    <li v-for="(line, idx) in getLogSuggestionLines(log)" :key="`s-${log.id}-${idx}`">{{ line }}</li>
-                  </ul>
+                  <time>{{ formatDateTime(card.log.createdAt) }}</time>
+                </div>
+
+                <section v-if="isFailedLog(card.log)" class="failed-log-card">
+                  <div class="failed-log-title">执行失败</div>
+                  <p class="failed-log-message">{{ card.failureSummary }}</p>
                 </section>
-                <section v-if="getLogReason(log)" class="log-section">
-                  <h4>为什么给出这个建议</h4>
-                  <p>{{ getLogReason(log) }}</p>
-                </section>
+
+                <template v-else>
+                  <div class="log-content archive-agent-output-grid">
+                    <section class="log-section archive-thinking-block">
+                      <h4>思考过程</h4>
+                      <p>{{ card.thinking }}</p>
+                    </section>
+
+                    <section class="log-section">
+                      <h4>依据</h4>
+                      <ul class="info-list archive-evidence-list">
+                        <li v-for="(line, idx) in card.evidenceLines" :key="`e-${card.log.id}-${idx}`">{{ line }}</li>
+                      </ul>
+                    </section>
+
+                    <section class="log-section archive-suggestion-block">
+                      <h4>建议</h4>
+                      <div v-if="card.suggestionHighlightPrice != null" class="result-strip archive-suggestion-highlight">
+                        <span class="price-label">{{ card.suggestionHighlightLabel }}</span>
+                        <span class="price-value">
+                          <span class="price-unit">¥</span>
+                          <CountUp :value="card.suggestionHighlightPrice" :duration="700" />
+                        </span>
+                      </div>
+                      <ul class="info-list archive-suggestion-list">
+                        <li v-for="(line, idx) in card.suggestionLines" :key="`s-${card.log.id}-${idx}`">{{ line }}</li>
+                      </ul>
+                    </section>
+
+                    <section v-if="card.reason" class="log-section archive-reason-block">
+                      <h4>建议原因</h4>
+                      <p>{{ card.reason }}</p>
+                    </section>
+                  </div>
+
+                  <section v-if="card.arbitration" class="archive-arbitration-panel">
+                    <div class="archive-arbitration-head">
+                      <div>
+                        <span class="archive-arbitration-kicker">经理裁决</span>
+                        <h4>分歧与裁决</h4>
+                      </div>
+                      <div v-if="card.arbitration.consensusScoreText" class="consensus-meter">
+                        <span>共识度</span>
+                        <strong>{{ card.arbitration.consensusScoreText }}</strong>
+                        <div
+                          class="consensus-track"
+                          role="progressbar"
+                          aria-valuemin="0"
+                          aria-valuemax="100"
+                          :aria-valuenow="card.arbitration.consensusScorePercent || 0"
+                        >
+                          <span :style="{ width: `${card.arbitration.consensusScorePercent || 0}%` }"></span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div v-if="card.arbitration.decisionSummary || card.arbitration.decisionReason" class="archive-arbitration-summary-grid">
+                      <div v-if="card.arbitration.decisionSummary" class="archive-arbitration-summary-item">
+                        <span>裁决结论</span>
+                        <p>{{ card.arbitration.decisionSummary }}</p>
+                      </div>
+                      <div v-if="card.arbitration.decisionReason" class="archive-arbitration-summary-item">
+                        <span>裁决理由</span>
+                        <p>{{ card.arbitration.decisionReason }}</p>
+                      </div>
+                    </div>
+
+                    <div class="archive-arbitration-detail-grid">
+                      <div v-if="card.arbitration.disagreementSummary || card.arbitration.disagreementPoints.length" class="archive-arbitration-block">
+                        <div class="archive-block-title">
+                          <span></span>
+                          <strong>分歧焦点</strong>
+                        </div>
+                        <p v-if="card.arbitration.disagreementSummary" class="archive-muted">{{ card.arbitration.disagreementSummary }}</p>
+                        <ul v-if="card.arbitration.disagreementPoints.length" class="archive-number-list">
+                          <li v-for="(line, idx) in card.arbitration.disagreementPoints" :key="`d-${card.log.id}-${idx}`">
+                            <span>{{ idx + 1 }}</span>
+                            <p>{{ line }}</p>
+                          </li>
+                        </ul>
+                      </div>
+
+                      <div v-if="card.arbitration.acceptedOpinions.length || card.arbitration.rejectedOpinions.length" class="archive-arbitration-block">
+                        <div class="archive-block-title">
+                          <span></span>
+                          <strong>意见处理</strong>
+                        </div>
+                        <div v-if="card.arbitration.acceptedOpinions.length" class="archive-opinion-group">
+                          <span class="archive-opinion-label is-accepted">已采纳</span>
+                          <ul class="archive-number-list">
+                            <li v-for="(line, idx) in card.arbitration.acceptedOpinions" :key="`a-${card.log.id}-${idx}`">
+                              <span>{{ idx + 1 }}</span>
+                              <p>{{ line }}</p>
+                            </li>
+                          </ul>
+                        </div>
+                        <div v-if="card.arbitration.rejectedOpinions.length" class="archive-opinion-group">
+                          <span class="archive-opinion-label is-rejected">未采纳</span>
+                          <ul class="archive-number-list">
+                            <li v-for="(line, idx) in card.arbitration.rejectedOpinions" :key="`r-${card.log.id}-${idx}`">
+                              <span>{{ idx + 1 }}</span>
+                              <p>{{ line }}</p>
+                            </li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div v-if="card.arbitration.selectedAgent || card.arbitration.selectedPrice || card.arbitration.selectedStrategy" class="archive-final-decision-strip">
+                      <div v-if="card.arbitration.selectedAgent">
+                        <span>采纳方案</span>
+                        <strong>{{ card.arbitration.selectedAgent }}</strong>
+                      </div>
+                      <div v-if="card.arbitration.selectedPrice" class="archive-final-price">
+                        <span>采纳价格</span>
+                        <strong>{{ card.arbitration.selectedPrice }}</strong>
+                      </div>
+                      <div v-if="card.arbitration.selectedStrategy">
+                        <span>采纳策略</span>
+                        <strong>{{ card.arbitration.selectedStrategy }}</strong>
+                      </div>
+                    </div>
+                  </section>
+                </template>
               </div>
             </article>
-            <el-empty v-if="orderedLogs.length === 0" description="暂无协同日志" />
+            <el-empty v-if="orderedLogCards.length === 0" description="暂无协同日志" />
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -400,7 +510,7 @@ const {
   isFailedLog,
   loading,
   openBatchDetail,
-  orderedLogs,
+  orderedLogCards,
   queryParams,
   recentBatches,
   recentBatchTotal,
@@ -570,14 +680,56 @@ const {
 
 .logs-panel {
   display: grid;
-  gap: 14px;
+  gap: 16px;
+}
+
+.archive-agent-timeline {
+  position: relative;
 }
 
 .log-card {
-  padding: 16px 18px;
-  border-radius: 14px;
-  border: 1px solid rgba(31, 46, 77, 0.06);
-  background: var(--surface-2);
+  padding: 0;
+  border-radius: 12px;
+  border: 1px solid #dbe6f4;
+  background: #f8fbff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.archive-agent-card {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px 16px 16px 14px;
+}
+
+.archive-agent-card,
+.archive-agent-card * {
+  box-sizing: border-box;
+}
+
+.archive-agent-rail {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.archive-agent-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.archive-agent-body {
+  min-width: 0;
 }
 
 .log-head {
@@ -588,15 +740,62 @@ const {
   color: var(--text-secondary);
 }
 
+.archive-agent-head {
+  align-items: flex-start;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
 .log-title {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
+.archive-agent-title {
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.archive-agent-title > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.archive-agent-title strong {
+  color: #1e293b;
+  font-size: 16px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.archive-agent-title span {
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 8px;
+  border: 1px solid #dbeafe;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 600;
+}
+
+.archive-agent-head time {
+  color: #64748b;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .log-content {
   display: grid;
   gap: 10px;
+}
+
+.archive-agent-output-grid {
+  grid-template-columns: 1fr;
+  align-items: start;
 }
 
 .failed-log-card {
@@ -622,9 +821,10 @@ const {
 
 .log-section {
   padding: 12px 14px;
-  border-radius: 12px;
-  border: 1px solid rgba(31, 46, 77, 0.06);
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
   background: #ffffff;
+  min-width: 0;
 }
 
 .log-section h4 {
@@ -636,6 +836,12 @@ const {
   margin: 0;
   color: var(--text-primary);
   line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.archive-thinking-block,
+.archive-reason-block {
+  grid-column: 1 / -1;
 }
 
 .info-list {
@@ -645,6 +851,7 @@ const {
   gap: 6px;
   color: var(--text-primary);
   line-height: 1.7;
+  overflow-wrap: anywhere;
 }
 
 .result-strip {
@@ -674,6 +881,11 @@ const {
   line-height: 1;
 }
 
+.archive-suggestion-highlight {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
 .price-unit {
   font-size: 17px;
   font-weight: 600;
@@ -684,6 +896,217 @@ const {
 .price-text {
   font-weight: 700;
   color: var(--accent);
+}
+
+.archive-arbitration-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid #bfdbfe;
+  background: #eef6ff;
+  min-width: 0;
+}
+
+.archive-arbitration-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.archive-arbitration-kicker {
+  display: inline-flex;
+  width: fit-content;
+  margin-bottom: 6px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  color: #1d4ed8;
+  background: #dbeafe;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 700;
+}
+
+.archive-arbitration-head h4 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.consensus-meter {
+  width: 220px;
+  min-width: 180px;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 6px 10px;
+  align-items: center;
+  color: #475569;
+  font-size: 13px;
+}
+
+.consensus-meter strong {
+  justify-self: end;
+  color: #1d4ed8;
+  font-size: 15px;
+}
+
+.consensus-track {
+  grid-column: 1 / -1;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dbeafe;
+}
+
+.consensus-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+}
+
+.archive-arbitration-summary-grid,
+.archive-arbitration-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
+}
+
+.archive-arbitration-summary-item,
+.archive-arbitration-block {
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid #dbe6f4;
+  background: #ffffff;
+}
+
+.archive-arbitration-summary-item span,
+.archive-final-decision-strip span {
+  display: block;
+  margin-bottom: 6px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.archive-arbitration-summary-item p,
+.archive-muted,
+.archive-number-list p {
+  margin: 0;
+  color: #334155;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.archive-block-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.archive-block-title span {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #2563eb;
+}
+
+.archive-block-title strong {
+  color: #1e293b;
+  font-size: 14px;
+}
+
+.archive-muted {
+  margin-bottom: 10px;
+}
+
+.archive-number-list {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  list-style: none;
+}
+
+.archive-number-list li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.archive-number-list li > span {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.archive-opinion-group {
+  display: grid;
+  gap: 8px;
+}
+
+.archive-opinion-group + .archive-opinion-group {
+  margin-top: 12px;
+}
+
+.archive-opinion-label {
+  width: fit-content;
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 700;
+}
+
+.archive-opinion-label.is-accepted {
+  color: #047857;
+  background: #d1fae5;
+}
+
+.archive-opinion-label.is-rejected {
+  color: #b45309;
+  background: #fef3c7;
+}
+
+.archive-final-decision-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.archive-final-decision-strip > div {
+  min-width: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid #dbe6f4;
+  background: #ffffff;
+}
+
+.archive-final-decision-strip strong {
+  display: block;
+  color: #1e293b;
+  font-size: 15px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.archive-final-price strong {
+  color: #1f6feb;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
 }
 
 @media (max-width: 1200px) {
@@ -704,7 +1127,11 @@ const {
 @media (max-width: 768px) {
   .summary-strip,
   .drawer-meta,
-  .filter-grid {
+  .filter-grid,
+  .archive-agent-output-grid,
+  .archive-arbitration-summary-grid,
+  .archive-arbitration-detail-grid,
+  .archive-final-decision-strip {
     grid-template-columns: 1fr;
   }
 
@@ -727,6 +1154,26 @@ const {
 
   .log-head {
     flex-direction: column;
+  }
+
+  .archive-agent-card {
+    grid-template-columns: 30px minmax(0, 1fr);
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .archive-agent-avatar {
+    width: 30px;
+    height: 30px;
+  }
+
+  .archive-arbitration-head {
+    flex-direction: column;
+  }
+
+  .consensus-meter {
+    width: 100%;
+    min-width: 0;
   }
 
   .result-strip {

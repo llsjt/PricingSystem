@@ -35,6 +35,16 @@ let refreshPromise: Promise<string> | null = null
 
 const errorMessageOrFallback = (value: unknown, fallback: string) => sanitizeErrorMessage(value, fallback)
 
+const shouldShowGlobalRequestError = (requestUrl: string) =>
+  typeof window === 'undefined'
+  || (window.location.pathname !== '/login' && !requestUrl.includes('/user/login'))
+
+const showGlobalRequestError = (requestUrl: string, message: string) => {
+  if (shouldShowGlobalRequestError(requestUrl)) {
+    ElMessage.error(message)
+  }
+}
+
 const redirectToLogin = () => {
   clearAuthSession()
   if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
@@ -96,32 +106,32 @@ service.interceptors.response.use(
         }
         return service(originalRequest)
       } catch {
-        ElMessage.error('登录状态无效，请重新登录')
+        showGlobalRequestError(requestUrl, '登录状态无效，请重新登录')
         redirectToLogin()
         return Promise.reject(error)
       }
     }
 
     if (status === 401) {
-      ElMessage.error(errorMessageOrFallback(error.response?.data?.message, '登录状态无效，请重新登录'))
+      showGlobalRequestError(requestUrl, errorMessageOrFallback(error.response?.data?.message, '登录状态无效，请重新登录'))
       redirectToLogin()
       return Promise.reject(error)
     }
 
     if (status === 403) {
-      ElMessage.error(errorMessageOrFallback(error.response?.data?.message, '没有权限访问该资源'))
+      showGlobalRequestError(requestUrl, errorMessageOrFallback(error.response?.data?.message, '没有权限访问该资源'))
       return Promise.reject(error)
     }
 
     if (status === 500) {
-      ElMessage.error(errorMessageOrFallback(error.response?.data?.message, '服务器内部错误'))
+      showGlobalRequestError(requestUrl, errorMessageOrFallback(error.response?.data?.message, '服务器内部错误'))
       return Promise.reject(error)
     }
 
     if (error.response) {
-      ElMessage.error(errorMessageOrFallback(error.response.data?.message, '请求失败'))
+      showGlobalRequestError(requestUrl, errorMessageOrFallback(error.response.data?.message, '请求失败'))
     } else {
-      ElMessage.error('网络连接失败')
+      showGlobalRequestError(requestUrl, '网络连接失败')
     }
     return Promise.reject(error)
   }

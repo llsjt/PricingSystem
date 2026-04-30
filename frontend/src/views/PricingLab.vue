@@ -107,62 +107,166 @@
           <el-button type="primary" :disabled="!canViewReport" @click="activeStep = 2">查看结果报告</el-button>
         </div>
       </div>
-      <div v-if="visibleAgents.length === 0" class="agent-stream-empty">
-        <div class="agent-stream-pulse"><span></span><span></span><span></span></div>
-        <h3>智能定价任务已启动</h3>
-        <p>正在准备商品上下文，首个智能体开始分析后会生成决策消息。</p>
-      </div>
-      <div v-else class="agent-list">
-        <article v-for="agent in visibleAgents" :key="agent.code" class="agent-box" :class="{ 'is-streaming': isCardRunning(agent.code) || shouldAnimate(agent.code) }">
-          <div class="agent-avatar" aria-hidden="true">{{ agentIcon[agent.code] }}</div>
-          <div class="agent-message">
-          <div class="agent-head">
-            <div class="agent-identity">
-              <div class="agent-title">
-                <h3>{{ agent.order }}. {{ agent.name }}</h3>
-                <span class="agent-role">{{ agentRoleLabel[agent.code] }}</span>
-              </div>
-            </div>
-            <el-tag size="small" :type="isCardFailed(agent.code) ? 'danger' : isCardCompleted(agent.code) ? 'success' : isCardRunning(agent.code) ? 'warning' : 'info'">
-              {{ isCardFailed(agent.code) ? '失败' : isCardCompleted(agent.code) ? '已完成' : isCardRunning(agent.code) ? '分析中' : '等待中' }}
-            </el-tag>
-          </div>
-          <template v-if="isCardCompleted(agent.code)">
-            <h4>分析摘要</h4>
-            <TypewriterText v-if="shouldAnimate(agent.code)" :text="state.cards[agent.code]?.thinking || '-'" :speed="typewriterSpeed" class="thinking" @done="markThinkingDone(agent.code)" />
-            <p v-else class="thinking">{{ state.cards[agent.code]?.thinking || '-' }}</p>
-            <h4 v-if="canShowEvidence(agent.code)">依据</h4>
-            <ul v-if="canShowEvidence(agent.code)" class="evidence-list">
-              <li v-for="(line, index) in visibleEvidenceLines(agent.code)" :key="`${agent.code}-e-${index}`" :class="{ 'fade-in-item': shouldAnimate(agent.code) }" :style="{ '--i': index }">
-                <TypewriterText v-if="isActiveEvidenceLine(agent.code, index)" :text="line" :speed="typewriterSpeed" @done="markEvidenceLineDone(agent.code)" />
-                <span v-else>{{ line }}</span>
-              </li>
-            </ul>
-            <h4 v-if="canShowSuggestion(agent.code)">建议</h4>
-            <div v-if="canShowSuggestion(agent.code) && getHighlightPrice(agent.code) != null" class="result-strip">
-              <span class="price-label">{{ getHighlightLabel(agent.code) }}</span>
-              <span class="price-value"><span class="price-unit">¥</span><CountUp :value="getHighlightPrice(agent.code)" :duration="700" /></span>
-            </div>
-            <ul v-if="canShowSuggestion(agent.code)" class="suggestion-list">
-              <li v-for="(line, index) in visibleSuggestionLines(agent.code)" :key="`${agent.code}-s-${index}`" :class="{ 'fade-in-item': shouldAnimate(agent.code) }" :style="{ '--i': index }">
-                <TypewriterText v-if="isActiveSuggestionLine(agent.code, index)" :text="line" :speed="typewriterSpeed" @done="markSuggestionLineDone(agent.code)" />
-                <span v-else>{{ line }}</span>
-              </li>
-            </ul>
-            <template v-if="canShowReason(agent.code) && agent.code === 'MANAGER_COORDINATOR' && state.cards[agent.code]?.reasonWhy">
-              <h4>为什么给出这个建议</h4>
-              <TypewriterText v-if="isActiveReason(agent.code)" :text="state.cards[agent.code]?.reasonWhy || ''" :speed="typewriterSpeed" @done="markReasonDone(agent.code)" />
-              <p v-else>{{ state.cards[agent.code]?.reasonWhy }}</p>
-            </template>
-          </template>
-          <section v-else-if="isCardFailed(agent.code)" class="failed-card">
-            <div class="failed-card-title">执行失败</div>
-            <p class="failed-card-message">{{ getAgentFailureSummary(agent.code) }}</p>
-          </section>
-          <div v-else-if="isCardRunning(agent.code)" class="waiting running-pulse"><span class="pulse-dot"></span> 正在分析中...</div>
-          <div v-else class="waiting">正在同步智能体输出...</div>
-          </div>
+      <div class="decision-overview-grid">
+        <article class="decision-overview-card">
+          <span class="decision-overview-label">当前阶段</span>
+          <strong>{{ decisionOverview.primaryStatusText }}</strong>
         </article>
+        <article class="decision-overview-card">
+          <span class="decision-overview-label">并行分析</span>
+          <strong>{{ decisionOverview.analysisStatusText }}</strong>
+        </article>
+        <article class="decision-overview-card">
+          <span class="decision-overview-label">经理仲裁</span>
+          <strong>{{ decisionOverview.managerStatusText }}</strong>
+        </article>
+        <article class="decision-overview-card">
+          <span class="decision-overview-label">{{ decisionOverview.finalPriceLabel }}</span>
+          <strong v-if="decisionOverview.finalPrice != null"><span class="price-unit">¥</span><CountUp :value="decisionOverview.finalPrice" :duration="700" /></strong>
+          <strong v-else>-</strong>
+        </article>
+      </div>
+      <div class="decision-lane-stack">
+        <section v-for="section in decisionSections" :key="section.key" class="decision-lane" :class="section.panelClass">
+          <div class="decision-lane-head">
+            <div>
+              <h3>{{ section.title }}</h3>
+              <p>{{ section.description }}</p>
+            </div>
+          </div>
+          <div class="decision-lane-grid" :class="section.gridClass">
+            <article v-for="agent in section.agents" :key="agent.code" class="agent-box" :class="{ 'is-streaming': isCardRunning(agent.code) || shouldAnimate(agent.code) }">
+              <div class="agent-avatar" aria-hidden="true">{{ agentIcon[agent.code] }}</div>
+              <div class="agent-message">
+                <div class="agent-head">
+                  <div class="agent-identity">
+                    <div class="agent-title">
+                      <h3>{{ agent.order }}. {{ agent.name }}</h3>
+                      <span class="agent-role">{{ agentRoleLabel[agent.code] }}</span>
+                    </div>
+                  </div>
+                  <el-tag size="small" :type="isCardFailed(agent.code) ? 'danger' : isCardCompleted(agent.code) ? 'success' : isCardRunning(agent.code) ? 'warning' : 'info'">
+                    {{ isCardFailed(agent.code) ? '失败' : isCardCompleted(agent.code) ? '已完成' : isCardRunning(agent.code) ? '分析中' : '等待中' }}
+                  </el-tag>
+                </div>
+                <template v-if="isCardCompleted(agent.code)">
+                  <h4>分析摘要</h4>
+                  <TypewriterText v-if="shouldAnimate(agent.code)" :text="state.cards[agent.code]?.thinking || '-'" :speed="typewriterSpeed" class="thinking" @done="markThinkingDone(agent.code)" />
+                  <p v-else class="thinking">{{ state.cards[agent.code]?.thinking || '-' }}</p>
+                  <h4 v-if="canShowEvidence(agent.code)">依据</h4>
+                  <ul v-if="canShowEvidence(agent.code)" class="evidence-list">
+                    <li v-for="(line, index) in visibleEvidenceLines(agent.code)" :key="`${agent.code}-e-${index}`" :class="{ 'fade-in-item': shouldAnimate(agent.code) }" :style="{ '--i': index }">
+                      <TypewriterText v-if="isActiveEvidenceLine(agent.code, index)" :text="line" :speed="typewriterSpeed" @done="markEvidenceLineDone(agent.code)" />
+                      <span v-else>{{ line }}</span>
+                    </li>
+                  </ul>
+                  <h4 v-if="canShowSuggestion(agent.code)">建议</h4>
+                  <div v-if="canShowSuggestion(agent.code) && getHighlightPrice(agent.code) != null" class="result-strip">
+                    <span class="price-label">{{ getHighlightLabel(agent.code) }}</span>
+                    <span class="price-value"><span class="price-unit">¥</span><CountUp :value="getHighlightPrice(agent.code)" :duration="700" /></span>
+                  </div>
+                  <ul v-if="canShowSuggestion(agent.code)" class="suggestion-list">
+                    <li v-for="(line, index) in visibleSuggestionLines(agent.code)" :key="`${agent.code}-s-${index}`" :class="{ 'fade-in-item': shouldAnimate(agent.code) }" :style="{ '--i': index }">
+                      <TypewriterText v-if="isActiveSuggestionLine(agent.code, index)" :text="line" :speed="typewriterSpeed" @done="markSuggestionLineDone(agent.code)" />
+                      <span v-else>{{ line }}</span>
+                    </li>
+                  </ul>
+                  <template v-if="canShowReason(agent.code) && agent.code === managerAgent.code && state.cards[agent.code]?.reasonWhy">
+                    <h4>为什么给出这个建议</h4>
+                    <TypewriterText v-if="isActiveReason(agent.code)" :text="state.cards[agent.code]?.reasonWhy || ''" :speed="typewriterSpeed" @done="markReasonDone(agent.code)" />
+                    <p v-else>{{ state.cards[agent.code]?.reasonWhy }}</p>
+                  </template>
+                  <section v-if="canShowManagerArbitration(agent.code)" class="disagreement-and-arbitration">
+                    <div class="arbitration-head">
+                      <div>
+                        <span class="arbitration-kicker">经理裁决</span>
+                        <h4>分歧与裁决</h4>
+                      </div>
+                      <div v-if="getManagerArbitration(agent.code)?.consensusScoreText" class="consensus-meter">
+                        <div class="consensus-meter-copy">
+                          <span>共识度</span>
+                          <strong>{{ getManagerArbitration(agent.code)?.consensusScoreText }}</strong>
+                        </div>
+                        <div class="consensus-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="getManagerArbitration(agent.code)?.consensusScorePercent || 0">
+                          <span :style="{ width: `${getManagerArbitration(agent.code)?.consensusScorePercent || 0}%` }"></span>
+                        </div>
+                      </div>
+                    </div>
+                    <div v-if="getManagerArbitration(agent.code)?.decisionSummary || getManagerArbitration(agent.code)?.decisionReason" class="arbitration-summary-grid">
+                      <div v-if="getManagerArbitration(agent.code)?.decisionSummary" class="arbitration-summary-item">
+                        <span>裁决结论</span>
+                        <p>{{ getManagerArbitration(agent.code)?.decisionSummary }}</p>
+                      </div>
+                      <div v-if="getManagerArbitration(agent.code)?.decisionReason" class="arbitration-summary-item">
+                        <span>裁决理由</span>
+                        <p>{{ getManagerArbitration(agent.code)?.decisionReason }}</p>
+                      </div>
+                    </div>
+                    <div class="arbitration-detail-grid">
+                      <div v-if="getManagerArbitration(agent.code)?.disagreementSummary || getManagerArbitration(agent.code)?.disagreementPoints.length" class="arbitration-panel">
+                        <div class="arbitration-panel-head">
+                          <span class="arbitration-dot disagreement-dot"></span>
+                          <h5>分歧焦点</h5>
+                        </div>
+                        <p v-if="getManagerArbitration(agent.code)?.disagreementSummary" class="arbitration-muted">{{ getManagerArbitration(agent.code)?.disagreementSummary }}</p>
+                        <ul v-if="getManagerArbitration(agent.code)?.disagreementPoints.length" class="arbitration-list">
+                          <li v-for="(line, index) in getManagerArbitration(agent.code)?.disagreementPoints || []" :key="`${agent.code}-a-d-${index}`">
+                            <span class="arbitration-index">{{ index + 1 }}</span>
+                            <span>{{ line }}</span>
+                          </li>
+                        </ul>
+                      </div>
+                      <div v-if="getManagerArbitration(agent.code)?.acceptedOpinions.length || getManagerArbitration(agent.code)?.rejectedOpinions.length" class="arbitration-panel">
+                        <div class="arbitration-panel-head">
+                          <span class="arbitration-dot decision-dot"></span>
+                          <h5>意见处理</h5>
+                        </div>
+                        <div v-if="getManagerArbitration(agent.code)?.acceptedOpinions.length" class="opinion-group">
+                          <span class="opinion-label accepted-label">已采纳</span>
+                          <ul class="arbitration-list">
+                            <li v-for="(line, index) in getManagerArbitration(agent.code)?.acceptedOpinions || []" :key="`${agent.code}-a-a-${index}`">
+                              <span class="arbitration-index">{{ index + 1 }}</span>
+                              <span>{{ line }}</span>
+                            </li>
+                          </ul>
+                        </div>
+                        <div v-if="getManagerArbitration(agent.code)?.rejectedOpinions.length" class="opinion-group">
+                          <span class="opinion-label rejected-label">未采纳</span>
+                          <ul class="arbitration-list">
+                            <li v-for="(line, index) in getManagerArbitration(agent.code)?.rejectedOpinions || []" :key="`${agent.code}-a-j-${index}`">
+                              <span class="arbitration-index">{{ index + 1 }}</span>
+                              <span>{{ line }}</span>
+                            </li>
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                    <div v-if="getManagerArbitration(agent.code)?.selectedAgent || getManagerArbitration(agent.code)?.selectedPrice || getManagerArbitration(agent.code)?.selectedStrategy" class="arbitration-decision-strip">
+                      <div v-if="getManagerArbitration(agent.code)?.selectedAgent" class="decision-chip">
+                        <span>采纳方案</span>
+                        <strong>{{ getManagerArbitration(agent.code)?.selectedAgent }}</strong>
+                      </div>
+                      <div v-if="getManagerArbitration(agent.code)?.selectedPrice" class="decision-chip decision-chip-price">
+                        <span>采纳价格</span>
+                        <strong>{{ getManagerArbitration(agent.code)?.selectedPrice }}</strong>
+                      </div>
+                      <div v-if="getManagerArbitration(agent.code)?.selectedStrategy" class="decision-chip">
+                        <span>采纳策略</span>
+                        <strong>{{ getManagerArbitration(agent.code)?.selectedStrategy }}</strong>
+                      </div>
+                    </div>
+                  </section>
+                </template>
+                <section v-else-if="isCardFailed(agent.code)" class="failed-card">
+                  <div class="failed-card-title">执行失败</div>
+                  <p class="failed-card-message">{{ getAgentFailureSummary(agent.code) }}</p>
+                </section>
+                <div v-else-if="isCardRunning(agent.code)" class="waiting running-pulse"><span class="pulse-dot"></span> 正在分析中...</div>
+                <div v-else class="waiting">{{ getWaitingText(agent.code) }}</div>
+              </div>
+            </article>
+          </div>
+        </section>
       </div>
     </section>
 
@@ -201,10 +305,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onActivated, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { applyDecision, cancelPricingTask, createPricingTask, getPricingTaskSnapshot, getPricingTaskStreamUrl, type AgentCardContent, type DecisionComparisonItem, type DecisionLogItem, type PricingAgentCode, type PricingTaskSnapshot, type PricingTaskStatus, type PricingTaskStreamMessage } from '../api/decision'
+import { applyDecision, cancelPricingTask, createPricingTask, getPricingTaskSnapshot, getPricingTaskStreamUrl, type AgentCardContent, type DecisionComparisonItem, type DecisionLogItem, type ManagerArbitrationFields, type PricingAgentCode, type PricingTaskSnapshot, type PricingTaskStatus, type PricingTaskStreamMessage } from '../api/decision'
 import { getProductList } from '../api/product'
 import { getLlmConfig } from '../api/llmConfig'
 import { useShopStore } from '../stores/shop'
@@ -213,9 +317,10 @@ import { sanitizeErrorMessage } from '../utils/error'
 import { getFailureSummary } from '../utils/failureSummary'
 import { hasConfiguredLlmApiKey } from '../utils/llmConfigResponse'
 import { clearRevealQueue, createRevealQueueState, finishReveal, isActiveReveal, queueRevealCardRequest } from '../utils/agentRevealQueue'
-import { buildVisibleAgentTimeline, filterLatestAgentRunRound, resolveLatestAgentRunAttempt } from '../utils/agentTimeline'
-import { formatEvidenceValue, getSuggestionLines, normalizeAgentCode, toNaturalChinese } from '../utils/decisionDisplay'
+import { filterLatestAgentRunRound, resolveLatestAgentRunAttempt } from '../utils/agentTimeline'
+import { formatEvidenceValue, getManagerArbitrationBlock, getSuggestionLines, normalizeAgentCode, toNaturalChinese } from '../utils/decisionDisplay'
 import { createDefaultPricingConstraintForm, serializePricingConstraints, validatePricingConstraintForm } from '../utils/pricingConstraints'
+import { ANALYSIS_AGENT_CODES, buildDecisionStatusOverview, MANAGER_AGENT_CODE } from '../utils/pricingDecisionView'
 import { PRICING_GOAL_OPTIONS } from '../utils/pricingTaskOptions'
 import { shouldKeepRevealEnabledAfterRefresh } from '../utils/revealRefresh'
 import TypewriterText from '../components/TypewriterText.vue'
@@ -232,6 +337,7 @@ interface SnapshotLoadOptions { applyLogs?: boolean }
 
 const agents = [{ code: 'DATA_ANALYSIS', name: '数据分析智能体', order: 1 }, { code: 'MARKET_INTEL', name: '市场情报智能体', order: 2 }, { code: 'RISK_CONTROL', name: '风险控制智能体', order: 3 }, { code: 'MANAGER_COORDINATOR', name: '经理协调智能体', order: 4 }] as const
 const agentRevealOrder = agents.map((agent) => agent.code) as PricingAgentCode[]
+const analysisAgentCodeSet = new Set<PricingAgentCode>(ANALYSIS_AGENT_CODES as readonly PricingAgentCode[])
 const goalOptions = PRICING_GOAL_OPTIONS
 const emptyCards = () => ({ DATA_ANALYSIS: null, MARKET_INTEL: null, RISK_CONTROL: null, MANAGER_COORDINATOR: null }) as Record<PricingAgentCode, InternalAgentCardContent | null>
 const typewriterSpeed = 24
@@ -257,6 +363,7 @@ const currentRunAttempt = ref<number | null>(null)
 let aborter: AbortController | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let loadToken = 0
+let routePrefillToken = 0
 const liveRevealEnabled = ref(false)
 const streamArrivedCards = reactive(new Set<PricingAgentCode>())
 const revealQueue = reactive(createRevealQueueState<PricingAgentCode>())
@@ -264,8 +371,66 @@ const pendingRevealCards = reactive({} as Partial<Record<PricingAgentCode, Pendi
 const revealStages = reactive({} as Partial<Record<PricingAgentCode, AgentRevealStage>>)
 const revealLineCounts = reactive({} as Partial<Record<PricingAgentCode, RevealLineCounts>>)
 
-const normalizeCard = (card?: AgentCardContent | null, stage: AgentStage = 'completed'): InternalAgentCardContent => ({ thinking: String(card?.thinking || ''), evidence: Array.isArray(card?.evidence) ? card.evidence : [], suggestion: card?.suggestion && typeof card.suggestion === 'object' ? card.suggestion : {}, reasonWhy: card?.reasonWhy || null, __stage: stage })
-const runningCard = (): InternalAgentCardContent => ({ thinking: '', evidence: [], suggestion: {}, reasonWhy: null, __stage: 'running' })
+const coerceManagerArbitrationRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+
+const readManagerArbitrationField = (
+  source: (Partial<ManagerArbitrationFields> & { suggestion?: unknown }) | null | undefined,
+  keys: string[]
+) => {
+  const root = coerceManagerArbitrationRecord(source)
+  const suggestion = coerceManagerArbitrationRecord(root.suggestion)
+
+  for (const key of keys) {
+    const rootValue = root[key]
+    if (rootValue !== undefined && rootValue !== null && rootValue !== '') return rootValue
+
+    const suggestionValue = suggestion[key]
+    if (suggestionValue !== undefined && suggestionValue !== null && suggestionValue !== '') return suggestionValue
+  }
+
+  return null
+}
+
+const asManagerArbitrationList = (value: unknown): ManagerArbitrationFields['disagreementPoints'] =>
+  Array.isArray(value) ? value.filter((item) => item !== null && item !== undefined) as ManagerArbitrationFields['disagreementPoints'] : null
+
+const asManagerArbitrationNumber = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return null
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+const extractManagerArbitrationFields = (
+  source?: (Partial<ManagerArbitrationFields> & { suggestion?: unknown }) | null
+): ManagerArbitrationFields => ({
+  consensusScore: asManagerArbitrationNumber(readManagerArbitrationField(source, ['consensusScore'])),
+  disagreementSummary: readManagerArbitrationField(source, ['disagreementSummary']) as string | null,
+  disagreementPoints: asManagerArbitrationList(readManagerArbitrationField(source, ['disagreementPoints', 'conflicts', 'disagreements', 'conflictPoints'])),
+  disagreements: asManagerArbitrationList(readManagerArbitrationField(source, ['disagreements'])),
+  conflictPoints: asManagerArbitrationList(readManagerArbitrationField(source, ['conflictPoints'])),
+  conflicts: asManagerArbitrationList(readManagerArbitrationField(source, ['conflicts'])),
+  acceptedOpinions: asManagerArbitrationList(readManagerArbitrationField(source, ['acceptedOpinions'])),
+  rejectedOpinions: asManagerArbitrationList(readManagerArbitrationField(source, ['rejectedOpinions'])),
+  arbitrationDecision: readManagerArbitrationField(source, ['arbitrationDecision']) as string | null,
+  arbitrationSummary: readManagerArbitrationField(source, ['arbitrationSummary']) as string | null,
+  arbitrationReason: readManagerArbitrationField(source, ['arbitrationReason']) as string | null,
+  decisionSummary: readManagerArbitrationField(source, ['decisionSummary']) as string | null,
+  decisionReason: readManagerArbitrationField(source, ['decisionReason']) as string | null,
+  selectedAgent: readManagerArbitrationField(source, ['selectedAgent']) as string | null,
+  selectedOption: readManagerArbitrationField(source, ['selectedOption']) as string | null,
+  selectedPrice: asManagerArbitrationNumber(readManagerArbitrationField(source, ['selectedPrice'])),
+  selectedStrategy: readManagerArbitrationField(source, ['selectedStrategy']) as string | null
+})
+const normalizeCard = (card?: AgentCardContent | null, stage: AgentStage = 'completed'): InternalAgentCardContent => ({
+  thinking: String(card?.thinking || ''),
+  evidence: Array.isArray(card?.evidence) ? card.evidence : [],
+  suggestion: card?.suggestion && typeof card.suggestion === 'object' ? card.suggestion : {},
+  reasonWhy: card?.reasonWhy || null,
+  ...extractManagerArbitrationFields(card),
+  __stage: stage
+})
+const runningCard = (): InternalAgentCardContent => ({ thinking: '', evidence: [], suggestion: {}, reasonWhy: null, ...extractManagerArbitrationFields(null), __stage: 'running' })
 const failedCard = (card?: AgentCardContent | null): InternalAgentCardContent => normalizeCard(card, 'failed')
 const isCardRunning = (code: PricingAgentCode) => state.cards[code]?.__stage === 'running'
 const isCardFailed = (code: PricingAgentCode) => state.cards[code]?.__stage === 'failed'
@@ -293,6 +458,7 @@ const expectedSales = computed(() => numberOf(managerSuggestion.value.expectedSa
 const expectedProfit = computed(() => numberOf(managerSuggestion.value.expectedProfit))
 const strategyText = computed(() => state.strategy || String(managerSuggestion.value.strategy || ''))
 const reportSummary = computed(() => archiveReportSummary.value.trim() || state.finalSummary || String(managerSuggestion.value.summary || ''))
+const decisionOverview = computed(() => buildDecisionStatusOverview(state.cards, state.finalPrice))
 
 const numberOf = (value: unknown) => { const n = Number(value); return Number.isFinite(n) ? n : null }
 const parsePositiveId = (value: unknown) => { const n = Number(Array.isArray(value) ? value[0] : value); return Number.isInteger(n) && n > 0 ? n : null }
@@ -425,7 +591,26 @@ const markSuggestionLineDone = (code: PricingAgentCode) => {
   completeReveal(code)
 }
 const agentRoleLabel: Record<PricingAgentCode, string> = { DATA_ANALYSIS: '数据判断', MARKET_INTEL: '市场判断', RISK_CONTROL: '风险校验', MANAGER_COORDINATOR: '最终协调' }
-const visibleAgents = computed(() => buildVisibleAgentTimeline(agents, state.cards))
+const analysisAgents = agents.filter((agent) => analysisAgentCodeSet.has(agent.code))
+const managerAgent = agents.find((agent) => agent.code === MANAGER_AGENT_CODE) || agents[agents.length - 1]
+const decisionSections = computed(() => [
+  {
+    key: 'analysis',
+    title: '并行分析区',
+    description: '数据、市场、风控三个分析智能体会按固定顺序纵向展示，乱序事件仍会按顺序落位。',
+    panelClass: 'parallel-analysis-panel',
+    gridClass: 'parallel-analysis-grid',
+    agents: analysisAgents
+  },
+  {
+    key: 'manager',
+    title: '经理仲裁区',
+    description: '经理在三路分析完成后汇总分歧、给出裁决并输出最终建议价。',
+    panelClass: 'manager-arbitration-panel',
+    gridClass: 'manager-arbitration-grid',
+    agents: [managerAgent]
+  }
+])
 const agentIcon: Record<PricingAgentCode, string> = { DATA_ANALYSIS: '数', MARKET_INTEL: '市', RISK_CONTROL: '控', MANAGER_COORDINATOR: '协' }
 const getHighlightPrice = (code: PricingAgentCode): number | null => {
   const s = state.cards[code]?.suggestion && typeof state.cards[code]?.suggestion === 'object' ? state.cards[code]!.suggestion as Record<string, unknown> : {}
@@ -438,6 +623,16 @@ const isActiveReason = (code: PricingAgentCode) => shouldAnimate(code) && reveal
 const markReasonDone = (code: PricingAgentCode) => {
   if (!isActiveReason(code)) return
   completeReveal(code)
+}
+const getManagerArbitration = (code: PricingAgentCode) => code === managerAgent.code ? getManagerArbitrationBlock(state.cards[code]) : null
+const canShowManagerArbitration = (code: PricingAgentCode) => code === managerAgent.code && Boolean(getManagerArbitration(code)) && canShowReason(code)
+const getWaitingText = (code: PricingAgentCode) => {
+  if (code === managerAgent.code) {
+    return decisionOverview.value.analysisCompletedCount === analysisAgents.length
+      ? '等待经理仲裁开始...'
+      : '等待前三位分析智能体完成后开始仲裁...'
+  }
+  return '等待分析开始...'
 }
 
 const onPlatformChange = async () => { taskConfig.shopId = undefined; taskConfig.productId = undefined; productOptions.value = []; if (availableShops.value.length === 1) { taskConfig.shopId = availableShops.value[0].id; await loadProducts() } }
@@ -496,6 +691,20 @@ const prefillFromRoute = async () => {
   return true
 }
 
+const syncRoutePrefill = async () => {
+  if (route.path !== '/lab' || !parsePositiveId(route.query.productId)) {
+    return false
+  }
+
+  const token = ++routePrefillToken
+  const loaded = await shopStore.fetchShops()
+  if (token !== routePrefillToken || !loaded) {
+    return false
+  }
+
+  return prefillFromRoute()
+}
+
 const applySnapshotDetail = (detail?: PricingTaskSnapshot['detail'] | null) => { if (!detail) return; state.taskStatus = (detail.taskStatus || 'RUNNING') as PricingTaskStatus; state.finalPrice = detail.finalPrice != null ? Number(detail.finalPrice) : null; state.strategy = String(detail.strategy || ''); state.finalSummary = String(detail.finalSummary || '') }
 // 快照是断线重连、页面刷新和跳过动画时的兜底来源，需要把日志重建成当前最新一轮智能体卡片。
 const applySnapshotLogs = (logs: DecisionLogItem[]) => {
@@ -504,14 +713,21 @@ const applySnapshotLogs = (logs: DecisionLogItem[]) => {
   const latestLogs = filterLatestAgentRunRound(logs)
   currentRunAttempt.value = resolveLatestAgentRunAttempt(latestLogs)
   latestLogs.sort((a, b) => Number(a.displayOrder || a.runOrder || 0) - Number(b.displayOrder || b.runOrder || 0) || Number(a.id || 0) - Number(b.id || 0)).forEach((log) => {
-    const code = String(log.agentCode || '') as PricingAgentCode
-    if (!(code in cards)) return
+    const code = normalizeAgentCode(log.agentCode)
+      || (String(log.agentName || '').includes('经理') ? MANAGER_AGENT_CODE : null)
+    if (!code || !(code in cards)) return
     const stage = log.stage === 'running' ? 'running' : log.stage === 'failed' ? 'failed' : 'completed'
     if (stage === 'running') {
       if (!cards[code]) cards[code] = runningCard()
       return
     }
-    const cardPayload = { thinking: String(log.thinking || log.outputSummary || ''), evidence: log.evidence || [], suggestion: log.suggestion || {}, reasonWhy: log.reasonWhy || null }
+    const cardPayload = {
+      thinking: String(log.thinking || log.outputSummary || ''),
+      evidence: log.evidence || [],
+      suggestion: log.suggestion || {},
+      reasonWhy: log.reasonWhy || null,
+      ...extractManagerArbitrationFields(log)
+    }
     cards[code] = stage === 'failed' ? failedCard(cardPayload) : normalizeCard(cardPayload)
   })
   state.cards = cards
@@ -685,8 +901,8 @@ const syncLlmConfig = async () => {
 onMounted(async () => {
   void syncLlmConfig()
 
-  const loaded = await shopStore.fetchShops()
-  const hasPrefill = loaded ? await prefillFromRoute() : false
+  const hasPrefill = await syncRoutePrefill()
+  const loaded = hasPrefill ? true : await shopStore.fetchShops()
 
   if (!hasPrefill && loaded && platformOptions.value.length === 1) {
     taskConfig.platform = platformOptions.value[0]
@@ -694,9 +910,23 @@ onMounted(async () => {
   }
 })
 onActivated(() => {
-  if (!hasSyncedLlmConfigOnce.value) return
-  void syncLlmConfig()
+  if (hasSyncedLlmConfigOnce.value) {
+    void syncLlmConfig()
+  }
+  void syncRoutePrefill()
 })
+watch(
+  () => [
+    route.path,
+    route.query.productId,
+    route.query.shopId,
+    route.query.platform,
+    route.query.productName
+  ],
+  () => {
+    void syncRoutePrefill()
+  }
+)
 onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 </script>
 
@@ -741,15 +971,17 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 .decision-chat-kicker{width:fit-content;font-size:13px;font-weight:700;color:#1f6feb;background:rgba(31,111,235,.09);border:1px solid rgba(31,111,235,.12);border-radius:8px;padding:3px 8px}
 .decision-toolbar{align-items:center}
 
-.agent-stream-empty{min-height:220px;display:grid;place-items:center;text-align:center;padding:34px 18px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;color:#475569}
-.agent-stream-empty h3{margin:14px 0 6px;font-size:19px;color:#0f172a}
-.agent-stream-empty p{margin:0;line-height:1.7;color:#64748b}
-.agent-stream-pulse{display:flex;align-items:center;justify-content:center;gap:6px;height:26px}
-.agent-stream-pulse span{width:6px;height:6px;border-radius:50%;background:#1f6feb;animation:typing-dot 1s ease-in-out infinite}
-.agent-stream-pulse span:nth-child(2){animation-delay:.12s}
-.agent-stream-pulse span:nth-child(3){animation-delay:.24s}
-
-.agent-list{display:grid;gap:14px}
+.decision-overview-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
+.decision-overview-card{padding:14px 16px;border:1px solid #dbe5f0;border-radius:12px;background:linear-gradient(180deg,#fff,rgba(248,250,252,.92));display:grid;gap:8px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.decision-overview-label{font-size:13px;font-weight:700;color:#64748b;letter-spacing:.02em}
+.decision-overview-card strong{font-size:22px;color:#0f172a;line-height:1.2;font-variant-numeric:tabular-nums}
+.decision-lane-stack{display:grid;gap:14px}
+.decision-lane{display:grid;gap:12px;padding:14px;border:1px solid #dbe5f0;border-radius:12px;background:rgba(255,255,255,.78)}
+.decision-lane-head h3{margin:0 0 4px;font-size:18px;color:#0f172a}
+.decision-lane-head p{margin:0;color:#64748b;font-size:13px;line-height:1.7}
+.decision-lane-grid{display:grid;gap:14px}
+.parallel-analysis-grid{grid-template-columns:1fr}
+.manager-arbitration-grid{grid-template-columns:1fr}
 .agent-box{--agent-color:#1f6feb;display:grid;grid-template-columns:34px minmax(0,1fr);gap:12px;align-items:start;animation:agent-enter .26s ease-out both}
 .agent-message{min-width:0;padding:16px 18px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.04)}
 .agent-box.is-streaming .agent-message{border-color:rgba(31,111,235,.22)}
@@ -771,6 +1003,41 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 .price-label{font-size:14px;color:#64748b;font-weight:600}
 .price-value{font-size:26px;font-weight:800;color:#1f6feb;letter-spacing:0;font-variant-numeric:tabular-nums;line-height:1}
 .price-unit{font-size:17px;font-weight:600;opacity:.7;margin-right:3px}
+.disagreement-and-arbitration{display:grid;gap:14px;margin-top:14px;padding:16px;border:1px solid #cfe0f7;border-radius:8px;background:linear-gradient(180deg,#f3f8ff 0%,#fff 100%)}
+.disagreement-and-arbitration,.disagreement-and-arbitration *{box-sizing:border-box}
+.arbitration-head,.consensus-meter,.arbitration-summary-grid,.arbitration-detail-grid,.arbitration-decision-strip,.arbitration-panel,.arbitration-summary-item,.decision-chip{min-width:0;max-width:100%}
+.arbitration-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+.arbitration-head h4{margin:6px 0 0;font-size:18px;color:#0f172a}
+.arbitration-kicker{width:fit-content;padding:3px 8px;border-radius:8px;background:#dbeafe;color:#1d4ed8;font-size:12px;font-weight:700}
+.consensus-meter{min-width:180px;display:grid;gap:7px;padding:10px 12px;border:1px solid #dbeafe;border-radius:8px;background:#fff}
+.consensus-meter-copy{display:flex;justify-content:space-between;gap:12px;align-items:baseline;color:#64748b;font-size:12px;font-weight:700}
+.consensus-meter-copy strong{color:#1d4ed8;font-size:18px;line-height:1}
+.consensus-track{height:7px;border-radius:999px;background:#dbeafe;overflow:hidden}
+.consensus-track span{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#60a5fa,#2563eb)}
+.arbitration-summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.arbitration-summary-item{display:grid;gap:6px;padding:12px 14px;border-left:3px solid #2563eb;background:#fff;border-radius:8px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.arbitration-summary-item span,.decision-chip span{font-size:12px;font-weight:700;color:#64748b}
+.arbitration-summary-item p{margin:0;color:#1e293b;font-size:15px;line-height:1.75}
+.arbitration-summary-item p,.arbitration-muted,.arbitration-list li span:last-child,.decision-chip strong{overflow-wrap:anywhere;word-break:break-word}
+.arbitration-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.arbitration-panel{display:grid;gap:10px;align-content:start;padding:12px;border:1px solid #dbe5f0;border-radius:8px;background:#fff}
+.arbitration-panel-head{display:flex;align-items:center;gap:8px}
+.arbitration-panel-head h5{margin:0;color:#0f172a;font-size:15px}
+.arbitration-dot{width:9px;height:9px;border-radius:999px;box-shadow:0 0 0 4px rgba(37,99,235,.1)}
+.disagreement-dot{background:#f97316;box-shadow:0 0 0 4px rgba(249,115,22,.12)}
+.decision-dot{background:#10b981;box-shadow:0 0 0 4px rgba(16,185,129,.12)}
+.arbitration-muted{margin:0;padding:10px 12px;border-radius:8px;background:#f8fafc;color:#334155;line-height:1.7;font-size:14px}
+.opinion-group{display:grid;gap:8px}
+.opinion-label{width:fit-content;padding:2px 8px;border-radius:8px;font-size:12px;font-weight:700}
+.accepted-label{background:#dcfce7;color:#047857}
+.rejected-label{background:#fee2e2;color:#b42318}
+.arbitration-list{margin:0;padding:0;list-style:none;display:grid;gap:8px}
+.arbitration-list li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:8px;align-items:start;padding:9px 10px;border:1px solid #edf2f7;border-radius:8px;background:#f8fafc;line-height:1.65;color:#334155;font-size:14px}
+.arbitration-index{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;background:#e0edff;color:#1d4ed8;font-size:12px;font-weight:800;line-height:1}
+.arbitration-decision-strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:10px;border:1px solid #bfdbfe;border-radius:8px;background:#eff6ff}
+.decision-chip{display:grid;gap:4px;padding:10px 12px;border-radius:8px;background:#fff}
+.decision-chip strong{color:#0f172a;font-size:15px;line-height:1.35}
+.decision-chip-price strong{font-size:20px;color:#1d4ed8;font-variant-numeric:tabular-nums}
 
 .failed-card{display:grid;gap:8px;padding:12px 14px;border-radius:8px;border:1px solid #fecaca;background:#fef2f2}
 .failed-card-title{font-size:14px;font-weight:700;color:#b42318}
@@ -812,7 +1079,7 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 .report-table :deep(.el-tag){border-radius:999px;padding-inline:10px;font-size:14px;font-weight:700}
 .report-table :deep(.el-button.is-link){font-size:15px;font-weight:700}
 .report-table :deep(.cell){line-height:1.5}
-@media (max-width:1100px){.config-grid,.metric-grid,.constraint-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:760px){.config-grid,.metric-grid,.constraint-grid{grid-template-columns:1fr}.constraint-intro,.section-head,.agent-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}.workflow-copy p,.report-copy{max-width:none}.agent-box{grid-template-columns:30px minmax(0,1fr);gap:10px}.agent-avatar{width:30px;height:30px}.result-strip{flex-direction:column;align-items:flex-start;gap:4px}}
+@media (max-width:1100px){.config-grid,.metric-grid,.constraint-grid,.decision-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:760px){.config-grid,.metric-grid,.constraint-grid,.decision-overview-grid,.parallel-analysis-grid,.arbitration-summary-grid,.arbitration-detail-grid,.arbitration-decision-strip{grid-template-columns:1fr}.constraint-intro,.section-head,.agent-head,.arbitration-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}.workflow-copy p,.report-copy{max-width:none}.agent-box{grid-template-columns:30px minmax(0,1fr);gap:10px}.agent-avatar{width:30px;height:30px}.result-strip{flex-direction:column;align-items:flex-start;gap:4px}.consensus-meter{width:100%;min-width:0}}
 @media (prefers-reduced-motion:reduce){.agent-box,.metric-card,.fade-in-item,.pulse-dot,.agent-stream-pulse span{animation:none!important;transition:none!important}.metric-card:hover{transform:none}}
 </style>

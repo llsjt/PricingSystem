@@ -75,8 +75,25 @@ export interface DecisionLogItem {
   needManualReview?: boolean
   thinking?: string
   evidence?: Array<Record<string, unknown>>
-  suggestion?: Record<string, unknown>
+  suggestion?: AgentSuggestion
   reasonWhy?: string
+  consensusScore?: number | null
+  disagreementSummary?: string | null
+  disagreementPoints?: ManagerArbitrationItem[] | null
+  conflicts?: ManagerArbitrationItem[] | null
+  disagreements?: ManagerArbitrationItem[] | null
+  conflictPoints?: ManagerArbitrationItem[] | null
+  acceptedOpinions?: ManagerArbitrationItem[] | null
+  rejectedOpinions?: ManagerArbitrationItem[] | null
+  arbitrationDecision?: string | null
+  arbitrationSummary?: string | null
+  arbitrationReason?: string | null
+  decisionSummary?: string | null
+  decisionReason?: string | null
+  selectedAgent?: string | null
+  selectedOption?: string | null
+  selectedPrice?: number | null
+  selectedStrategy?: string | null
   createdAt: string
 }
 
@@ -93,10 +110,34 @@ export type PricingTaskStatus =
 
 export type PricingAgentCode = 'DATA_ANALYSIS' | 'MARKET_INTEL' | 'RISK_CONTROL' | 'MANAGER_COORDINATOR'
 
-export interface AgentCardContent {
+export type ManagerArbitrationItem = string | Record<string, unknown>
+
+export interface ManagerArbitrationFields {
+  consensusScore?: number | null
+  disagreementSummary?: string | null
+  disagreementPoints?: ManagerArbitrationItem[] | null
+  conflicts?: ManagerArbitrationItem[] | null
+  disagreements?: ManagerArbitrationItem[] | null
+  conflictPoints?: ManagerArbitrationItem[] | null
+  acceptedOpinions?: ManagerArbitrationItem[] | null
+  rejectedOpinions?: ManagerArbitrationItem[] | null
+  arbitrationDecision?: string | null
+  arbitrationSummary?: string | null
+  arbitrationReason?: string | null
+  decisionSummary?: string | null
+  decisionReason?: string | null
+  selectedAgent?: string | null
+  selectedOption?: string | null
+  selectedPrice?: number | null
+  selectedStrategy?: string | null
+}
+
+export type AgentSuggestion = Record<string, unknown> & ManagerArbitrationFields
+
+export interface AgentCardContent extends ManagerArbitrationFields {
   thinking: string
   evidence: Array<Record<string, unknown>>
-  suggestion: Record<string, unknown>
+  suggestion: AgentSuggestion
   reasonWhy?: string | null
 }
 

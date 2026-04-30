@@ -123,6 +123,8 @@ const shopStore = useShopStore()
 
 // 进入登录页时清除旧的认证状态，避免残留 token 导致后台请求产生 401/403 错误
 onMounted(() => {
+  ElMessage.closeAll()
+  shopStore.resetState()
   clearAuthSession()
   userStore.clearSession()
 })
@@ -143,6 +145,7 @@ const rules: FormRules = {
 // 登录成功后统一刷新店铺状态并跳转首页；失败时尽量把接口异常转成可读提示。
 const handleLogin = async () => {
   if (!loginFormRef.value) return
+  ElMessage.closeAll()
 
   await loginFormRef.value.validate(async (valid: boolean) => {
     if (!valid) return

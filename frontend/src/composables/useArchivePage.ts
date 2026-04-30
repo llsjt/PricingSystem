@@ -26,8 +26,10 @@ import {
   AGENT_ORDER_BY_CODE,
   createApplyDecisionConfirmMessage,
   formatPriceRange,
+  getLogAgentCode,
   getLogAgentName,
   getLogEvidenceLines,
+  getManagerArbitrationBlock,
   getLogReason,
   getLogSuggestionHighlightLabel,
   getLogSuggestionHighlightPrice,
@@ -76,6 +78,20 @@ const STATUS_OPTIONS = [
   { label: '已完成', value: 'COMPLETED' },
   { label: '失败', value: 'FAILED' }
 ]
+
+const ARCHIVE_AGENT_MARK: Record<PricingAgentCode, string> = {
+  DATA_ANALYSIS: '数',
+  MARKET_INTEL: '市',
+  RISK_CONTROL: '控',
+  MANAGER_COORDINATOR: '裁'
+}
+
+const ARCHIVE_AGENT_ROLE_LABEL: Record<PricingAgentCode, string> = {
+  DATA_ANALYSIS: '数据测算',
+  MARKET_INTEL: '市场校准',
+  RISK_CONTROL: '风险约束',
+  MANAGER_COORDINATOR: '分歧裁决'
+}
 
 const buildComparisonChartOption = (rows: DecisionComparisonItem[]) => ({
   color: ['#1f6feb', '#f59e0b'],
@@ -197,6 +213,29 @@ export const useArchivePage = () => {
     || String(log.runStatus || '').trim().toLowerCase() === 'failed'
 
   const getLogFailureSummary = (log: DecisionLogItem) => getFailureSummary(log, '任务执行失败')
+
+  const orderedLogCards = computed(() =>
+    orderedLogs.value.map((log) => {
+      const agentCode = getLogAgentCode(log)
+      return {
+        log,
+        agentCode,
+        agentMark: agentCode ? ARCHIVE_AGENT_MARK[agentCode] : '智',
+        roleLabel: agentCode ? ARCHIVE_AGENT_ROLE_LABEL[agentCode] : '协同记录',
+        agentName: getLogAgentName(log),
+        runStatusType: getRunStatusType(log.runStatus),
+        runStatusText: getRunStatusText(log.runStatus),
+        failureSummary: getLogFailureSummary(log),
+        thinking: getLogThinking(log),
+        evidenceLines: getLogEvidenceLines(log),
+        suggestionHighlightLabel: getLogSuggestionHighlightLabel(log),
+        suggestionHighlightPrice: getLogSuggestionHighlightPrice(log),
+        suggestionLines: getLogSuggestionLines(log),
+        reason: getLogReason(log),
+        arbitration: getManagerArbitrationBlock(log)
+      }
+    })
+  )
 
   const fetchStats = async () => {
     try {
@@ -536,6 +575,7 @@ export const useArchivePage = () => {
     loading,
     openBatchDetail,
     orderedLogs,
+    orderedLogCards,
     queryParams,
     recentBatches,
     recentBatchTotal,

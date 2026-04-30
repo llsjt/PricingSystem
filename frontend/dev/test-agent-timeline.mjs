@@ -108,7 +108,7 @@ assert.equal(shouldKeepRevealEnabledAfterRefresh('RUNNING', false), false, 'does
 
 const pricingLabSource = await readFile(join(root, 'src', 'views', 'PricingLab.vue'), 'utf8')
 assert.match(pricingLabSource, /decision-chat-panel/, 'decision stage uses AI chat panel wrapper')
-assert.doesNotMatch(pricingLabSource, /is-manager|price-highlight-manager/, 'manager agent uses the same visual treatment as other agents')
+assert.match(pricingLabSource, /state\.cards = emptyCards\(\)\s*\n\s*clearAgentRevealProgress\(\)/, 'clears previous cards when a newer runAttempt arrives')
 assert.doesNotMatch(pricingLabSource, /agent-box\[data-agent=/, 'agent cards do not use per-agent large color overrides')
 
 console.log('agent timeline tests passed')

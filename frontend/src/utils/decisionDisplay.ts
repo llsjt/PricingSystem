@@ -2,10 +2,32 @@
  * 定价决策展示工具，把日志原始字段转换成页面可直接渲染的中文文案。
  */
 
-import type { DecisionLogItem, PricingAgentCode } from '../api/decision'
+import type {
+  AgentCardContent,
+  AgentSuggestion,
+  DecisionLogItem,
+  ManagerArbitrationFields,
+  ManagerArbitrationItem,
+  PricingAgentCode
+} from '../api/decision'
 import { formatCurrency, formatPercent } from './formatters.ts'
 
 export type DecisionDisplayLine = string
+export interface ManagerArbitrationBlock {
+  consensusScoreText: string | null
+  consensusScorePercent: number | null
+  disagreementSummary: string | null
+  disagreementPoints: string[]
+  decisionSummary: string | null
+  decisionReason: string | null
+  acceptedOpinions: string[]
+  rejectedOpinions: string[]
+  selectedAgent: string | null
+  selectedPrice: string | null
+  selectedStrategy: string | null
+  disagreementLines: string[]
+  decisionLines: string[]
+}
 
 export const AGENT_ORDER_BY_CODE: Record<PricingAgentCode, number> = {
   DATA_ANALYSIS: 1,
@@ -51,6 +73,10 @@ const TEXT_VALUE_MAP: Record<string, string> = {
   UNKNOWN: '未知',
   TRUE: '是',
   FALSE: '否',
+  DATA_ANALYSIS: AGENT_NAME_BY_CODE.DATA_ANALYSIS,
+  MARKET_INTEL: AGENT_NAME_BY_CODE.MARKET_INTEL,
+  RISK_CONTROL: AGENT_NAME_BY_CODE.RISK_CONTROL,
+  MANAGER_COORDINATOR: AGENT_NAME_BY_CODE.MANAGER_COORDINATOR,
   TMALL_CSV: '天猫真实样本',
   'VALID COMPETITORS >= 5': '有效竞品数不少于5个',
   'VALID COMPETITORS >= 3': '有效竞品数达到3个',
@@ -81,6 +107,8 @@ const resolveLogAgentCode = (log: Pick<DecisionLogItem, 'agentName' | 'agentCode
   normalizeAgentCode(log.agentCode)
   || inferLegacyAgentCode(log.agentName)
   || inferLegacyAgentCode(log.roleName)
+
+export const getLogAgentCode = resolveLogAgentCode
 
 export const toNaturalChinese = (value: unknown): string => {
   const text = String(value ?? '').trim()
@@ -113,6 +141,7 @@ const formatDataQualityText = (value: unknown) => {
 }
 
 const toNumber = (value: unknown) => {
+  if (value === null || value === undefined || value === '') return null
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : null
 }
@@ -203,6 +232,134 @@ const formatObjectLine = (value: Record<string, unknown>) => {
     .filter(([, currentValue]) => currentValue !== null && currentValue !== undefined)
     .map(([key, currentValue]) => `${keyMap[key] || key}：${formatPrimitive(key, currentValue)}`)
     .join('，')
+}
+
+const coerceRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+
+type ManagerArbitrationSource =
+  | (Partial<ManagerArbitrationFields> & { suggestion?: AgentSuggestion | null })
+  | AgentSuggestion
+  | AgentCardContent
+  | null
+  | undefined
+
+const readArbitrationValue = (
+  source: ManagerArbitrationSource,
+  keys: string[]
+) => {
+  const root = coerceRecord(source) || {}
+  const nestedSuggestion = coerceRecord(root.suggestion) || {}
+
+  for (const key of keys) {
+    if (root[key] !== undefined && root[key] !== null && root[key] !== '') {
+      return root[key]
+    }
+    if (nestedSuggestion[key] !== undefined && nestedSuggestion[key] !== null && nestedSuggestion[key] !== '') {
+      return nestedSuggestion[key]
+    }
+  }
+
+  return null
+}
+
+const formatArbitrationItem = (value: ManagerArbitrationItem) => {
+  if (typeof value === 'string') return value
+  return formatObjectLine(value)
+}
+
+const asArbitrationList = (value: unknown): ManagerArbitrationItem[] => {
+  if (!Array.isArray(value)) return []
+  return value.filter((item) => item !== null && item !== undefined) as ManagerArbitrationItem[]
+}
+
+const formatConsensusScore = (value: number) => {
+  const percent = value > 1 ? value : value * 100
+  const clamped = Math.max(0, Math.min(100, percent))
+  return {
+    text: `${percent.toFixed(2)}%`,
+    percent: clamped
+  }
+}
+
+const formatSelectedAgent = (value: unknown) => {
+  const code = normalizeAgentCode(String(value || ''))
+  if (code) return AGENT_NAME_BY_CODE[code]
+  return toNaturalChinese(value)
+}
+
+export const getManagerArbitrationBlock = (
+  source: ManagerArbitrationSource
+): ManagerArbitrationBlock | null => {
+  const disagreementLines: string[] = []
+  const decisionLines: string[] = []
+
+  const consensusScore = toNumber(readArbitrationValue(source, ['consensusScore']))
+  const consensusScoreDisplay = consensusScore != null ? formatConsensusScore(consensusScore) : null
+  if (consensusScoreDisplay) disagreementLines.push(`共识度：${consensusScoreDisplay.text}`)
+
+  const disagreementSummary = readArbitrationValue(source, ['disagreementSummary', 'disputeSummary', 'conflictSummary'])
+  const formattedDisagreementSummary = disagreementSummary ? toNaturalChinese(disagreementSummary) : null
+  if (formattedDisagreementSummary) disagreementLines.push(`分歧摘要：${formattedDisagreementSummary}`)
+
+  const disagreementPoints = asArbitrationList(
+    readArbitrationValue(source, ['disagreementPoints', 'conflicts', 'disagreements', 'conflictPoints'])
+  ).map(formatArbitrationItem)
+  disagreementPoints.forEach((line, index) => {
+    disagreementLines.push(`分歧点 ${index + 1}：${line}`)
+  })
+
+  const arbitrationDecision = readArbitrationValue(source, ['arbitrationDecision', 'arbitrationSummary', 'decisionSummary'])
+  const decisionSummary = arbitrationDecision ? toNaturalChinese(arbitrationDecision) : null
+  if (decisionSummary) decisionLines.push(`裁决结论：${decisionSummary}`)
+
+  const arbitrationReason = readArbitrationValue(source, ['arbitrationReason', 'decisionReason'])
+  const decisionReason = arbitrationReason ? toNaturalChinese(arbitrationReason) : null
+  if (decisionReason) decisionLines.push(`裁决理由：${decisionReason}`)
+
+  const acceptedOpinions = asArbitrationList(readArbitrationValue(source, ['acceptedOpinions']))
+    .map(formatArbitrationItem)
+  acceptedOpinions.forEach((line, index) => {
+    decisionLines.push(`采纳意见 ${index + 1}：${line}`)
+  })
+
+  const rejectedOpinions = asArbitrationList(readArbitrationValue(source, ['rejectedOpinions']))
+    .map(formatArbitrationItem)
+  rejectedOpinions.forEach((line, index) => {
+    decisionLines.push(`未采纳意见 ${index + 1}：${line}`)
+  })
+
+  const selectedAgent = readArbitrationValue(source, ['selectedAgent', 'selectedOption'])
+  const formattedSelectedAgent = selectedAgent ? formatSelectedAgent(selectedAgent) : null
+  if (formattedSelectedAgent) decisionLines.push(`采纳方案：${formattedSelectedAgent}`)
+
+  const selectedPrice = toNumber(readArbitrationValue(source, ['selectedPrice']))
+  const formattedSelectedPrice = selectedPrice != null ? formatCurrency(selectedPrice) : null
+  if (formattedSelectedPrice) decisionLines.push(`采纳价格：${formattedSelectedPrice}`)
+
+  const selectedStrategy = readArbitrationValue(source, ['selectedStrategy'])
+  const formattedSelectedStrategy = selectedStrategy ? toNaturalChinese(selectedStrategy) : null
+  if (formattedSelectedStrategy) decisionLines.push(`采纳策略：${formattedSelectedStrategy}`)
+
+  if (disagreementLines.length === 0 && decisionLines.length === 0) {
+    return null
+  }
+
+  return {
+    consensusScoreText: consensusScoreDisplay?.text || null,
+    consensusScorePercent: consensusScoreDisplay?.percent ?? null,
+    disagreementSummary: formattedDisagreementSummary,
+    disagreementPoints,
+    decisionSummary,
+    decisionReason,
+    acceptedOpinions,
+    rejectedOpinions,
+    selectedAgent: formattedSelectedAgent,
+    selectedPrice: formattedSelectedPrice,
+    selectedStrategy: formattedSelectedStrategy,
+    disagreementLines,
+    decisionLines
+  }
 }
 
 export const formatEvidenceValue = (label: unknown, value: unknown): string => {
