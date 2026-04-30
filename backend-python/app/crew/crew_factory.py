@@ -435,7 +435,13 @@ def build_pricing_crew(
             "执行策略要求：\n"
             f"- 所有定价结果都必须进入「{MANUAL_REVIEW_STRATEGY}」流程，不允许直接执行或灰度发布。\n"
             f'- 输出 JSON 的 executeStrategy 字段必须固定为「{MANUAL_REVIEW_STRATEGY}」。\n\n'
-            "请说明为什么采纳或不采纳每个专家的建议，给出清晰的决策理由。\n\n"
+            "请使用规范仲裁字段说明为什么采纳或不采纳每个专家的建议，给出清晰的决策理由。\n"
+            "- 仅使用 disagreementSummary、disagreementPoints、acceptedOpinions、rejectedOpinions、"
+            "arbitrationDecision、arbitrationReason、selectedAgent、selectedPrice、selectedStrategy、consensusScore。\n"
+            "- 仅输出上面列出的规范仲裁字段，不要补充历史别名字段。\n"
+            "- consensusScore 使用 0 到 1 之间的小数，不要使用百分比。\n"
+            "- selectedPrice 表示被采纳的上游意见价格，不一定等于 finalPrice。\n"
+            "- 如果最终结果是折中价，selectedAgent 和 selectedPrice 可以为 null，但 arbitrationReason 必须解释折中逻辑。\n\n"
             "最终输出必须是严格的JSON格式："
         ),
         expected_output=(
@@ -449,7 +455,17 @@ def build_pricing_crew(
             '"thinking": "你的决策思路(中文)", '
             '"resultSummary": "综合决策摘要(中文字符串,包含对各专家意见的采纳理由)", '
             '"suggestedMinPrice": 建议最低价(数字), '
-            '"suggestedMaxPrice": 建议最高价(数字)}'
+            '"suggestedMaxPrice": 建议最高价(数字), '
+            '"consensusScore": 共识度(0-1之间小数,可选), '
+            '"disagreementSummary": "主要分歧摘要(可选)", '
+            '"disagreementPoints": ["分歧点1", "分歧点2"], '
+            '"acceptedOpinions": ["采纳意见1"], '
+            '"rejectedOpinions": ["未采纳意见1"], '
+            '"arbitrationDecision": "最终裁决结论(可选)", '
+            '"arbitrationReason": "裁决理由(可选)", '
+            '"selectedAgent": "DATA_ANALYSIS/MARKET_INTEL/RISK_CONTROL/null", '
+            '"selectedPrice": 被采纳意见价格(数字或null), '
+            '"selectedStrategy": "被采纳方案策略(可选)"}'
         ),
         agent=agents["MANAGER_COORDINATOR"],
         context=[data_task, market_task, risk_task],

@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from app.crew import crew_factory
 from app.schemas.agent import DataAgentOutput, ManagerAgentOutput, MarketAgentOutput, RiskAgentOutput
 from app.services.orchestration_service import OrchestrationService
+from app.utils.text_utils import MANUAL_REVIEW_STRATEGY
 
 
 def _build_payload() -> SimpleNamespace:
@@ -479,6 +480,131 @@ def test_agent_output_models_preserve_runtime_fields_by_alias():
     assert manager_dumped["thinking"] == "manager-thinking"
 
 
+def test_manager_agent_output_accepts_optional_arbitration_fields():
+    manager_dumped = ManagerAgentOutput.model_validate(
+        {
+            "finalPrice": "29.90",
+            "expectedSales": 120,
+            "expectedProfit": "980.00",
+            "profitGrowth": "180.00",
+            "executeStrategy": MANUAL_REVIEW_STRATEGY,
+            "isPass": False,
+            "thinking": "manager-thinking",
+            "resultSummary": "manager-summary",
+            "suggestedMinPrice": "27.90",
+            "suggestedMaxPrice": "31.90",
+            "consensusScore": 0,
+            "disagreementSummary": "price gap",
+            "disagreementPoints": ["data high", "risk floor"],
+            "acceptedOpinions": ["risk floor"],
+            "rejectedOpinions": ["data high"],
+            "arbitrationDecision": "use safe midpoint",
+            "arbitrationReason": "balance risk and market",
+            "selectedAgent": "RISK_CONTROL",
+            "selectedPrice": "28.80",
+            "selectedStrategy": MANUAL_REVIEW_STRATEGY,
+        }
+    ).model_dump(by_alias=True)
+
+    assert manager_dumped["consensusScore"] == 0
+    assert manager_dumped["disagreementPoints"] == ["data high", "risk floor"]
+    assert manager_dumped["acceptedOpinions"] == ["risk floor"]
+    assert manager_dumped["rejectedOpinions"] == ["data high"]
+    assert manager_dumped["arbitrationDecision"] == "use safe midpoint"
+    assert manager_dumped["selectedAgent"] == "RISK_CONTROL"
+    assert manager_dumped["selectedPrice"] == Decimal("28.80")
+
+
+def test_manager_agent_output_does_not_dump_legacy_arbitration_fields():
+    manager_dumped = ManagerAgentOutput.model_validate(
+        {
+            "finalPrice": "29.90",
+            "expectedSales": 120,
+            "expectedProfit": "980.00",
+            "profitGrowth": "180.00",
+            "executeStrategy": MANUAL_REVIEW_STRATEGY,
+            "isPass": False,
+            "thinking": "manager-thinking",
+            "resultSummary": "manager-summary",
+            "suggestedMinPrice": "27.90",
+            "suggestedMaxPrice": "31.90",
+            "conflicts": ["legacy conflict"],
+            "arbitrationSummary": "legacy summary",
+            "decisionReason": "legacy reason",
+            "selectedOption": "MARKET_INTEL",
+        }
+    ).model_dump(by_alias=True, exclude_none=True)
+
+    assert "conflicts" not in manager_dumped
+    assert "arbitrationSummary" not in manager_dumped
+    assert "decisionReason" not in manager_dumped
+    assert "selectedOption" not in manager_dumped
+    assert manager_dumped["resultSummary"] == "manager-summary"
+
+
+def test_build_pricing_crew_manager_task_uses_normalized_arbitration_fields(monkeypatch):
+    payload = SimpleNamespace(
+        product=SimpleNamespace(
+            product_id=1001,
+            product_name="coffee",
+            category_name="beverage",
+            current_price=Decimal("29.90"),
+            cost_price=Decimal("16.80"),
+        ),
+        strategy_goal="profit",
+        baseline_sales=120,
+        baseline_profit=Decimal("1200.00"),
+        constraints={},
+        metrics=[],
+        traffic=[],
+    )
+
+    class _FakeTask:
+        instances = []
+
+        def __init__(self, **kwargs):  # noqa: ANN003
+            self.kwargs = kwargs
+            _FakeTask.instances.append(self)
+
+    class _FakeCrew:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(crew_factory, "_precompute_data_summary", lambda _payload: "data-summary")
+    monkeypatch.setattr(crew_factory, "_precompute_competitor_summary", lambda _payload: "competitor-summary")
+    monkeypatch.setattr(crew_factory, "_build_metrics_summary", lambda _payload: "metrics-summary")
+    monkeypatch.setattr(crew_factory, "_build_constraints_text", lambda _constraints: "constraints-summary")
+    monkeypatch.setattr(
+        crew_factory,
+        "build_crewai_agents",
+        lambda **kwargs: {
+            "DATA_ANALYSIS": "data-agent",
+            "MARKET_INTEL": "market-agent",
+            "RISK_CONTROL": "risk-agent",
+            "MANAGER_COORDINATOR": "manager-agent",
+        },
+    )
+    monkeypatch.setattr(crew_factory, "Task", _FakeTask)
+    monkeypatch.setattr(crew_factory, "Crew", _FakeCrew)
+
+    crew_factory.build_pricing_crew(payload, analysis_llm=object(), manager_llm=object())
+
+    manager_task = next(task for task in _FakeTask.instances if task.kwargs["agent"] == "manager-agent")
+    description = manager_task.kwargs["description"]
+    expected_output = manager_task.kwargs["expected_output"]
+
+    assert '"consensusScore"' in expected_output
+    assert '"disagreementPoints"' in expected_output
+    assert '"arbitrationDecision"' in expected_output
+    assert '"arbitrationReason"' in expected_output
+    assert '"selectedAgent"' in expected_output
+    assert "selectedPrice" in description
+    assert "conflicts" not in description
+    assert "arbitrationSummary" not in description
+    assert "conflicts" not in expected_output
+    assert "arbitrationSummary" not in expected_output
+
+
 def test_agent_output_models_reject_unsafe_values():
     with pytest.raises(ValidationError):
         DataAgentOutput.model_validate(
@@ -520,5 +646,39 @@ def test_agent_output_models_reject_unsafe_values():
                 "resultSummary": "manager-summary",
                 "suggestedMinPrice": "27.90",
                 "suggestedMaxPrice": "31.90",
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        ManagerAgentOutput.model_validate(
+            {
+                "finalPrice": "29.90",
+                "expectedSales": 120,
+                "expectedProfit": "980.00",
+                "profitGrowth": "180.00",
+                "executeStrategy": MANUAL_REVIEW_STRATEGY,
+                "isPass": False,
+                "thinking": "manager-thinking",
+                "resultSummary": "manager-summary",
+                "suggestedMinPrice": "27.90",
+                "suggestedMaxPrice": "31.90",
+                "consensusScore": 1.2,
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        ManagerAgentOutput.model_validate(
+            {
+                "finalPrice": "29.90",
+                "expectedSales": 120,
+                "expectedProfit": "980.00",
+                "profitGrowth": "180.00",
+                "executeStrategy": MANUAL_REVIEW_STRATEGY,
+                "isPass": False,
+                "thinking": "manager-thinking",
+                "resultSummary": "manager-summary",
+                "suggestedMinPrice": "27.90",
+                "suggestedMaxPrice": "31.90",
+                "selectedAgent": "MANAGER_COORDINATOR",
             }
         )

@@ -22,6 +22,7 @@ agent_run_log 的历史记录，决定"本次重跑应该从哪个 Agent 开始�
 # 断点续跑服务，负责根据历史成功卡片判断本轮从哪个智能体继续执行。
 
 
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -36,6 +37,17 @@ AGENT_ORDER: list[tuple[str, int]] = [
     ("RISK_CONTROL", 3),
     ("MANAGER_COORDINATOR", 4),
 ]
+ANALYSIS_ORDERS = [1, 2, 3]
+MANAGER_ORDER = 4
+
+
+@dataclass(frozen=True)
+class ResumePlan:
+    prior_outputs: dict[int, dict[str, Any]]
+    analysis_orders_to_run: list[int]
+    manager_completed: bool
+    should_run_manager_now: bool
+    all_done: bool
 
 
 class ResumeService:
@@ -43,6 +55,20 @@ class ResumeService:
 
     def __init__(self, db: Session):
         self.log_repo = LogRepo(db)
+
+    def compute_resume_plan(self, task_id: int) -> ResumePlan:
+        completed_rows = self.log_repo.list_completed_raw_outputs(task_id)
+        analysis_orders_to_run = [order for order in ANALYSIS_ORDERS if order not in completed_rows]
+        manager_completed = MANAGER_ORDER in completed_rows and not analysis_orders_to_run
+        should_run_manager_now = not analysis_orders_to_run and not manager_completed
+
+        return ResumePlan(
+            prior_outputs=completed_rows,
+            analysis_orders_to_run=analysis_orders_to_run,
+            manager_completed=manager_completed,
+            should_run_manager_now=should_run_manager_now,
+            all_done=manager_completed,
+        )
 
     def compute_resume_point(self, task_id: int) -> tuple[int, dict[int, dict[str, Any]]]:
         """根据 agent_run_log 历史记录计算续跑断点。
@@ -54,13 +80,13 @@ class ResumeService:
 
         prior_outputs_by_order 是 {display_order: raw_output_dict}，只含断点之前的记录。
         """
-        completed_rows = self.log_repo.list_completed_raw_outputs(task_id)
+        plan = self.compute_resume_plan(task_id)
 
         prior: dict[int, dict[str, Any]] = {}
         start_from = 1
         found_break = False
         for _agent_code, order in AGENT_ORDER:
-            raw = completed_rows.get(order)
+            raw = plan.prior_outputs.get(order)
             if raw is None:
                 start_from = order
                 found_break = True

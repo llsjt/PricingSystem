@@ -2,7 +2,7 @@
 
 from datetime import date
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -112,7 +112,7 @@ class RiskAgentOutput(BaseModel):
 
 
 class ManagerAgentOutput(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     final_price: Decimal = Field(alias="finalPrice")
     expected_sales: int = Field(alias="expectedSales")
@@ -124,3 +124,13 @@ class ManagerAgentOutput(BaseModel):
     result_summary: str = Field(alias="resultSummary")
     suggested_min_price: Decimal = Field(alias="suggestedMinPrice")
     suggested_max_price: Decimal = Field(alias="suggestedMaxPrice")
+    consensus_score: float | None = Field(default=None, ge=0.0, le=1.0, alias="consensusScore")
+    disagreement_summary: str | None = Field(default=None, alias="disagreementSummary")
+    disagreement_points: list[str | dict[str, Any]] | None = Field(default=None, alias="disagreementPoints")
+    accepted_opinions: list[str] | None = Field(default=None, alias="acceptedOpinions")
+    rejected_opinions: list[str] | None = Field(default=None, alias="rejectedOpinions")
+    arbitration_decision: str | None = Field(default=None, alias="arbitrationDecision")
+    arbitration_reason: str | None = Field(default=None, alias="arbitrationReason")
+    selected_agent: Literal["DATA_ANALYSIS", "MARKET_INTEL", "RISK_CONTROL"] | None = Field(default=None, alias="selectedAgent")
+    selected_price: Decimal | None = Field(default=None, alias="selectedPrice")
+    selected_strategy: str | None = Field(default=None, alias="selectedStrategy")

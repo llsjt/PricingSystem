@@ -186,3 +186,57 @@ def test_different_tasks_are_isolated():
 
     assert start_200 == 3
     assert prior_200 == {1: {"agent": "data-200"}, 2: {"agent": "market-200"}}
+
+
+def test_resume_plan_only_replays_missing_analysis_orders():
+    db = _build_session()
+    _add_completed(db, task_id=1, order=1, raw={"agent": "data"})
+    _add_completed(db, task_id=1, order=3, raw={"agent": "risk"})
+
+    plan = ResumeService(db).compute_resume_plan(task_id=1)
+
+    assert plan.analysis_orders_to_run == [2]
+    assert plan.prior_outputs == {
+        1: {"agent": "data"},
+        3: {"agent": "risk"},
+    }
+    assert plan.manager_completed is False
+    assert plan.should_run_manager_now is False
+    assert plan.all_done is False
+
+
+def test_resume_plan_runs_only_manager_when_all_analysis_outputs_exist():
+    db = _build_session()
+    _add_completed(db, task_id=1, order=1, raw={"agent": "data"})
+    _add_completed(db, task_id=1, order=2, raw={"agent": "market"})
+    _add_completed(db, task_id=1, order=3, raw={"agent": "risk"})
+
+    plan = ResumeService(db).compute_resume_plan(task_id=1)
+
+    assert plan.analysis_orders_to_run == []
+    assert plan.prior_outputs == {
+        1: {"agent": "data"},
+        2: {"agent": "market"},
+        3: {"agent": "risk"},
+    }
+    assert plan.manager_completed is False
+    assert plan.should_run_manager_now is True
+    assert plan.all_done is False
+
+
+def test_resume_plan_marks_all_done_when_manager_output_exists():
+    db = _build_session()
+    for order, agent in (
+        (1, "data"),
+        (2, "market"),
+        (3, "risk"),
+        (4, "manager"),
+    ):
+        _add_completed(db, task_id=1, order=order, raw={"agent": agent})
+
+    plan = ResumeService(db).compute_resume_plan(task_id=1)
+
+    assert plan.analysis_orders_to_run == []
+    assert plan.manager_completed is True
+    assert plan.should_run_manager_now is False
+    assert plan.all_done is True

@@ -647,6 +647,21 @@ SSE 由 Java 发出，事件名固定为 `message`，消息体核心字段如下
 | `suggestion` | `Record<string, any>` | 建议对象 |
 | `reasonWhy` | string \| null | 原因说明 |
 
+当 `agentCode = MANAGER_COORDINATOR` 时，`card.suggestion` 可包含以下 Manager 仲裁字段。字段均为可选，用于前端展示分歧、采纳与否决依据；Java SSE 不会把这些字段提升到 `card` 根部。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `consensusScore` | number \| null | 三个分析 Agent 的意见一致度，范围为 `0~1` |
+| `disagreementSummary` | string \| null | 主要分歧摘要 |
+| `disagreementPoints` | string[] \| object[] | 分歧点列表 |
+| `acceptedOpinions` | string[] | Manager 明确采纳的意见 |
+| `rejectedOpinions` | string[] | Manager 未采纳或仅部分采纳的意见 |
+| `arbitrationDecision` | string \| null | 最终裁决结论 |
+| `arbitrationReason` | string \| null | 裁决理由 |
+| `selectedAgent` | string \| null | 主要采纳的上游 Agent，可为 `DATA_ANALYSIS`、`MARKET_INTEL`、`RISK_CONTROL` 或空 |
+| `selectedPrice` | number \| null | 被采纳的上游意见价格，不等同于最终 `finalPrice` |
+| `selectedStrategy` | string \| null | 被采纳方案对应策略 |
+
 ##### `task_completed`
 
 | 字段 | 类型 | 说明 |

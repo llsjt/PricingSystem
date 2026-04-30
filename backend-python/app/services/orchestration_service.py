@@ -1,23 +1,22 @@
 """
 定价决策编排服务（CrewAI 版）
 ============================
-驱动 4 个 CrewAI Agent 按顺序执行定价决策，支持 Agent 粒度的失败重试。
+驱动 4 个 CrewAI Agent 执行定价决策，支持分析 Agent 并行执行和 Agent 粒度失败重试。
 
 执行流程：
   1. 构建 LLM 实例
   2. 构建 CrewBundle（4 Agent + 4 Task）
   3. 通过 ResumeService 计算续跑断点（上一轮已完成的 Agent 会被跳过）
-  4. 对每个需要执行的 Task 手动调用 task.execute_sync
-     - 已完成的 Agent：从 agent_run_log.raw_output_json 读取输出 → 作为 context 注入
-     - 失败/未开始的 Agent：真正调用 LLM 执行
-  5. 每个 Agent 成功后立即写入 agent_run_log（带 raw_output_json）供下次重试复用
+  4. 并行执行缺失的三个分析 Agent；已完成 Agent 从 agent_run_log.raw_output_json 复用
+  5. 分析 Agent 成功后立即写入 agent_run_log（带 raw_output_json）供下次重试复用
   6. 经理 Agent 完成后 → 解析最终决策 → 强制硬约束校验 → 写入 pricing_result
 """
-# 编排服务，负责串行驱动四个智能体完成一次完整定价决策。
+# 编排服务，负责驱动三个分析智能体并行执行，再由经理智能体完成最终定价决策。
 
 
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
 from typing import Any
 
@@ -55,12 +54,33 @@ def _safe_int(val: Any, default: int = 0) -> int:
         return default
 
 
-def _safe_positive_float(val: Any) -> float | None:
+def _safe_non_negative_float(val: Any) -> float | None:
     try:
         parsed = float(val)
     except (TypeError, ValueError):
         return None
-    return parsed if parsed > 0 else None
+    return parsed if parsed >= 0 else None
+
+
+def _safe_float_in_range(val: Any, minimum: float, maximum: float) -> float | None:
+    try:
+        parsed = float(val)
+    except (TypeError, ValueError):
+        return None
+    if parsed < minimum or parsed > maximum:
+        return None
+    return parsed
+
+
+def _safe_positive_float(val: Any) -> float | None:
+    return _safe_non_negative_float(val)
+
+
+def _safe_optional_float(val: Any) -> float | None:
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
 
 
 def _normalize_optional_text(val: Any) -> str | None:
@@ -72,6 +92,27 @@ def _normalize_optional_text(val: Any) -> str | None:
     return text
 
 
+def _first_present(source: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = source.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _normalize_optional_list(value: Any) -> list[Any]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if item is not None]
+
+
+def _normalize_selected_agent(val: Any) -> str | None:
+    text = _normalize_optional_text(val)
+    if text in {"DATA_ANALYSIS", "MARKET_INTEL", "RISK_CONTROL"}:
+        return text
+    return None
+
+
 # ── Agent 元数据（名称和展示顺序） ──────────────────────────
 _AGENT_META = [
     {"code": "DATA_ANALYSIS", "name": "数据分析Agent", "order": 1},
@@ -79,6 +120,9 @@ _AGENT_META = [
     {"code": "RISK_CONTROL", "name": "风险控制Agent", "order": 3},
     {"code": "MANAGER_COORDINATOR", "name": "经理协调Agent", "order": 4},
 ]
+
+_ANALYSIS_ORDERS = (1, 2, 3)
+_MANAGER_ORDER = 4
 
 _AGENT_OUTPUT_MODELS = {
     "DATA_ANALYSIS": DataAgentOutput,
@@ -152,6 +196,163 @@ class OrchestrationService:
         return model.model_dump(by_alias=True, exclude_none=True, mode="json")
 
     # ── 从 LLM 输出构建数据分析卡片 ──────────────────────────
+    @staticmethod
+    def _get_agent_meta(order: int) -> dict[str, Any]:
+        return _AGENT_META[order - 1]
+
+    @staticmethod
+    def _safe_parallel_tools(agent: Any) -> list[Any]:
+        tools = list(getattr(agent, "tools", []) or [])
+        safe_tools: list[Any] = []
+        for tool in tools:
+            tool_name = getattr(getattr(tool, "__class__", None), "__name__", "")
+            if tool_name in {"LogWriterTool", "ResultWriterTool"}:
+                continue
+            safe_tools.append(tool)
+        return safe_tools
+
+    def _run_task_sync(
+        self,
+        *,
+        payload: CrewRunPayload,
+        order: int,
+        task: Any,
+        agent: Any,
+        context_text: str | None,
+        tools: list[Any] | None,
+    ) -> str:
+        meta = self._get_agent_meta(order)
+        logger.info("Agent [%s] 开始执行 (order=%d)", meta["name"], order)
+        debug_log(
+            f"[CrewAI] execute_sync agent={meta['code']} order={order} "
+            f"context_injected={bool(context_text)} task_id={payload.task_id}"
+        )
+        task_output = task.execute_sync(
+            agent=agent,
+            context=context_text,
+            tools=tools,
+        )
+        raw = str(task_output.raw) if hasattr(task_output, "raw") else str(task_output)
+        debug_log(
+            f"[CrewAI] execute_sync done agent={meta['code']} "
+            f"raw_len={len(raw)} raw_preview={raw[:200]}"
+        )
+        return raw
+
+    def _parse_and_validate_output(self, *, order: int, raw: str) -> dict[str, Any]:
+        meta = self._get_agent_meta(order)
+        parsed = extract_json_object(raw)
+        if not parsed:
+            raise AgentOutputValidationError(meta["code"], "输出解析失败")
+        return self._validate_agent_output(meta["code"], parsed)
+
+    def _publish_agent_running(self, payload: CrewRunPayload, order: int) -> None:
+        meta = self._get_agent_meta(order)
+        self.log_tool.write_running_card(
+            task_id=payload.task_id,
+            agent_name=meta["name"],
+            display_order=meta["order"],
+        )
+        self.progress_service.publish_sync(
+            "AGENT_CARD_RUNNING",
+            payload.task_id,
+            self.execution_id,
+            {"agentName": meta["name"]},
+        )
+
+    def _publish_agent_completed(self, payload: CrewRunPayload, order: int) -> None:
+        meta = self._get_agent_meta(order)
+        self.progress_service.publish_sync(
+            "AGENT_CARD_COMPLETED",
+            payload.task_id,
+            self.execution_id,
+            {"agentName": meta["name"], "runStatus": "success"},
+        )
+
+    def _run_analysis_phase(
+        self,
+        *,
+        payload: CrewRunPayload,
+        bundle: CrewBundle,
+        prior_outputs: dict[int, dict[str, Any]],
+        orders_to_run: list[int],
+    ) -> None:
+        if not orders_to_run:
+            return
+
+        for order in orders_to_run:
+            self._publish_agent_running(payload, order)
+
+        future_by_order: dict[Any, int] = {}
+        raw_outputs: dict[int, str] = {}
+        first_error: Exception | None = None
+        with ThreadPoolExecutor(max_workers=max(len(orders_to_run), 1)) as executor:
+            for order in orders_to_run:
+                task = bundle.tasks[order - 1]
+                agent = bundle.agents_by_order[order]
+                future = executor.submit(
+                    self._run_task_sync,
+                    payload=payload,
+                    order=order,
+                    task=task,
+                    agent=agent,
+                    context_text=None,
+                    tools=self._safe_parallel_tools(agent),
+                )
+                future_by_order[future] = order
+
+            for future in as_completed(future_by_order):
+                order = future_by_order[future]
+                meta = self._get_agent_meta(order)
+                try:
+                    raw_outputs[order] = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Agent [%s] 执行失败: %s", meta["name"], exc, exc_info=True)
+                    self._write_agent_failed_card(
+                        payload=payload,
+                        order=order,
+                        summary=self._summarize_failure_message(exc),
+                    )
+                    if first_error is None:
+                        first_error = exc
+
+        for order in orders_to_run:
+            raw = raw_outputs.get(order)
+            if raw is None:
+                continue
+            meta = self._get_agent_meta(order)
+            try:
+                parsed = self._parse_and_validate_output(order=order, raw=raw)
+            except AgentOutputValidationError as exc:
+                logger.warning("Agent [%s] 输出结构校验失败: %s", meta["name"], exc, exc_info=True)
+                self._write_agent_failed_card(payload=payload, order=order, summary=str(exc))
+                if first_error is None:
+                    first_error = exc
+                continue
+
+            prior_outputs[order] = parsed
+            self._write_agent_success_card(
+                payload=payload,
+                order=order,
+                parsed=parsed,
+                prior_outputs=prior_outputs,
+            )
+            self._publish_agent_completed(payload, order)
+
+        if first_error is not None:
+            raise first_error
+
+    @staticmethod
+    def _validate_agent_output(agent_code: str, parsed: dict[str, Any]) -> dict[str, Any]:
+        model_cls = _AGENT_OUTPUT_MODELS.get(agent_code)
+        if model_cls is None:
+            return parsed
+        try:
+            model = model_cls.model_validate(parsed)
+        except ValidationError as exc:
+            raise AgentOutputValidationError(agent_code, "输出结构校验失败") from exc
+        return model.model_dump(by_alias=True, exclude_none=True, mode="json")
+
     @staticmethod
     def _build_data_card(
         payload: CrewRunPayload,
@@ -338,11 +539,33 @@ class OrchestrationService:
             {"label": "风控通过", "value": bool(risk_parsed.get("isPass", False))},
         ]
 
+        disagreement_points = _normalize_optional_list(
+            _first_present(parsed, "disagreementPoints", "conflicts", "disagreements", "conflictPoints")
+        )
+        accepted_opinions = _normalize_optional_list(parsed.get("acceptedOpinions"))
+        rejected_opinions = _normalize_optional_list(parsed.get("rejectedOpinions"))
+
         suggestion = {
             "finalPrice": _safe_float(parsed.get("finalPrice")),
             "expectedSales": _safe_int(parsed.get("expectedSales")),
             "expectedProfit": _safe_float(parsed.get("expectedProfit")),
             "strategy": MANUAL_REVIEW_STRATEGY,
+            "consensusScore": _safe_float_in_range(parsed.get("consensusScore"), 0.0, 1.0),
+            "disagreementSummary": _normalize_optional_text(parsed.get("disagreementSummary")),
+            "disagreementPoints": disagreement_points,
+            "acceptedOpinions": accepted_opinions,
+            "rejectedOpinions": rejected_opinions,
+            "arbitrationDecision": _normalize_optional_text(
+                _first_present(parsed, "arbitrationDecision", "arbitrationSummary", "decisionSummary")
+            ),
+            "arbitrationReason": _normalize_optional_text(
+                _first_present(parsed, "arbitrationReason", "decisionReason")
+            ),
+            "selectedAgent": _normalize_selected_agent(
+                _first_present(parsed, "selectedAgent", "selectedOption")
+            ),
+            "selectedPrice": _safe_optional_float(parsed.get("selectedPrice")),
+            "selectedStrategy": _normalize_optional_text(parsed.get("selectedStrategy")),
             "summary": parsed.get("resultSummary", "综合决策完成"),
         }
 
@@ -444,16 +667,6 @@ class OrchestrationService:
 
     # ── 主执行方法 ────────────────────────────────────────────
     def run(self, payload: CrewRunPayload) -> TaskFinalResult:
-        """
-        驱动 4 个 Agent 按顺序执行定价决策，支持 Agent 粒度的断点续跑。
-
-        流程：
-          1. 构建 LLM → 构建 CrewBundle
-          2. ResumeService 计算断点 → 已完成 Agent 的 raw_output 注入下游 context
-          3. 对每个需要执行的 Task 调用 task.execute_sync；失败立即写 failed 卡片并抛异常
-          4. 所有 Agent 成功后，解析经理决策 → 强制硬约束 → 写入最终结果
-        """
-        # ── 构建 CrewAI LLM 实例 ──────────────────────────────
         analysis_llm = build_crewai_llm(
             api_key=payload.llm_api_key,
             base_url=payload.llm_base_url,
@@ -475,144 +688,82 @@ class OrchestrationService:
             f"task_id={payload.task_id}"
         )
 
-        # ── 构建 Crew Bundle ───────────────────────────────────
         logger.info("开始构建定价 Crew (task_id=%d)", payload.task_id)
         debug_log(f"[CrewAI] building crew task_id={payload.task_id}")
         bundle: CrewBundle = build_pricing_crew(
             payload=payload,
             analysis_llm=analysis_llm,
             manager_llm=manager_llm,
-            on_task_done=None,  # 处理已内联到主循环，不再走 callback
+            on_task_done=None,
         )
 
-        # ── 计算续跑断点 ───────────────────────────────────────
-        resume_service = ResumeService(self.db)
-        start_from, prior_outputs = resume_service.compute_resume_point(payload.task_id)
+        resume_plan = ResumeService(self.db).compute_resume_plan(payload.task_id)
+        prior_outputs = dict(resume_plan.prior_outputs)
 
-        if start_from > 1:
-            skipped = sorted(prior_outputs.keys())
-            logger.info(
-                "任务 %d 部分重试: 从 order=%d 开始，跳过已完成 order=%s",
-                payload.task_id,
-                start_from,
-                skipped,
-            )
+        if resume_plan.all_done:
+            logger.info("任务 %d 已具备完整 Agent 输出，直接回放经理结果", payload.task_id)
+            return self._finalize_result(payload, prior_outputs.get(_MANAGER_ORDER, {}))
+
+        analysis_orders_to_run = resume_plan.analysis_orders_to_run
+        if analysis_orders_to_run:
             debug_log(
-                f"[CrewAI] resume_from={start_from} skipped={skipped} task_id={payload.task_id}"
+                f"[CrewAI] parallel_analysis orders={analysis_orders_to_run} "
+                f"reused={sorted(prior_outputs.keys())} task_id={payload.task_id}"
+            )
+            self._run_analysis_phase(
+                payload=payload,
+                bundle=bundle,
+                prior_outputs=prior_outputs,
+                orders_to_run=analysis_orders_to_run,
             )
         else:
-            debug_log(f"[CrewAI] resume_from=1 (full run) task_id={payload.task_id}")
-
-        # ── 全部 Agent 都已完成的边界情况 ─────────────────────
-        if start_from > len(_AGENT_META):
-            logger.info(
-                "任务 %d 所有 Agent 都已有 completed 记录，直接使用经理输出生成最终结果",
-                payload.task_id,
-            )
-            manager_parsed = prior_outputs.get(4, {})
-            return self._finalize_result(payload, manager_parsed)
-
-        # ── 为第一个待执行的 Agent 写 running 占位卡片 ─────────
-        first_meta = _AGENT_META[start_from - 1]
-        self.log_tool.write_running_card(
-            task_id=payload.task_id,
-            agent_name=first_meta["name"],
-            display_order=first_meta["order"],
-        )
-        self.progress_service.publish_sync(
-            "AGENT_CARD_RUNNING",
-            payload.task_id,
-            self.execution_id,
-            {"agentName": first_meta["name"]},
-        )
-
-        # ── 串行执行剩余 Task ─────────────────────────────────
-        for order in range(start_from, len(_AGENT_META) + 1):
-            task = bundle.tasks[order - 1]
-            agent = bundle.agents_by_order[order]
-            meta = _AGENT_META[order - 1]
-
-            # 构造 context：经理 Agent 依赖上游三者的 raw_output；其余 Agent 不注入。
-            context_text = self._format_prior_outputs_for_context(
-                prior_outputs, target_order=order
-            )
-
-            logger.info("Agent [%s] 开始执行 (order=%d)", meta["name"], order)
             debug_log(
-                f"[CrewAI] execute_sync agent={meta['code']} order={order} "
-                f"prior_orders={sorted(prior_outputs.keys())} task_id={payload.task_id}"
+                f"[CrewAI] analysis_reused orders={sorted(prior_outputs.keys())} task_id={payload.task_id}"
             )
 
+        if not resume_plan.manager_completed:
+            manager_order = _MANAGER_ORDER
+            meta = self._get_agent_meta(manager_order)
+            self._publish_agent_running(payload, manager_order)
+            manager_context = self._format_prior_outputs_for_context(
+                prior_outputs,
+                target_order=manager_order,
+            )
             try:
-                task_output = task.execute_sync(
-                    agent=agent,
-                    context=context_text,
-                    tools=agent.tools,
+                raw = self._run_task_sync(
+                    payload=payload,
+                    order=manager_order,
+                    task=bundle.tasks[manager_order - 1],
+                    agent=bundle.agents_by_order[manager_order],
+                    context_text=manager_context,
+                    tools=list(getattr(bundle.agents_by_order[manager_order], "tools", []) or []),
                 )
-            except Exception as exc:  # noqa: BLE001
-                logger.error("Agent [%s] 执行失败: %s", meta["name"], exc, exc_info=True)
-                debug_log(f"[CrewAI] execute_sync failed agent={meta['code']} error={exc}")
-                summary = self._summarize_failure_message(exc)
-                self._write_agent_failed_card(payload=payload, order=order, summary=summary)
-                raise  # 向上抛给 dispatch_service 做 retry_count 递增
-
-            raw = str(task_output.raw) if hasattr(task_output, "raw") else str(task_output)
-            debug_log(
-                f"[CrewAI] execute_sync done agent={meta['code']} "
-                f"raw_len={len(raw)} raw_preview={raw[:200]}"
-            )
-
-            parsed = extract_json_object(raw)
-            if not parsed:
-                exc = AgentOutputValidationError(meta["code"], "输出解析失败")
-                logger.warning("Agent [%s] 输出解析失败，写入错误卡片", meta["name"])
-                self._write_agent_failed_card(payload=payload, order=order, summary=str(exc))
-                raise exc
-
-            try:
-                parsed = self._validate_agent_output(meta["code"], parsed)
+                parsed = self._parse_and_validate_output(order=manager_order, raw=raw)
             except AgentOutputValidationError as exc:
                 logger.warning("Agent [%s] 输出结构校验失败: %s", meta["name"], exc, exc_info=True)
-                self._write_agent_failed_card(payload=payload, order=order, summary=str(exc))
+                self._write_agent_failed_card(payload=payload, order=manager_order, summary=str(exc))
+                raise
+            except Exception as exc:  # noqa: BLE001
+                logger.error("Agent [%s] 执行失败: %s", meta["name"], exc, exc_info=True)
+                self._write_agent_failed_card(
+                    payload=payload,
+                    order=manager_order,
+                    summary=self._summarize_failure_message(exc),
+                )
                 raise
 
-            # 成功：把 parsed 存入 prior_outputs 供后续 Agent 使用，同时写 completed 卡片
-            prior_outputs[order] = parsed
-            logger.info("Agent [%s] 完成，正在写入卡片 (order=%d)", meta["name"], order)
+            prior_outputs[manager_order] = parsed
             self._write_agent_success_card(
                 payload=payload,
-                order=order,
+                order=manager_order,
                 parsed=parsed,
                 prior_outputs=prior_outputs,
             )
-            self.progress_service.publish_sync(
-                "AGENT_CARD_COMPLETED",
-                payload.task_id,
-                self.execution_id,
-                {"agentName": meta["name"], "runStatus": "success"},
-            )
-            logger.info("Agent [%s] 卡片已写入数据库", meta["name"])
-
-            # 为下一个 Agent 提前写 running 占位
-            if order < len(_AGENT_META):
-                next_meta = _AGENT_META[order]
-                self.log_tool.write_running_card(
-                    task_id=payload.task_id,
-                    agent_name=next_meta["name"],
-                    display_order=next_meta["order"],
-                )
-                self.progress_service.publish_sync(
-                    "AGENT_CARD_RUNNING",
-                    payload.task_id,
-                    self.execution_id,
-                    {"agentName": next_meta["name"]},
-                )
+            self._publish_agent_completed(payload, manager_order)
 
         logger.info("Crew 执行完成 (task_id=%d)", payload.task_id)
         debug_log(f"[CrewAI] crew completed task_id={payload.task_id}")
-
-        manager_parsed = prior_outputs.get(4, {})
-        return self._finalize_result(payload, manager_parsed)
+        return self._finalize_result(payload, prior_outputs.get(_MANAGER_ORDER, {}))
 
     def _finalize_result(
         self,

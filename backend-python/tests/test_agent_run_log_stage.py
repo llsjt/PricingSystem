@@ -142,6 +142,24 @@ def _valid_manager_output() -> dict:
         "resultSummary": "manager-summary",
         "suggestedMinPrice": "28.00",
         "suggestedMaxPrice": "32.00",
+        "consensusScore": 0.72,
+        "conflicts": [
+            {
+                "topic": "建议价差异",
+                "dataOpinion": "数据 Agent 建议 31.00",
+                "marketOpinion": "市场 Agent 建议 29.50",
+                "riskOpinion": "风控 Agent 要求不低于 28.00",
+                "decision": "采用 30.00 的保守折中价",
+            }
+        ],
+        "acceptedOpinions": [
+            "采纳风控安全底价",
+            "采纳市场样本不足时保守处理",
+        ],
+        "rejectedOpinions": [
+            "未完全采纳数据 Agent 的激进提价建议",
+        ],
+        "arbitrationSummary": "先满足风控底线，再结合市场样本质量保守定价",
     }
 
 
@@ -286,6 +304,9 @@ def test_worker_failure_before_retry_clears_previous_running_and_failed_cards():
     req = SimpleNamespace(task_id=task.id, trace_id="trace-22")
     response = DispatchService(db).handle_worker_failure(req, "timeout", max_retries=2)
     logs = LogRepo(db).list_by_task_id(task.id)
+    completed_orders = sorted(log.display_order for log in logs if log.stage == "completed")
+    failed_orders = sorted(log.display_order for log in logs if log.stage == "failed")
+    running_orders = sorted(log.display_order for log in logs if log.stage == "running")
 
     assert response.status == "RETRYING"
     assert [log.stage for log in logs] == ["completed"]
@@ -382,8 +403,72 @@ def test_validate_agent_output_rejects_missing_required_data_price():
     assert "输出结构校验失败" in str(exc_info.value)
 
 
+def test_build_manager_card_exposes_arbitration_fields():
+    thinking, evidence, suggestion, reason_why = OrchestrationService._build_manager_card(
+        _valid_manager_output(),
+        _valid_data_output(),
+        _valid_market_output(),
+        _valid_risk_output(),
+    )
+
+    assert thinking == "manager-thinking"
+    assert len(evidence) == 4
+    assert suggestion["finalPrice"] == 30.0
+    assert suggestion["consensusScore"] == 0.72
+    assert suggestion["disagreementPoints"][0]["topic"]
+    assert suggestion["acceptedOpinions"] == [
+        "采纳风控安全底价",
+        "采纳市场样本不足时保守处理",
+    ]
+    assert suggestion["rejectedOpinions"] == [
+        "未完全采纳数据 Agent 的激进提价建议",
+    ]
+    assert suggestion["arbitrationDecision"] == _valid_manager_output()["arbitrationSummary"]
+    assert "conflicts" not in suggestion
+    assert "arbitrationSummary" not in suggestion
+    assert reason_why == "manager-summary"
+
+
+def test_build_manager_card_preserves_zero_consensus_score():
+    manager_output = _valid_manager_output()
+    manager_output["consensusScore"] = 0
+
+    _thinking, _evidence, suggestion, _reason_why = OrchestrationService._build_manager_card(
+        manager_output,
+        _valid_data_output(),
+        _valid_market_output(),
+        _valid_risk_output(),
+    )
+
+    assert suggestion["consensusScore"] == 0.0
+
+
+def test_build_manager_card_reads_legacy_manager_aliases_but_writes_only_normalized_fields():
+    manager_output = {
+        **_valid_manager_output(),
+        "decisionReason": "legacy reason",
+        "selectedOption": "MARKET_INTEL",
+    }
+    manager_output.pop("acceptedOpinions", None)
+    manager_output.pop("rejectedOpinions", None)
+
+    _thinking, _evidence, suggestion, reason_why = OrchestrationService._build_manager_card(
+        manager_output,
+        _valid_data_output(),
+        _valid_market_output(),
+        _valid_risk_output(),
+    )
+
+    assert suggestion["arbitrationDecision"] == manager_output["arbitrationSummary"]
+    assert suggestion["arbitrationReason"] == "legacy reason"
+    assert suggestion["selectedAgent"] == "MARKET_INTEL"
+    assert "decisionReason" not in suggestion
+    assert "selectedOption" not in suggestion
+    assert reason_why == "manager-summary"
+
+
 def test_orchestration_validation_failure_writes_failed_card_and_blocks_result(monkeypatch):
-    """数据分析 Agent 输出校验失败 → 写 failed 卡片并立即终止；下游 Agent 不应执行。"""
+    """数据分析 Agent 输出校验失败时，并行同轮已完成的分析卡片应保留，Manager 不启动。"""
     db = build_session(PricingTask.__table__, AgentRunLog.__table__)
     task = create_running_task(db, task_id=5)
     invalid_data = _valid_data_output()
@@ -395,7 +480,7 @@ def test_orchestration_validation_failure_writes_failed_card_and_blocks_result(m
     )
     monkeypatch.setattr(
         "app.services.orchestration_service.build_pricing_crew",
-        lambda **kwargs: _fake_bundle([invalid_data]),
+        lambda **kwargs: _fake_bundle([invalid_data, _valid_market_output(), _valid_risk_output()]),
     )
 
     service = OrchestrationService(db)
@@ -406,36 +491,30 @@ def test_orchestration_validation_failure_writes_failed_card_and_blocks_result(m
         service.run(_payload(task.id))
 
     logs = LogRepo(db).list_by_task_id(task.id)
+    completed_orders = sorted(log.display_order for log in logs if log.stage == "completed")
+    failed_orders = sorted(log.display_order for log in logs if log.stage == "failed")
+    running_orders = sorted(log.display_order for log in logs if log.stage == "running")
 
     assert "[DATA_ANALYSIS]" in str(exc_info.value)
     assert result_calls == []
-    # 串行执行流程：失败立即抛错，不再为下游 Agent 写 running 占位
-    assert [log.stage for log in logs] == ["running", "failed"]
-    assert logs[1].role_name == "数据分析Agent"
-    assert logs[1].suggestion_json["error"] is True
-    assert logs[1].suggestion_json["message"].startswith("[DATA_ANALYSIS]")
-
+    assert running_orders == [1, 2, 3]
+    assert completed_orders == [2, 3]
+    assert failed_orders == [1]
+    assert 4 not in [log.display_order for log in logs]
+    failed_card = next(log for log in logs if log.display_order == 1 and log.stage == "failed")
+    assert failed_card.suggestion_json["error"] is True
+    assert failed_card.suggestion_json["message"].startswith("[DATA_ANALYSIS]")
 
 def test_validation_failure_aborts_immediately_skipping_downstream_agents(monkeypatch):
-    """串行模式下，上游 Agent 校验失败应立即中断，避免下游浪费 LLM 调用。
-
-    这是从全量 Crew.kickoff 迁移到 Task 级 execute_sync 后的关键行为变化：
-    - 旧实现：on_task_done callback 抛错后 CrewAI 仍会继续触发后续 task，manager 拿到空 dict
-    - 新实现：任何一个 Agent 抛错 → 立即 raise → dispatch_service 接住做断点续跑
-    """
+    """分析层校验失败时，Manager 不执行，但其它独立分析 Agent 可以完成。"""
     db = build_session(PricingTask.__table__, AgentRunLog.__table__)
     task = create_running_task(db, task_id=7)
 
     invalid_data = _valid_data_output()
     invalid_data.pop("suggestedPrice")
 
-    # 给后续三个 Task 也准备 mock，但它们不应被调用——execute_sync 一旦被触发就会引发 AssertionError
-    def _should_not_run(*args, **kwargs):
-        raise AssertionError("downstream Agent must not execute after upstream validation failure")
-
-    bundle = _fake_bundle([invalid_data])
-    for downstream_task in bundle.tasks[1:]:
-        downstream_task.execute_sync = _should_not_run  # type: ignore[assignment]
+    bundle = _fake_bundle([invalid_data, _valid_market_output(), _valid_risk_output(), _valid_manager_output()])
+    bundle.tasks[3].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("manager should not run after analysis validation failure"))  # type: ignore[assignment]
 
     monkeypatch.setattr(
         "app.services.orchestration_service.build_crewai_llm",
@@ -455,9 +534,130 @@ def test_validation_failure_aborts_immediately_skipping_downstream_agents(monkey
 
     assert result_calls == []
     logs = LogRepo(db).list_by_task_id(task.id)
-    # 失败发生在 order=1，停在 [running, failed]；不会再有 order=2/3/4 的 running 占位
-    assert [log.stage for log in logs] == ["running", "failed"]
-    assert logs[-1].role_name == "数据分析Agent"
+    completed_orders = sorted(log.display_order for log in logs if log.stage == "completed")
+    failed_orders = sorted(log.display_order for log in logs if log.stage == "failed")
+    assert completed_orders == [2, 3]
+    assert failed_orders == [1]
+    assert 4 not in [log.display_order for log in logs]
+
+def test_orchestration_service_writes_three_analysis_running_cards_before_collecting_results(monkeypatch):
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=31)
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: _fake_bundle(
+            [
+                _valid_data_output(),
+                _valid_market_output(),
+                _valid_risk_output(),
+                _valid_manager_output(),
+            ]
+        ),
+    )
+
+    service = OrchestrationService(db)
+    service.result_tool = SimpleNamespace(write_final_result=lambda payload: None)
+    service.run(_payload(task.id))
+
+    ordered_logs = db.query(AgentRunLog).order_by(AgentRunLog.id.asc()).all()
+    assert [(log.display_order, log.stage) for log in ordered_logs[:3]] == [
+        (1, "running"),
+        (2, "running"),
+        (3, "running"),
+    ]
+
+def test_orchestration_service_only_replays_missing_analysis_agents_before_running_manager(monkeypatch):
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=32)
+    repo = LogRepo(db)
+    repo.append_card(
+        task_id=task.id,
+        agent_name="鏁版嵁鍒嗘瀽Agent",
+        display_order=1,
+        thinking_summary="done",
+        evidence=[],
+        suggestion={"summary": "done"},
+        raw_output={"agent": "data"},
+    )
+    repo.append_card(
+        task_id=task.id,
+        agent_name="椋庨櫓鎺у埗Agent",
+        display_order=3,
+        thinking_summary="done",
+        evidence=[],
+        suggestion={"summary": "done"},
+        raw_output={"agent": "risk"},
+    )
+
+    bundle = _fake_bundle(
+        [
+            _valid_data_output(),
+            _valid_market_output(),
+            _valid_risk_output(),
+            _valid_manager_output(),
+        ]
+    )
+    bundle.tasks[0].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("data task should not rerun"))  # type: ignore[assignment]
+    bundle.tasks[2].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("risk task should not rerun"))  # type: ignore[assignment]
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: bundle,
+    )
+
+    service = OrchestrationService(db)
+    service.result_tool = SimpleNamespace(write_final_result=lambda payload: None)
+    service.run(_payload(task.id))
+
+    manager_context = bundle.tasks[3].captured_context
+    assert manager_context is not None
+    assert '"agent": "data"' in manager_context
+    assert '"agent": "risk"' in manager_context
+    assert '"suggestedPrice": "30.50"' in manager_context
+
+
+def test_parallel_analysis_failure_keeps_other_completed_cards_and_blocks_manager(monkeypatch):
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=33)
+
+    bundle = _fake_bundle(
+        [
+            _valid_data_output(),
+            RuntimeError("market failed"),
+            _valid_risk_output(),
+            _valid_manager_output(),
+        ]
+    )
+    bundle.tasks[3].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("manager should not run when analysis agent fails"))  # type: ignore[assignment]
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: bundle,
+    )
+
+    with pytest.raises(RuntimeError):
+        OrchestrationService(db).run(_payload(task.id))
+
+    logs = LogRepo(db).list_by_task_id(task.id)
+    completed_orders = sorted(log.display_order for log in logs if log.stage == "completed")
+    failed_orders = sorted(log.display_order for log in logs if log.stage == "failed")
+
+    assert completed_orders == [1, 3]
+    assert failed_orders == [2]
+    assert 4 not in [log.display_order for log in logs]
 
 
 def test_orchestration_final_manager_output_requires_final_price(monkeypatch):
@@ -495,7 +695,7 @@ def test_orchestration_final_manager_output_requires_final_price(monkeypatch):
 
 
 def test_orchestration_service_writes_failed_stage_when_task_execute_sync_raises(monkeypatch):
-    """单个 Task.execute_sync 抛出非超时类异常 → 写入 failed 卡片并向上抛错。"""
+    """单个分析 Agent 执行异常时，其他并行分析结果保留且 Manager 不执行。"""
     db = build_session(PricingTask.__table__, AgentRunLog.__table__)
     task = create_running_task(db, task_id=4)
 
@@ -507,14 +707,94 @@ def test_orchestration_service_writes_failed_stage_when_task_execute_sync_raises
     )
     monkeypatch.setattr(
         "app.services.orchestration_service.build_pricing_crew",
-        lambda **kwargs: _fake_bundle([raised]),
+        lambda **kwargs: _fake_bundle([raised, _valid_market_output(), _valid_risk_output(), _valid_manager_output()]),
     )
 
     with pytest.raises(RuntimeError):
         OrchestrationService(db).run(_payload(task.id))
 
     logs = LogRepo(db).list_by_task_id(task.id)
+    completed_orders = sorted(log.display_order for log in logs if log.stage == "completed")
+    failed_orders = sorted(log.display_order for log in logs if log.stage == "failed")
+    assert completed_orders == [2, 3]
+    assert failed_orders == [1]
+    failed_card = next(log for log in logs if log.display_order == 1 and log.stage == "failed")
+    assert failed_card.thinking_summary == "CrewAI 任务执行失败"
+    assert failed_card.suggestion_json == {"error": True, "message": "CrewAI 任务执行失败"}
+def test_orchestration_service_replays_legacy_manager_output_without_arbitration_fields(monkeypatch):
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=41)
+    repo = LogRepo(db)
+    repo.append_card(
+        task_id=task.id,
+        agent_name="鏁版嵁鍒嗘瀽Agent",
+        display_order=1,
+        thinking_summary="done",
+        evidence=[],
+        suggestion={"summary": "done"},
+        raw_output=_valid_data_output(),
+    )
+    repo.append_card(
+        task_id=task.id,
+        agent_name="甯傚満鎯呮姤Agent",
+        display_order=2,
+        thinking_summary="done",
+        evidence=[],
+        suggestion={"summary": "done"},
+        raw_output=_valid_market_output(),
+    )
+    repo.append_card(
+        task_id=task.id,
+        agent_name="椋庨櫓鎺у埗Agent",
+        display_order=3,
+        thinking_summary="done",
+        evidence=[],
+        suggestion={"summary": "done"},
+        raw_output=_valid_risk_output(),
+    )
+    repo.append_card(
+        task_id=task.id,
+        agent_name="缁忕悊鍗忚皟Agent",
+        display_order=4,
+        thinking_summary="done",
+        evidence=[],
+        suggestion={"summary": "done"},
+        raw_output={
+            "finalPrice": "30.00",
+            "expectedSales": 118,
+            "expectedProfit": "990.00",
+            "profitGrowth": "190.00",
+            "executeStrategy": orchestration_module.MANUAL_REVIEW_STRATEGY,
+            "isPass": False,
+            "thinking": "manager-thinking",
+            "resultSummary": "manager-summary",
+            "suggestedMinPrice": "28.00",
+            "suggestedMaxPrice": "32.00",
+        },
+    )
 
-    assert [log.stage for log in logs] == ["running", "failed"]
-    assert logs[-1].thinking_summary == "CrewAI 任务执行失败"
-    assert logs[-1].suggestion_json == {"error": True, "message": "CrewAI 任务执行失败"}
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: _fake_bundle(
+            [
+                _valid_data_output(),
+                _valid_market_output(),
+                _valid_risk_output(),
+                _valid_manager_output(),
+            ]
+        ),
+    )
+
+    service = OrchestrationService(db)
+    captured_results: list = []
+    service.result_tool = SimpleNamespace(write_final_result=captured_results.append)
+
+    result = service.run(_payload(task.id))
+
+    assert result.final_price == Decimal("30.00")
+    assert result.result_summary == "manager-summary"
+    assert len(captured_results) == 1

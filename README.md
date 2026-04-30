@@ -165,6 +165,20 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy-public-beta.ps1
 docker compose --env-file .env.public-beta -f docker-compose.public-beta.yml up -d --build
 ```
 
+当前 `docker-compose.public-beta.yml` 面向本地 Docker Desktop 直接启动做了热加载优化：
+
+- Python Worker 挂载 `backend-python/` 并通过 `uvicorn --reload` 运行
+- Frontend 挂载 `frontend/` 并通过 Vite dev server 运行，仍对外暴露 `FRONTEND_PUBLIC_PORT`
+- Java Backend 挂载 `backend-java/` 并通过 `mvn spring-boot:run` 在容器启动时编译当前源码
+
+如果已有旧容器，需要先重新创建一次容器，让新的挂载和启动命令生效：
+
+```powershell
+docker compose --env-file .env.public-beta -f docker-compose.public-beta.yml up -d --build --force-recreate
+```
+
+之后只修改应用源码时，可以直接在 Docker Desktop 启动这组容器；修改依赖文件或 Dockerfile 时再重新执行 `up -d --build`。
+
 说明：
 
 - 首次部署前先基于 `.env.public-beta.example` 复制并填写 `.env.public-beta`
