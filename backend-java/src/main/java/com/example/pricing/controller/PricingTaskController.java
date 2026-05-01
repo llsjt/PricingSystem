@@ -70,6 +70,17 @@ public class PricingTaskController {
         }
     }
 
+    @PostMapping("/{taskId}/retry")
+    public Result<Void> retryTask(@PathVariable Long taskId, HttpServletRequest request) {
+        try {
+            decisionTaskService.retryTask(taskId, getCurrentUserId(request));
+            return Result.success();
+        } catch (Exception e) {
+            log.error("retry pricing task failed", e);
+            return Result.error(e.getMessage());
+        }
+    }
+
     @GetMapping("/{taskId}")
     public Result<PricingTaskDetailVO> getTaskDetail(@PathVariable Long taskId, HttpServletRequest request) {
         try {

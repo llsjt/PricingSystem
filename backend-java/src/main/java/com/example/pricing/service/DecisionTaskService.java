@@ -73,6 +73,8 @@ public interface DecisionTaskService {
 
     void cancelTask(Long taskId, Long userId);
 
+    void retryTask(Long taskId, Long userId);
+
     /**
      * 导出任务报告。
      */

@@ -33,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
@@ -264,6 +265,53 @@ class DecisionTaskServiceImplTest {
 
         verify(taskMapper).cancelIfRunning(13L);
         verify(taskMapper, never()).updateById(task);
+    }
+
+    @Test
+    void retryTaskRequeuesFailedTaskWithFreshDispatchSnapshot() {
+        PricingTask task = new PricingTask();
+        task.setId(31L);
+        task.setShopId(5L);
+        task.setProductId(301L);
+        task.setTaskStatus("FAILED");
+        task.setTraceId("trace-old");
+
+        UserLlmConfig llmConfig = new UserLlmConfig();
+        llmConfig.setLlmApiKeyEnc("enc-new");
+        llmConfig.setLlmBaseUrl("https://llm.example");
+        llmConfig.setLlmModel("qwen-max");
+
+        when(taskMapper.selectById(31L)).thenReturn(task);
+        when(shopService.getShopIdsByUser(88L)).thenReturn(List.of(5L));
+        when(userLlmConfigMapper.selectOne(any())).thenReturn(llmConfig);
+        when(taskMapper.retryFailedTask(eq(31L), any(), eq("enc-new"), eq("https://llm.example"), eq("qwen-max"))).thenReturn(1);
+
+        service.retryTask(31L, 88L);
+
+        ArgumentCaptor<String> traceCaptor = ArgumentCaptor.forClass(String.class);
+        verify(taskMapper).retryFailedTask(eq(31L), traceCaptor.capture(), eq("enc-new"), eq("https://llm.example"), eq("qwen-max"));
+        assertNotEquals("trace-old", traceCaptor.getValue());
+
+        ArgumentCaptor<TaskDispatchEvent> eventCaptor = ArgumentCaptor.forClass(TaskDispatchEvent.class);
+        verify(taskDispatchPublisher).publishAndConfirm(eventCaptor.capture());
+        assertEquals(31L, eventCaptor.getValue().taskId());
+        assertEquals(traceCaptor.getValue(), eventCaptor.getValue().traceId());
+    }
+
+    @Test
+    void retryTaskRejectsNonFailedTaskWithoutPublishing() {
+        PricingTask task = new PricingTask();
+        task.setId(32L);
+        task.setShopId(5L);
+        task.setTaskStatus("MANUAL_REVIEW");
+
+        when(taskMapper.selectById(32L)).thenReturn(task);
+        when(shopService.getShopIdsByUser(88L)).thenReturn(List.of(5L));
+
+        assertThrows(IllegalStateException.class, () -> service.retryTask(32L, 88L));
+
+        verify(taskMapper, never()).retryFailedTask(any(), any(), any(), any(), any());
+        verify(taskDispatchPublisher, never()).publishAndConfirm(any());
     }
 
     @Test

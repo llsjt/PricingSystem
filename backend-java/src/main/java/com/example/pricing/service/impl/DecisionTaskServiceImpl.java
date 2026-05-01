@@ -442,6 +442,59 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
      * 导出任务报告为 Excel，便于离线查看和汇报。
      */
     @Override
+    public void retryTask(Long taskId, Long userId) {
+        PricingTask task = taskMapper.selectById(taskId);
+        if (task == null) {
+            throw new IllegalArgumentException("任务不存在");
+        }
+        verifyTaskOwnership(task, userId);
+
+        String currentStatus = String.valueOf(task.getTaskStatus()).trim().toUpperCase();
+        if (!"FAILED".equals(currentStatus)) {
+            throw new IllegalStateException("只有失败的任务可以重试");
+        }
+
+        LambdaQueryWrapper<UserLlmConfig> llmWrapper = new LambdaQueryWrapper<>();
+        llmWrapper.eq(UserLlmConfig::getUserId, userId);
+        UserLlmConfig llmConfig = userLlmConfigMapper.selectOne(llmWrapper);
+        if (llmConfig == null
+                || llmConfig.getLlmApiKeyEnc() == null
+                || llmConfig.getLlmApiKeyEnc().isBlank()
+                || llmConfig.getLlmBaseUrl() == null
+                || llmConfig.getLlmBaseUrl().isBlank()
+                || llmConfig.getLlmModel() == null
+                || llmConfig.getLlmModel().isBlank()) {
+            throw new IllegalStateException("请先在个人中心配置大模型 API 密钥");
+        }
+
+        String traceId = UUID.randomUUID().toString().replace("-", "");
+        int retryUpdated = taskMapper.retryFailedTask(
+                taskId,
+                traceId,
+                llmConfig.getLlmApiKeyEnc(),
+                llmConfig.getLlmBaseUrl(),
+                llmConfig.getLlmModel()
+        );
+        if (retryUpdated == 0) {
+            throw new IllegalStateException("当前任务状态不支持重试");
+        }
+
+        TaskDispatchEvent event = new TaskDispatchEvent(
+                UUID.randomUUID().toString(),
+                taskId,
+                traceId,
+                Instant.now()
+        );
+        try {
+            taskDispatchPublisher.publishAndConfirm(event);
+        } catch (RuntimeException e) {
+            log.error("Publish decision task retry failed, taskId={}", taskId, e);
+            taskMapper.updateStatusAndReason(taskId, "FAILED", truncate("重试派发失败: " + e.getMessage(), 255));
+            throw new IllegalStateException("任务重试派发失败: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
     public void exportDecisionReport(Long taskId, HttpServletResponse response, Long userId) throws IOException {
         verifyTaskOwnership(taskId, userId);
         List<DecisionComparisonVO> rows = buildComparisonRows(taskId);

@@ -163,9 +163,18 @@
         <el-table-column prop="createdAt" label="创建时间" width="180" sortable="custom">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" width="160">
+        <el-table-column label="操作" fixed="right" width="210">
           <template #default="{ row }">
             <el-button link type="primary" @click="viewDetails(row)">查看详情</el-button>
+            <el-button
+              v-if="canRetryTask(row)"
+              link
+              type="warning"
+              :loading="isTaskRetrying(Number(row.id))"
+              @click="handleRetryTask(row)"
+            >
+              重试
+            </el-button>
             <el-button
               link
               type="danger"
@@ -228,6 +237,15 @@
               @click="exportReport"
             >
               导出报告
+            </el-button>
+            <el-button
+              v-if="canRetryTask(currentTask)"
+              type="warning"
+              plain
+              :loading="currentTask ? isTaskRetrying(Number(currentTask.id)) : false"
+              @click="currentTask && handleRetryTask(currentTask)"
+            >
+              重试任务
             </el-button>
           </div>
 
@@ -561,6 +579,7 @@ const {
   batchStatusTagType,
   batchStatusText,
   canDeleteTask,
+  canRetryTask,
   chartRef,
   clearTaskSelection,
   comparisonData,
@@ -592,11 +611,13 @@ const {
   handleBatchSizeChange,
   handleDateChange,
   handleDeleteTask,
+  handleRetryTask,
   handleSearch,
   handleSortChange,
   handleTaskSelectionChange,
   isFailedLog,
   isTaskDeleting,
+  isTaskRetrying,
   loading,
   openBatchDetail,
   orderedLogCards,

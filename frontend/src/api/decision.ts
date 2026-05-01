@@ -383,3 +383,7 @@ export const getPricingTaskStreamUrl = (taskId: number) => `/api/pricing/tasks/$
 export const cancelPricingTask = (taskId: number) => {
   return request.post(`/pricing/tasks/${taskId}/cancel`)
 }
+
+export const retryPricingTask = (taskId: number) => {
+  return request.post(`/pricing/tasks/${taskId}/retry`)
+}

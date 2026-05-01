@@ -14,6 +14,7 @@ import {
   getTaskList,
   getTaskLogs,
   getTaskStats,
+  retryPricingTask,
   type DecisionComparisonItem,
   type DecisionLogItem,
   type DecisionTaskItem,
@@ -261,6 +262,7 @@ export const useArchivePage = () => {
   const dateRange = ref<string[]>([])
   const applyingResultIds = ref<number[]>([])
   const deletingTaskIds = ref<number[]>([])
+  const retryingTaskIds = ref<number[]>([])
   const selectedTaskIds = ref<number[]>([])
   const taskTableRef = ref<any>(null)
   const openedRouteTaskId = ref<number | null>(null)
@@ -472,6 +474,10 @@ export const useArchivePage = () => {
 
   const isTaskDeleting = (taskId: number) => deletingTaskIds.value.includes(Number(taskId))
 
+  const canRetryTask = (row?: Pick<DecisionTaskItem, 'taskStatus'> | null) => normalizeTaskStatus(row?.taskStatus) === 'FAILED'
+
+  const isTaskRetrying = (taskId: number) => retryingTaskIds.value.includes(Number(taskId))
+
   const getTaskId = (row: Pick<DecisionTaskItem, 'id'>) => {
     const id = Number(row.id)
     return Number.isFinite(id) && id > 0 ? id : null
@@ -583,6 +589,46 @@ export const useArchivePage = () => {
       }
     } finally {
       unmarkTasksDeleting([taskId])
+    }
+  }
+
+  const handleRetryTask = async (row: DecisionTaskItem) => {
+    if (!canRetryTask(row)) {
+      ElMessage.warning('只有失败的决策任务可以重试')
+      return
+    }
+
+    const taskId = Number(row.id)
+    if (!taskId) return
+
+    try {
+      await ElMessageBox.confirm('确认重新执行该决策任务吗？', '重试决策任务', {
+        type: 'warning',
+        confirmButtonText: '确认重试',
+        cancelButtonText: '取消'
+      })
+
+      retryingTaskIds.value = Array.from(new Set([...retryingTaskIds.value, taskId]))
+      const res: any = await retryPricingTask(taskId)
+      if (res.code !== 200) {
+        ElMessage.error(res.message || '重试失败')
+        return
+      }
+
+      ElMessage.success('任务已重新提交')
+      if (currentTask.value && Number(currentTask.value.id) === taskId) {
+        currentTask.value = { ...currentTask.value, taskStatus: 'RETRYING' }
+        comparisonData.value = []
+        agentLogs.value = []
+        disposeChart()
+      }
+      await Promise.all([fetchTasks(), fetchRecentBatches()])
+    } catch (error: any) {
+      if (error !== 'cancel' && error !== 'close') {
+        ElMessage.error(await resolveRequestErrorMessage(error, '重试失败'))
+      }
+    } finally {
+      retryingTaskIds.value = retryingTaskIds.value.filter((id) => id !== taskId)
     }
   }
 
@@ -876,6 +922,7 @@ export const useArchivePage = () => {
     batchStatusTagType,
     batchStatusText,
     canDeleteTask,
+    canRetryTask,
     chartRef,
     clearTaskSelection,
     comparisonData,
@@ -907,12 +954,14 @@ export const useArchivePage = () => {
     handleBatchDeleteTasks,
     handleDateChange,
     handleDeleteTask,
+    handleRetryTask,
     handleSearch,
     handleSortChange,
     handleTaskSelectionChange,
     isSuccessStatus,
     isFailedLog,
     isTaskDeleting,
+    isTaskRetrying,
     loading,
     openBatchDetail,
     orderedLogs,
@@ -921,6 +970,7 @@ export const useArchivePage = () => {
     recentBatches,
     recentBatchTotal,
     resetFilters,
+    retryingTaskIds,
     selectedTaskIds,
     stats,
     statusMap: STATUS_MAP,

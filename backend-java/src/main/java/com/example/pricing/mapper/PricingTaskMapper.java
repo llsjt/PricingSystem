@@ -59,4 +59,29 @@ public interface PricingTaskMapper extends BaseMapper<PricingTask> {
                AND task_status IN ('PENDING', 'QUEUED', 'RUNNING', 'RETRYING')
             """)
     int cancelIfRunning(@Param("taskId") Long taskId);
+
+    @Update("""
+            UPDATE pricing_task
+               SET task_status = 'RETRYING',
+                   trace_id = #{traceId},
+                   retry_count = COALESCE(retry_count, 0) + 1,
+                   consumer_retry_count = 0,
+                   current_execution_id = NULL,
+                   failure_reason = NULL,
+                   started_at = NULL,
+                   completed_at = NULL,
+                   llm_api_key_enc = #{llmApiKeyEnc},
+                   llm_base_url = #{llmBaseUrl},
+                   llm_model = #{llmModel},
+                   updated_at = NOW()
+             WHERE id = #{taskId}
+               AND task_status = 'FAILED'
+            """)
+    int retryFailedTask(
+            @Param("taskId") Long taskId,
+            @Param("traceId") String traceId,
+            @Param("llmApiKeyEnc") String llmApiKeyEnc,
+            @Param("llmBaseUrl") String llmBaseUrl,
+            @Param("llmModel") String llmModel
+    );
 }
