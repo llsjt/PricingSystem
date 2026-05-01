@@ -17,6 +17,7 @@ backend-java/.project
 .codex-runtime/
 .agents/
 .omx/
+.worktrees/
 codex-smoke/
 
 # Secrets / local env
