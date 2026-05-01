@@ -104,6 +104,50 @@ def _valid_data_output() -> dict:
     }
 
 
+def _opinion_id(task_id: int, agent_code: str, run_attempt: int = 0) -> str:
+    return f"task:{task_id}:agent:{agent_code}:attempt:{run_attempt}"
+
+
+def _attach_agent_opinion(task_id: int, payload: dict, agent_code: str, agent_name: str, *, kind: str, status: str) -> dict:
+    enriched = dict(payload)
+    enriched["agentOpinion"] = {
+        "version": "v1",
+        "opinionId": _opinion_id(task_id, agent_code),
+        "taskId": task_id,
+        "runAttempt": 0,
+        "agentCode": agent_code,
+        "agentName": agent_name,
+        "kind": kind,
+        "status": status,
+        "summary": payload.get("summary") or payload.get("resultSummary") or f"{agent_name} summary",
+        "confidence": payload.get("confidence", 0.72),
+        "pricing": {
+            "recommendedPrice": payload.get("suggestedPrice") or payload.get("finalPrice"),
+            "minPrice": payload.get("suggestedMinPrice"),
+            "maxPrice": payload.get("suggestedMaxPrice"),
+            "safeFloorPrice": payload.get("safeFloorPrice"),
+        },
+        "impact": {
+            "expectedSales": payload.get("expectedSales"),
+            "expectedProfit": payload.get("expectedProfit"),
+            "profitGrowth": payload.get("profitGrowth"),
+        },
+        "market": None,
+        "risk": None,
+        "evidence": [{"key": "summary", "label": "摘要", "value": payload.get("summary", "ok"), "source": "test"}],
+        "rationale": {"thinking": payload.get("thinking", "thinking"), "assumptions": [], "notes": []},
+        "relations": {
+            "dependsOnOpinionIds": [],
+            "acceptedOpinionIds": [],
+            "rejectedOpinionIds": [],
+            "conflictOpinionIds": [],
+            "selectedOpinionIds": [],
+        },
+        "decision": None,
+    }
+    return enriched
+
+
 def _valid_market_output() -> dict:
     return {
         "suggestedPrice": "30.50",
@@ -403,6 +447,46 @@ def test_validate_agent_output_rejects_missing_required_data_price():
     assert "输出结构校验失败" in str(exc_info.value)
 
 
+@pytest.mark.parametrize("opinion_key", ["agentOpinion", "agent_opinion"])
+def test_parse_and_normalize_output_recovers_from_invalid_llm_agent_opinion(opinion_key: str):
+    service = OrchestrationService(build_session())
+    raw_output = _valid_data_output()
+    raw_output[opinion_key] = {
+        "version": "1.0",
+        "opinionId": "task:demo:agent:bad",
+        "taskId": "TASK-PRICING-001",
+        "runAttempt": 0,
+        "agentCode": "AGENT-001",
+        "agentName": "数据分析Agent",
+        "kind": "pricing_strategy",
+        "status": "completed",
+        "summary": "bad opinion from llm",
+        "confidence": 0.9,
+        "pricing": {"recommendedPrice": "29.90"},
+        "impact": "利润增加，销量小幅下降",
+        "evidence": ["工具计算销量1090", "利润41027.6"],
+        "rationale": "利润优先策略下，收益高于销量损失范围内",
+        "relations": ["成本价43.14", "基线销量1137"],
+    }
+
+    parsed = service._parse_and_validate_output(order=1, raw=_json_output(raw_output))
+
+    assert "agentOpinion" not in parsed
+    assert "agent_opinion" not in parsed
+
+    normalized = service._normalize_output_with_agent_opinion(
+        payload=_payload(task_id=54),
+        order=1,
+        parsed=parsed,
+        prior_outputs={},
+    )
+
+    assert normalized["agentOpinion"]["version"] == "v1"
+    assert normalized["agentOpinion"]["taskId"] == 54
+    assert normalized["agentOpinion"]["agentCode"] == "DATA_ANALYSIS"
+    assert normalized["agentOpinion"]["opinionId"] == _opinion_id(54, "DATA_ANALYSIS")
+
+
 def test_build_manager_card_exposes_arbitration_fields():
     thinking, evidence, suggestion, reason_why = OrchestrationService._build_manager_card(
         _valid_manager_output(),
@@ -465,6 +549,194 @@ def test_build_manager_card_reads_legacy_manager_aliases_but_writes_only_normali
     assert "decisionReason" not in suggestion
     assert "selectedOption" not in suggestion
     assert reason_why == "manager-summary"
+
+
+def test_write_agent_success_card_backfills_agent_opinion_into_raw_output():
+    db = build_session(AgentRunLog.__table__)
+    payload = _payload(task_id=51)
+    service = OrchestrationService(db)
+
+    service._write_agent_success_card(
+        payload=payload,
+        order=1,
+        parsed=_valid_data_output(),
+        prior_outputs={},
+    )
+
+    log = LogRepo(db).list_by_task_id(payload.task_id)[0]
+    raw_output = log.raw_output_json
+
+    assert raw_output is not None
+    assert raw_output["agentOpinion"]["opinionId"] == _opinion_id(payload.task_id, "DATA_ANALYSIS")
+    assert raw_output["agentOpinion"]["pricing"]["recommendedPrice"] == "29.90"
+    assert "agentOpinion" not in log.suggestion_json
+
+
+def test_write_agent_success_card_uses_current_retry_count_for_opinion_run_attempt():
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=510)
+    task.retry_count = 2
+    db.commit()
+    payload = _payload(task_id=task.id)
+    service = OrchestrationService(db)
+
+    service._write_agent_success_card(
+        payload=payload,
+        order=1,
+        parsed=_valid_data_output(),
+        prior_outputs={},
+    )
+
+    log = LogRepo(db).list_by_task_id(task.id)[0]
+    assert log.run_attempt == 2
+    assert log.raw_output_json["agentOpinion"]["runAttempt"] == 2
+    assert log.raw_output_json["agentOpinion"]["opinionId"] == _opinion_id(task.id, "DATA_ANALYSIS", 2)
+
+
+def test_format_opinions_for_manager_context_prefers_agent_opinion_and_backfills_legacy():
+    task_id = 52
+    prior_outputs = {
+        1: _valid_data_output(),
+        2: _attach_agent_opinion(
+            task_id,
+            _valid_market_output(),
+            "MARKET_INTEL",
+            "市场情报Agent",
+            kind="MARKET_ASSESSMENT",
+            status="PROPOSED",
+        ),
+        3: _valid_risk_output(),
+    }
+
+    context = OrchestrationService._format_opinions_for_manager_context(prior_outputs)
+
+    assert context is not None
+    assert "[AgentOpinion 列表]" in context
+    assert _opinion_id(task_id, "DATA_ANALYSIS") in context
+    assert _opinion_id(task_id, "MARKET_INTEL") in context
+    assert _opinion_id(task_id, "RISK_CONTROL") in context
+    assert "历史输出 JSON" not in context
+
+
+def test_manager_agent_invalid_opinion_reference_raises_validation_error(monkeypatch):
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=53)
+
+    bad_manager = _attach_agent_opinion(
+        task.id,
+        _valid_manager_output(),
+        "MANAGER_COORDINATOR",
+        "缁忕悊鍗忚皟Agent",
+        kind="ARBITRATION",
+        status="MERGED",
+    )
+    bad_manager["agentOpinion"]["relations"]["dependsOnOpinionIds"] = [
+        _opinion_id(task.id, "DATA_ANALYSIS"),
+        _opinion_id(task.id, "MARKET_INTEL"),
+        _opinion_id(task.id, "RISK_CONTROL"),
+    ]
+    bad_manager["agentOpinion"]["relations"]["acceptedOpinionIds"] = ["task:999:agent:UNKNOWN:attempt:0"]
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: _fake_bundle(
+            [
+                _valid_data_output(),
+                _valid_market_output(),
+                _valid_risk_output(),
+                bad_manager,
+            ]
+        ),
+    )
+
+    with pytest.raises(_agent_validation_error_cls()) as exc_info:
+        OrchestrationService(db).run(_payload(task.id))
+
+    assert "acceptedOpinionIds" in str(exc_info.value)
+
+
+def test_orchestration_service_reruns_only_manager_after_manager_failure(monkeypatch):
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=54)
+    repo = LogRepo(db)
+    repo.append_card(
+        task_id=task.id,
+        agent_name="閺佺増宓侀崚鍡樼€紸gent",
+        display_order=1,
+        thinking_summary="done",
+        evidence=[],
+        suggestion={"summary": "done"},
+        raw_output=_valid_data_output(),
+    )
+    repo.append_card(
+        task_id=task.id,
+        agent_name="鐢倸婧€閹懏濮gent",
+        display_order=2,
+        thinking_summary="done",
+        evidence=[],
+        suggestion={"summary": "done"},
+        raw_output=_valid_market_output(),
+    )
+    repo.append_card(
+        task_id=task.id,
+        agent_name="妞嬪酣娅撻幒褍鍩桝gent",
+        display_order=3,
+        thinking_summary="done",
+        evidence=[],
+        suggestion={"summary": "done"},
+        raw_output=_valid_risk_output(),
+    )
+    repo.append_card(
+        task_id=task.id,
+        agent_name="缂佸繒鎮婇崡蹇氱殶Agent",
+        display_order=4,
+        thinking_summary="boom",
+        evidence=[],
+        suggestion={"error": True, "message": "boom"},
+        stage="failed",
+    )
+
+    bundle = _fake_bundle(
+        [
+            _valid_data_output(),
+            _valid_market_output(),
+            _valid_risk_output(),
+            _valid_manager_output(),
+        ]
+    )
+    bundle.tasks[0].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("data task should not rerun"))  # type: ignore[assignment]
+    bundle.tasks[1].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("market task should not rerun"))  # type: ignore[assignment]
+    bundle.tasks[2].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("risk task should not rerun"))  # type: ignore[assignment]
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: bundle,
+    )
+
+    service = OrchestrationService(db)
+    service.result_tool = SimpleNamespace(write_final_result=lambda payload: None)
+    service.run(_payload(task.id))
+
+    manager_context = bundle.tasks[3].captured_context
+    assert manager_context is not None
+    assert _opinion_id(task.id, "DATA_ANALYSIS") in manager_context
+    assert _opinion_id(task.id, "MARKET_INTEL") in manager_context
+    assert _opinion_id(task.id, "RISK_CONTROL") in manager_context
+
+    logs = LogRepo(db).list_by_task_id(task.id)
+    completed_orders = [log.display_order for log in logs if log.stage == "completed"]
+    assert completed_orders.count(1) == 1
+    assert completed_orders.count(2) == 1
+    assert completed_orders.count(3) == 1
+    assert completed_orders.count(4) == 1
 
 
 def test_orchestration_validation_failure_writes_failed_card_and_blocks_result(monkeypatch):
@@ -582,7 +854,7 @@ def test_orchestration_service_only_replays_missing_analysis_agents_before_runni
         thinking_summary="done",
         evidence=[],
         suggestion={"summary": "done"},
-        raw_output={"agent": "data"},
+        raw_output=_valid_data_output(),
     )
     repo.append_card(
         task_id=task.id,
@@ -591,7 +863,7 @@ def test_orchestration_service_only_replays_missing_analysis_agents_before_runni
         thinking_summary="done",
         evidence=[],
         suggestion={"summary": "done"},
-        raw_output={"agent": "risk"},
+        raw_output=_valid_risk_output(),
     )
 
     bundle = _fake_bundle(
@@ -620,9 +892,11 @@ def test_orchestration_service_only_replays_missing_analysis_agents_before_runni
 
     manager_context = bundle.tasks[3].captured_context
     assert manager_context is not None
-    assert '"agent": "data"' in manager_context
-    assert '"agent": "risk"' in manager_context
-    assert '"suggestedPrice": "30.50"' in manager_context
+    assert "[AgentOpinion 列表]" in manager_context
+    assert _opinion_id(task.id, "DATA_ANALYSIS") in manager_context
+    assert _opinion_id(task.id, "MARKET_INTEL") in manager_context
+    assert _opinion_id(task.id, "RISK_CONTROL") in manager_context
+    assert '"suggestedPrice": "30.50"' not in manager_context
 
 
 def test_parallel_analysis_failure_keeps_other_completed_cards_and_blocks_manager(monkeypatch):

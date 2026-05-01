@@ -7,6 +7,7 @@ import com.example.pricing.entity.Product;
 import com.example.pricing.entity.UserLlmConfig;
 import com.example.pricing.dto.TaskDispatchEvent;
 import com.example.pricing.mapper.AgentRunLogMapper;
+import com.example.pricing.mapper.PricingBatchItemMapper;
 import com.example.pricing.mapper.PricingResultMapper;
 import com.example.pricing.mapper.PricingTaskMapper;
 import com.example.pricing.mapper.ProductMapper;
@@ -35,6 +36,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -52,6 +54,9 @@ class DecisionTaskServiceImplTest {
 
     @Mock
     private AgentRunLogMapper logMapper;
+
+    @Mock
+    private PricingBatchItemMapper pricingBatchItemMapper;
 
     @Mock
     private ProductMapper productMapper;
@@ -76,6 +81,7 @@ class DecisionTaskServiceImplTest {
                 taskMapper,
                 resultMapper,
                 logMapper,
+                pricingBatchItemMapper,
                 productMapper,
                 shopService,
                 taskDispatchPublisher,
@@ -223,6 +229,49 @@ class DecisionTaskServiceImplTest {
         verify(taskMapper, never()).updateById(task);
     }
 
+    @Test
+    void batchDeleteTasksRemovesOwnedTerminalTasksAndArtifacts() {
+        PricingTask completed = new PricingTask();
+        completed.setId(12L);
+        completed.setShopId(3L);
+        completed.setTaskStatus("COMPLETED");
+
+        PricingTask failed = new PricingTask();
+        failed.setId(13L);
+        failed.setShopId(3L);
+        failed.setTaskStatus("FAILED");
+
+        when(shopService.getShopIdsByUser(99L)).thenReturn(List.of(3L));
+        when(taskMapper.selectBatchIds(List.of(12L, 13L))).thenReturn(List.of(completed, failed));
+        when(taskMapper.deleteBatchIds(List.of(12L, 13L))).thenReturn(2);
+
+        int deleted = service.batchDeleteTasks(List.of(12L, 13L), 99L);
+
+        assertEquals(2, deleted);
+        verify(pricingBatchItemMapper).update(isNull(), any());
+        verify(logMapper).delete(any());
+        verify(resultMapper).delete(any());
+        verify(taskMapper).deleteBatchIds(List.of(12L, 13L));
+    }
+
+    @Test
+    void batchDeleteTasksRejectsActiveTasksWithoutDeletingArtifacts() {
+        PricingTask running = new PricingTask();
+        running.setId(14L);
+        running.setShopId(3L);
+        running.setTaskStatus("RUNNING");
+
+        when(shopService.getShopIdsByUser(99L)).thenReturn(List.of(3L));
+        when(taskMapper.selectBatchIds(List.of(14L))).thenReturn(List.of(running));
+
+        assertThrows(IllegalStateException.class, () -> service.batchDeleteTasks(List.of(14L), 99L));
+
+        verify(pricingBatchItemMapper, never()).update(any(), any());
+        verify(logMapper, never()).delete(any());
+        verify(resultMapper, never()).delete(any());
+        verify(taskMapper, never()).deleteBatchIds(any());
+    }
+
     private static TransactionTemplate noOpTransactionTemplate() {
         return new TransactionTemplate(new AbstractPlatformTransactionManager() {
             @Override
@@ -356,5 +405,126 @@ class DecisionTaskServiceImplTest {
         assertEquals("failed", logs.get(0).getStage());
         assertEquals("failed", logs.get(0).getRunStatus());
         assertEquals(Boolean.TRUE, logs.get(0).getSuggestion().get("error"));
+    }
+
+    @Test
+    void getTaskLogsUsesRawAgentOpinionAndKeepsSuggestionAsLegacyDisplayData() {
+        PricingTask task = new PricingTask();
+        task.setId(32L);
+        task.setShopId(9L);
+
+        AgentRunLog runLog = new AgentRunLog();
+        runLog.setId(4L);
+        runLog.setTaskId(32L);
+        runLog.setRoleName("Manager Agent");
+        runLog.setDisplayOrder(4);
+        runLog.setStage("completed");
+        runLog.setThinkingSummary("manager thinking");
+        runLog.setRawOutputJson("""
+                {
+                  "agentOpinion": {
+                    "opinionId": "raw-op-32",
+                    "summary": "Follow market with guardrail"
+                  }
+                }
+                """);
+        runLog.setSuggestionJson("""
+                {
+                  "summary":"legacy summary",
+                  "strategy":"DIRECT",
+                  "agentOpinion":{"opinionId":"wrong-source"},
+                  "acceptedOpinions":["market"],
+                  "arbitrationDecision":"follow market"
+                }
+                """);
+
+        when(shopService.getShopIdsByUser(77L)).thenReturn(List.of(9L));
+        when(taskMapper.selectById(32L)).thenReturn(task);
+        when(logMapper.selectList(any())).thenReturn(List.of(runLog));
+
+        var logs = service.getTaskLogs(32L, 77L);
+
+        assertEquals(1, logs.size());
+        assertEquals(Map.of(
+                "opinionId", "raw-op-32",
+                "summary", "Follow market with guardrail"
+        ), logs.get(0).getAgentOpinion());
+        assertEquals("legacy summary", logs.get(0).getSuggestion().get("summary"));
+        assertEquals("\u4eba\u5de5\u5ba1\u6838", logs.get(0).getSuggestion().get("strategy"));
+        assertEquals(List.of("market"), logs.get(0).getSuggestion().get("acceptedOpinions"));
+        assertEquals("follow market", logs.get(0).getSuggestion().get("arbitrationDecision"));
+        assertEquals(false, logs.get(0).getSuggestion().containsKey("agentOpinion"));
+    }
+
+    @Test
+    void getTaskLogsBuildsLegacyAgentOpinionWhenRawOutputHasNoOpinion() {
+        PricingTask task = new PricingTask();
+        task.setId(33L);
+        task.setShopId(9L);
+
+        AgentRunLog runLog = new AgentRunLog();
+        runLog.setId(5L);
+        runLog.setTaskId(33L);
+        runLog.setRoleName("Manager Agent");
+        runLog.setDisplayOrder(4);
+        runLog.setStage("completed");
+        runLog.setRunAttempt(2);
+        runLog.setThinkingSummary("legacy manager thinking");
+        runLog.setSuggestionJson("""
+                {
+                  "summary":"legacy arbitration",
+                  "strategy":"DIRECT",
+                  "acceptedOpinions":["market"],
+                  "rejectedOpinions":["risk"],
+                  "disagreementPoints":[{"field":"price","reason":"risk too high"}],
+                  "arbitrationDecision":"merge",
+                  "arbitrationReason":"trade off growth and safety"
+                }
+                """);
+
+        when(shopService.getShopIdsByUser(77L)).thenReturn(List.of(9L));
+        when(taskMapper.selectById(33L)).thenReturn(task);
+        when(logMapper.selectList(any())).thenReturn(List.of(runLog));
+
+        var logs = service.getTaskLogs(33L, 77L);
+
+        assertEquals(1, logs.size());
+        Map<String, Object> agentOpinion = logs.get(0).getAgentOpinion();
+        assertNotNull(agentOpinion);
+        assertEquals("legacy arbitration", agentOpinion.get("summary"));
+        assertEquals(List.of("market"), agentOpinion.get("acceptedOpinions"));
+        assertEquals(List.of("risk"), agentOpinion.get("rejectedOpinions"));
+        assertEquals(List.of(Map.of("field", "price", "reason", "risk too high")), agentOpinion.get("disagreementPoints"));
+        assertEquals("merge", agentOpinion.get("arbitrationDecision"));
+        assertEquals("trade off growth and safety", agentOpinion.get("arbitrationReason"));
+    }
+
+    @Test
+    void getTaskLogsTreatsNullLiteralJsonFieldsAsEmptyStructures() {
+        PricingTask task = new PricingTask();
+        task.setId(34L);
+        task.setShopId(9L);
+
+        AgentRunLog runLog = new AgentRunLog();
+        runLog.setId(6L);
+        runLog.setTaskId(34L);
+        runLog.setRoleName("Manager Agent");
+        runLog.setDisplayOrder(4);
+        runLog.setStage("failed");
+        runLog.setThinkingSummary("Agent execution failed: LLM API timeout");
+        runLog.setRawOutputJson("null");
+        runLog.setSuggestionJson("null");
+
+        when(shopService.getShopIdsByUser(77L)).thenReturn(List.of(9L));
+        when(taskMapper.selectById(34L)).thenReturn(task);
+        when(logMapper.selectList(any())).thenReturn(List.of(runLog));
+
+        var logs = service.getTaskLogs(34L, 77L);
+
+        assertEquals(1, logs.size());
+        assertEquals("failed", logs.get(0).getStage());
+        assertEquals("failed", logs.get(0).getRunStatus());
+        assertEquals(Map.of(), logs.get(0).getSuggestion());
+        assertEquals(null, logs.get(0).getAgentOpinion());
     }
 }

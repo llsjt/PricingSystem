@@ -14,6 +14,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -90,6 +91,28 @@ public class DecisionController {
             HttpServletRequest request
     ) {
         return Result.success(decisionTaskService.getTasks(page, size, status, startTime, endTime, sortOrder, getCurrentUserId(request)));
+    }
+
+    @DeleteMapping("/tasks/batch-delete")
+    public Result<Integer> batchDeleteTasks(@RequestParam("ids") List<Long> ids, HttpServletRequest request) {
+        try {
+            int deleted = decisionTaskService.batchDeleteTasks(ids, getCurrentUserId(request));
+            return Result.success(deleted);
+        } catch (Exception e) {
+            log.error("删除决策档案失败", e);
+            return Result.error(e.getMessage());
+        }
+    }
+
+    @DeleteMapping("/tasks/{taskId}")
+    public Result<Void> deleteTask(@PathVariable Long taskId, HttpServletRequest request) {
+        try {
+            decisionTaskService.deleteTask(taskId, getCurrentUserId(request));
+            return Result.success();
+        } catch (Exception e) {
+            log.error("删除决策档案失败", e);
+            return Result.error(e.getMessage());
+        }
     }
 
     /**

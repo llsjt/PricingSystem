@@ -340,10 +340,13 @@ public class PricingTaskStreamService {
             ));
             return payload;
         }
+        Map<String, Object> suggestion = parseJsonObject(item.getSuggestionJson());
+        Map<String, Object> agentOpinion = extractAgentOpinion(item.getRawOutputJson());
         payload.put("card", buildCardPayload(
                 item.getThinkingSummary() == null || item.getThinkingSummary().isBlank() ? nullToEmpty(item.getThoughtContent()) : item.getThinkingSummary(),
                 parseJsonArray(item.getEvidenceJson()),
-                parseJsonObject(item.getSuggestionJson()),
+                suggestion,
+                agentOpinion,
                 item.getFinalReason()
         ));
         return payload;
@@ -389,13 +392,17 @@ public class PricingTaskStreamService {
             String thinking,
             List<Map<String, Object>> evidence,
             Map<String, Object> suggestion,
+            Map<String, Object> agentOpinion,
             String reasonWhy
     ) {
-        Map<String, Object> normalizedSuggestion = normalizeSuggestionStrategy(suggestion);
+        Map<String, Object> normalizedSuggestion = normalizeSuggestionStrategy(sanitizeSuggestion(suggestion));
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("thinking", thinking);
         payload.put("evidence", evidence);
         payload.put("suggestion", normalizedSuggestion);
+        if (agentOpinion != null && !agentOpinion.isEmpty()) {
+            payload.put("agentOpinion", agentOpinion);
+        }
         payload.put("reasonWhy", reasonWhy);
         return payload;
     }
@@ -458,11 +465,26 @@ public class PricingTaskStreamService {
             return Map.of();
         }
         try {
-            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {
+            Map<String, Object> parsed = objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {
             });
+            return parsed == null ? Map.of() : parsed;
         } catch (Exception ignore) {
             return Map.of();
         }
+    }
+
+    private Map<String, Object> extractAgentOpinion(String rawOutputJson) {
+        Map<String, Object> rawOutput = parseJsonObject(rawOutputJson);
+        if (rawOutput == null || rawOutput.isEmpty()) {
+            return Map.of();
+        }
+        Object agentOpinion = rawOutput.get("agentOpinion");
+        if (!(agentOpinion instanceof Map<?, ?> opinionMap)) {
+            return Map.of();
+        }
+        Map<String, Object> normalized = new LinkedHashMap<>();
+        opinionMap.forEach((key, value) -> normalized.put(String.valueOf(key), value));
+        return normalized;
     }
 
     private static String resolveExecuteStrategy(PricingResult result) {
@@ -478,6 +500,15 @@ public class PricingTaskStreamService {
             normalized.put("strategy", MANUAL_REVIEW_STRATEGY);
         }
         return normalized;
+    }
+
+    private static Map<String, Object> sanitizeSuggestion(Map<String, Object> suggestion) {
+        if (suggestion == null || suggestion.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> sanitized = new LinkedHashMap<>(suggestion);
+        sanitized.remove("agentOpinion");
+        return sanitized;
     }
 
     private static BigDecimal scaleMoney(BigDecimal value) {

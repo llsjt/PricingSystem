@@ -76,6 +76,7 @@ export interface DecisionLogItem {
   thinking?: string
   evidence?: Array<Record<string, unknown>>
   suggestion?: AgentSuggestion
+  agentOpinion?: AgentOpinion | null
   reasonWhy?: string
   consensusScore?: number | null
   disagreementSummary?: string | null
@@ -112,6 +113,84 @@ export type PricingAgentCode = 'DATA_ANALYSIS' | 'MARKET_INTEL' | 'RISK_CONTROL'
 
 export type ManagerArbitrationItem = string | Record<string, unknown>
 
+export interface AgentOpinionEvidence {
+  key: string
+  label: string
+  value: unknown
+  source?: string | null
+}
+
+export interface AgentOpinionPricing {
+  recommendedPrice?: number | string | null
+  minPrice?: number | string | null
+  maxPrice?: number | string | null
+  safeFloorPrice?: number | string | null
+}
+
+export interface AgentOpinionImpact {
+  expectedSales?: number | null
+  expectedProfit?: number | string | null
+  profitGrowth?: number | string | null
+}
+
+export interface AgentOpinionMarket {
+  marketFloor?: number | string | null
+  marketCeiling?: number | string | null
+  marketMedian?: number | string | null
+  marketAverage?: number | string | null
+  validCompetitorCount?: number | null
+  dataQuality?: string | null
+  sourceStatus?: string | null
+}
+
+export interface AgentOpinionRisk {
+  isPass?: boolean | null
+  riskLevel?: string | null
+  needManualReview?: boolean | null
+}
+
+export interface AgentOpinionRationale {
+  thinking?: string | null
+  assumptions?: string[] | null
+  notes?: string[] | null
+}
+
+export interface AgentOpinionRelations {
+  dependsOnOpinionIds?: string[] | null
+  acceptedOpinionIds?: string[] | null
+  rejectedOpinionIds?: string[] | null
+  conflictOpinionIds?: string[] | null
+  selectedOpinionIds?: string[] | null
+}
+
+export interface AgentOpinionDecision {
+  decisionType?: string | null
+  consensusScore?: number | null
+  arbitrationDecision?: string | null
+  arbitrationReason?: string | null
+}
+
+export interface AgentOpinion {
+  version?: string
+  opinionId?: string
+  taskId?: number
+  runAttempt?: number
+  agentCode?: PricingAgentCode | string
+  agentName?: string
+  kind?: string
+  status?: string
+  summary?: string
+  confidence?: number | null
+  pricing?: AgentOpinionPricing | null
+  impact?: AgentOpinionImpact | null
+  market?: AgentOpinionMarket | null
+  risk?: AgentOpinionRisk | null
+  evidence?: AgentOpinionEvidence[] | null
+  rationale?: AgentOpinionRationale | null
+  relations?: AgentOpinionRelations | null
+  decision?: AgentOpinionDecision | null
+}
+
 export interface ManagerArbitrationFields {
   consensusScore?: number | null
   disagreementSummary?: string | null
@@ -138,6 +217,7 @@ export interface AgentCardContent extends ManagerArbitrationFields {
   thinking: string
   evidence: Array<Record<string, unknown>>
   suggestion: AgentSuggestion
+  agentOpinion?: AgentOpinion | null
   reasonWhy?: string | null
 }
 
@@ -249,6 +329,14 @@ export const getTaskList = (params: DecisionTaskQuery) => {
 
 export const getTaskStats = (params?: Pick<DecisionTaskQuery, 'startTime' | 'endTime'>) => {
   return request.get('/decision/tasks/stats', { params })
+}
+
+export const deleteDecisionTask = (taskId: number) => {
+  return request.delete(`/decision/tasks/${taskId}`)
+}
+
+export const batchDeleteDecisionTasks = (ids: number[]) => {
+  return request.delete('/decision/tasks/batch-delete', { params: { ids: ids.join(',') } })
 }
 
 export const applyDecision = (resultId: number) => {

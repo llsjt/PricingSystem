@@ -304,6 +304,7 @@ def build_pricing_crew(
             '"confidence": 置信度(0-1之间的小数), '
             '"thinking": "你的分析思路(中文)", '
             '"summary": "分析摘要(中文字符串)"}'
+            '\nMust also include "agentOpinion" with version, opinionId, taskId, runAttempt, agentCode, agentName, kind, status, summary, pricing, impact, evidence, rationale, and relations.'
         ),
         agent=agents["DATA_ANALYSIS"],
         callback=on_task_done,
@@ -360,6 +361,7 @@ def build_pricing_crew(
             '"promotionDensity": {"promotionRate": 促销占比, "averageDiscount": 平均折扣率, "promotedSampleCount": 在促样本数}, '
             '"source": "竞品来源", '
             '"sourceStatus": "竞品状态"}'
+            '\nMust also include "agentOpinion" with version, opinionId, taskId, runAttempt, agentCode, agentName, kind, status, summary, pricing, market, evidence, rationale, and relations.'
         ),
         agent=agents["MARKET_INTEL"],
         callback=on_task_done,
@@ -410,6 +412,7 @@ def build_pricing_crew(
             '"needManualReview": 是否需人工复核(true/false), '
             '"thinking": "你的分析思路(中文)", '
             '"summary": "风控评估摘要(中文字符串)"}'
+            '\nMust also include "agentOpinion" with version, opinionId, taskId, runAttempt, agentCode, agentName, kind, status, summary, pricing, risk, evidence, rationale, and relations.'
         ),
         agent=agents["RISK_CONTROL"],
         callback=on_task_done,
@@ -443,6 +446,7 @@ def build_pricing_crew(
             "- selectedPrice 表示被采纳的上游意见价格，不一定等于 finalPrice。\n"
             "- 如果最终结果是折中价，selectedAgent 和 selectedPrice 可以为 null，但 arbitrationReason 必须解释折中逻辑。\n\n"
             "最终输出必须是严格的JSON格式："
+            "不得引用不存在的 opinionId。\n"
         ),
         expected_output=(
             "严格JSON格式输出，字段如下：\n"
@@ -466,6 +470,7 @@ def build_pricing_crew(
             '"selectedAgent": "DATA_ANALYSIS/MARKET_INTEL/RISK_CONTROL/null", '
             '"selectedPrice": 被采纳意见价格(数字或null), '
             '"selectedStrategy": "被采纳方案策略(可选)"}'
+            '\nMust also include "agentOpinion" with "relations" and "decision". The relations object must include "dependsOnOpinionIds", "acceptedOpinionIds", "rejectedOpinionIds", and "selectedOpinionIds". The decision object must include "decisionType", "consensusScore", "arbitrationDecision", and "arbitrationReason".'
         ),
         agent=agents["MANAGER_COORDINATOR"],
         context=[data_task, market_task, risk_task],

@@ -5,7 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.crew import crew_factory
-from app.schemas.agent import DataAgentOutput, ManagerAgentOutput, MarketAgentOutput, RiskAgentOutput
+from app.schemas.agent import AgentOpinionV1, DataAgentOutput, ManagerAgentOutput, MarketAgentOutput, RiskAgentOutput
 from app.services.orchestration_service import OrchestrationService
 from app.utils.text_utils import MANUAL_REVIEW_STRATEGY
 
@@ -19,6 +19,102 @@ def _build_payload() -> SimpleNamespace:
             current_price=Decimal("29.90"),
         )
     )
+
+
+def _agent_opinion_payload(
+    *,
+    agent_code: str = "DATA_ANALYSIS",
+    agent_name: str = "数据分析Agent",
+    kind: str = "PRICE_PROPOSAL",
+    status: str = "PROPOSED",
+) -> dict:
+    base = {
+        "version": "v1",
+        "opinionId": f"task:123:agent:{agent_code}:attempt:0",
+        "taskId": 123,
+        "runAttempt": 0,
+        "agentCode": agent_code,
+        "agentName": agent_name,
+        "kind": kind,
+        "status": status,
+        "summary": f"{agent_name} opinion",
+        "confidence": 0.72,
+        "pricing": {
+            "recommendedPrice": "30.00",
+            "minPrice": "28.00",
+            "maxPrice": "32.00",
+            "safeFloorPrice": None,
+        },
+        "impact": {
+            "expectedSales": 118,
+            "expectedProfit": "990.00",
+            "profitGrowth": "190.00",
+        },
+        "market": None,
+        "risk": None,
+        "evidence": [
+            {
+                "key": "baselineProfit",
+                "label": "基线月利润",
+                "value": "800.00",
+                "source": "pricing_task.baseline_profit",
+            }
+        ],
+        "rationale": {
+            "thinking": "保持旧字段兼容，同时补统一 opinion。",
+            "assumptions": ["近 30 天销量可代表短期需求"],
+            "notes": ["Python 会在缺失时合成 opinion。"],
+        },
+        "relations": {
+            "dependsOnOpinionIds": [],
+            "acceptedOpinionIds": [],
+            "rejectedOpinionIds": [],
+            "conflictOpinionIds": [],
+            "selectedOpinionIds": [],
+        },
+        "decision": None,
+    }
+    if agent_code == "MARKET_INTEL":
+        base["market"] = {
+            "marketFloor": "28.00",
+            "marketCeiling": "32.00",
+            "marketMedian": "30.00",
+            "marketAverage": "30.10",
+            "validCompetitorCount": 6,
+            "dataQuality": "HIGH",
+            "sourceStatus": "OK",
+        }
+    if agent_code == "RISK_CONTROL":
+        base["risk"] = {
+            "isPass": False,
+            "riskLevel": "HIGH",
+            "needManualReview": True,
+        }
+    if agent_code == "MANAGER_COORDINATOR":
+        base["relations"] = {
+            "dependsOnOpinionIds": [
+                "task:123:agent:DATA_ANALYSIS:attempt:0",
+                "task:123:agent:MARKET_INTEL:attempt:0",
+                "task:123:agent:RISK_CONTROL:attempt:0",
+            ],
+            "acceptedOpinionIds": ["task:123:agent:RISK_CONTROL:attempt:0"],
+            "rejectedOpinionIds": ["task:123:agent:DATA_ANALYSIS:attempt:0"],
+            "conflictOpinionIds": [
+                "task:123:agent:DATA_ANALYSIS:attempt:0",
+                "task:123:agent:MARKET_INTEL:attempt:0",
+            ],
+            "selectedOpinionIds": [
+                "task:123:agent:RISK_CONTROL:attempt:0",
+                "task:123:agent:MARKET_INTEL:attempt:0",
+            ],
+        }
+        base["decision"] = {
+            "decisionType": "MERGE",
+            "consensusScore": 0.61,
+            "arbitrationDecision": "采用风控底线上的保守折中价",
+            "arbitrationReason": "样本质量一般，优先满足风控并吸收市场中位价。",
+        }
+    return base
 
 
 def test_build_market_card_uses_competitor_samples():
@@ -45,6 +141,109 @@ def test_build_market_card_uses_competitor_samples():
     assert suggestion["recommendedPrice"] == 29.9
     assert suggestion["dataQuality"] == "HIGH"
     assert suggestion["pricingPosition"] == "接近市场主流带"
+
+
+def test_agent_opinion_v1_accepts_complete_payload_with_camel_case_aliases():
+    opinion = AgentOpinionV1.model_validate(_agent_opinion_payload())
+
+    dumped = opinion.model_dump(by_alias=True, exclude_none=True)
+
+    assert dumped["opinionId"] == "task:123:agent:DATA_ANALYSIS:attempt:0"
+    assert dumped["pricing"]["recommendedPrice"] == Decimal("30.00")
+    assert dumped["impact"]["expectedProfit"] == Decimal("990.00")
+    assert dumped["rationale"]["notes"] == ["Python 会在缺失时合成 opinion。"]
+
+
+def test_agent_output_models_accept_agent_opinion_and_keep_legacy_optional():
+    data_dumped = DataAgentOutput.model_validate(
+        {
+            "suggestedPrice": "29.90",
+            "suggestedMinPrice": "27.90",
+            "suggestedMaxPrice": "31.90",
+            "expectedSales": 120,
+            "expectedProfit": "980.00",
+            "confidence": 0.82,
+            "thinking": "data-thinking",
+            "summary": "data-summary",
+            "agentOpinion": _agent_opinion_payload(),
+        }
+    ).model_dump(by_alias=True, exclude_none=True)
+    assert data_dumped["agentOpinion"]["agentCode"] == "DATA_ANALYSIS"
+
+    market_dumped = MarketAgentOutput.model_validate(
+        {
+            "suggestedPrice": "29.90",
+            "marketFloor": "19.90",
+            "marketCeiling": "39.90",
+            "marketMedian": "29.15",
+            "marketAverage": "29.15",
+            "confidence": 0.88,
+            "thinking": "market-thinking",
+            "summary": "market-summary",
+            "competitorSamples": 3,
+            "agentOpinion": _agent_opinion_payload(
+                agent_code="MARKET_INTEL",
+                agent_name="市场情报Agent",
+                kind="MARKET_ASSESSMENT",
+            ),
+        }
+    ).model_dump(by_alias=True, exclude_none=True)
+    assert market_dumped["agentOpinion"]["market"]["validCompetitorCount"] == 6
+
+    risk_dumped = RiskAgentOutput.model_validate(
+        {
+            "isPass": False,
+            "safeFloorPrice": "21.00",
+            "suggestedPrice": "29.90",
+            "riskLevel": "HIGH",
+            "needManualReview": True,
+            "thinking": "risk-thinking",
+            "summary": "risk-summary",
+            "agentOpinion": _agent_opinion_payload(
+                agent_code="RISK_CONTROL",
+                agent_name="风险控制Agent",
+                kind="RISK_ASSESSMENT",
+                status="BLOCKED",
+            ),
+        }
+    ).model_dump(by_alias=True, exclude_none=True)
+    assert risk_dumped["agentOpinion"]["status"] == "BLOCKED"
+
+    manager_dumped = ManagerAgentOutput.model_validate(
+        {
+            "finalPrice": "29.90",
+            "expectedSales": 120,
+            "expectedProfit": "980.00",
+            "profitGrowth": "180.00",
+            "executeStrategy": MANUAL_REVIEW_STRATEGY,
+            "isPass": False,
+            "thinking": "manager-thinking",
+            "resultSummary": "manager-summary",
+            "suggestedMinPrice": "27.90",
+            "suggestedMaxPrice": "31.90",
+            "agentOpinion": _agent_opinion_payload(
+                agent_code="MANAGER_COORDINATOR",
+                agent_name="经理协调Agent",
+                kind="ARBITRATION",
+                status="MERGED",
+            ),
+        }
+    ).model_dump(by_alias=True, exclude_none=True)
+    assert manager_dumped["agentOpinion"]["decision"]["decisionType"] == "MERGE"
+
+    legacy_dumped = DataAgentOutput.model_validate(
+        {
+            "suggestedPrice": "29.90",
+            "suggestedMinPrice": "27.90",
+            "suggestedMaxPrice": "31.90",
+            "expectedSales": 120,
+            "expectedProfit": "980.00",
+            "confidence": 0.82,
+            "thinking": "data-thinking",
+            "summary": "data-summary",
+        }
+    ).model_dump(by_alias=True, exclude_none=True)
+    assert "agentOpinion" not in legacy_dumped
 
 
 def test_build_market_card_does_not_fake_missing_sales_weighted_fields_as_zero():
@@ -603,6 +802,63 @@ def test_build_pricing_crew_manager_task_uses_normalized_arbitration_fields(monk
     assert "arbitrationSummary" not in description
     assert "conflicts" not in expected_output
     assert "arbitrationSummary" not in expected_output
+
+
+def test_build_pricing_crew_expected_output_requires_agent_opinion_contract(monkeypatch):
+    payload = SimpleNamespace(
+        product=SimpleNamespace(
+            product_id=1001,
+            product_name="coffee",
+            category_name="beverage",
+            current_price=Decimal("29.90"),
+            cost_price=Decimal("16.80"),
+        ),
+        strategy_goal="profit",
+        baseline_sales=120,
+        baseline_profit=Decimal("1200.00"),
+        constraints={},
+        metrics=[],
+        traffic=[],
+    )
+
+    class _FakeTask:
+        instances = []
+
+        def __init__(self, **kwargs):  # noqa: ANN003
+            self.kwargs = kwargs
+            _FakeTask.instances.append(self)
+
+    class _FakeCrew:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(crew_factory, "_precompute_data_summary", lambda _payload: "data-summary")
+    monkeypatch.setattr(crew_factory, "_precompute_competitor_summary", lambda _payload: "competitor-summary")
+    monkeypatch.setattr(crew_factory, "_build_metrics_summary", lambda _payload: "metrics-summary")
+    monkeypatch.setattr(crew_factory, "_build_constraints_text", lambda _constraints: "constraints-summary")
+    monkeypatch.setattr(
+        crew_factory,
+        "build_crewai_agents",
+        lambda **kwargs: {
+            "DATA_ANALYSIS": "data-agent",
+            "MARKET_INTEL": "market-agent",
+            "RISK_CONTROL": "risk-agent",
+            "MANAGER_COORDINATOR": "manager-agent",
+        },
+    )
+    monkeypatch.setattr(crew_factory, "Task", _FakeTask)
+    monkeypatch.setattr(crew_factory, "Crew", _FakeCrew)
+
+    crew_factory.build_pricing_crew(payload, analysis_llm=object(), manager_llm=object())
+
+    task_by_agent = {task.kwargs["agent"]: task.kwargs for task in _FakeTask.instances}
+    assert '"agentOpinion"' in task_by_agent["data-agent"]["expected_output"]
+    assert '"agentOpinion"' in task_by_agent["market-agent"]["expected_output"]
+    assert '"agentOpinion"' in task_by_agent["risk-agent"]["expected_output"]
+    assert '"agentOpinion"' in task_by_agent["manager-agent"]["expected_output"]
+    assert '"dependsOnOpinionIds"' in task_by_agent["manager-agent"]["expected_output"]
+    assert '"decisionType"' in task_by_agent["manager-agent"]["expected_output"]
+    assert "不得引用不存在的 opinionId" in task_by_agent["manager-agent"]["description"]
 
 
 def test_agent_output_models_reject_unsafe_values():

@@ -45,6 +45,10 @@ public interface DecisionTaskService {
      */
     Page<DecisionTaskItemVO> getTasks(int page, int size, String status, String startTime, String endTime, String sortOrder, Long userId);
 
+    void deleteTask(Long taskId, Long userId);
+
+    int batchDeleteTasks(List<Long> taskIds, Long userId);
+
     /**
      * 统计任务数量。
      */

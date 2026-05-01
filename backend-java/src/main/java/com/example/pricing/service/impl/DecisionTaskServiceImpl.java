@@ -6,14 +6,17 @@ package com.example.pricing.service.impl;
 
 import com.alibaba.excel.EasyExcel;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.pricing.dto.TaskDispatchEvent;
 import com.example.pricing.entity.AgentRunLog;
+import com.example.pricing.entity.PricingBatchItem;
 import com.example.pricing.entity.PricingResult;
 import com.example.pricing.entity.PricingTask;
 import com.example.pricing.entity.Product;
 import com.example.pricing.entity.UserLlmConfig;
 import com.example.pricing.mapper.AgentRunLogMapper;
+import com.example.pricing.mapper.PricingBatchItemMapper;
 import com.example.pricing.mapper.PricingResultMapper;
 import com.example.pricing.mapper.PricingTaskMapper;
 import com.example.pricing.mapper.ProductMapper;
@@ -49,6 +52,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -64,6 +68,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     private final PricingTaskMapper taskMapper;
     private final PricingResultMapper resultMapper;
     private final AgentRunLogMapper logMapper;
+    private final PricingBatchItemMapper pricingBatchItemMapper;
     private final ProductMapper productMapper;
     private final ShopService shopService;
     private final TaskDispatchPublisher taskDispatchPublisher;
@@ -205,8 +210,13 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
             }
 
             List<Map<String, Object>> evidence = parseJsonArray(logItem.getEvidenceJson());
-            Map<String, Object> suggestion = parseJsonObject(logItem.getSuggestionJson());
+            Map<String, Object> rawOutput = parseJsonObject(logItem.getRawOutputJson());
+            Map<String, Object> suggestion = sanitizeSuggestion(parseJsonObject(logItem.getSuggestionJson()));
             normalizeSuggestionStrategy(suggestion);
+            Map<String, Object> agentOpinion = extractAgentOpinion(rawOutput);
+            if (agentOpinion.isEmpty()) {
+                agentOpinion = buildLegacyAgentOpinion(logItem, displayOrder, suggestion);
+            }
             String action = String.valueOf(suggestion.getOrDefault("action", ""));
             boolean needManualReview = "MANUAL_REVIEW".equalsIgnoreCase(action) || "人工审核".equals(action);
 
@@ -228,6 +238,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
             vo.setThinking(thinking);
             vo.setEvidence(evidence);
             vo.setSuggestion(suggestion);
+            vo.setAgentOpinion(agentOpinion.isEmpty() ? null : agentOpinion);
             vo.setReasonWhy(logItem.getFinalReason());
             vo.setCreatedAt(logItem.getCreatedAt());
             return vo;
@@ -269,6 +280,47 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         resultPage.setTotal(taskPage.getTotal());
         resultPage.setRecords(taskPage.getRecords().stream().map(this::toTaskItem).toList());
         return resultPage;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteTask(Long taskId, Long userId) {
+        if (taskId == null) {
+            throw new IllegalArgumentException("请选择要删除的决策档案");
+        }
+        batchDeleteTasks(List.of(taskId), userId);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public int batchDeleteTasks(List<Long> ids, Long userId) {
+        if (ids == null || ids.isEmpty()) {
+            throw new IllegalArgumentException("请选择要删除的决策档案");
+        }
+
+        List<Long> taskIds = ids.stream()
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (taskIds.isEmpty()) {
+            throw new IllegalArgumentException("请选择要删除的决策档案");
+        }
+
+        List<Long> userShopIds = getUserShopIds(userId);
+        List<PricingTask> tasks = taskMapper.selectBatchIds(taskIds);
+        if (tasks.size() != taskIds.size()) {
+            throw new IllegalArgumentException("部分决策档案不存在");
+        }
+
+        for (PricingTask task : tasks) {
+            if (!userShopIds.contains(task.getShopId())) {
+                throw new IllegalArgumentException("包含无权删除的决策档案");
+            }
+            assertTaskCanBeDeleted(task);
+        }
+
+        deleteTaskArtifacts(taskIds);
+        return taskMapper.deleteBatchIds(taskIds);
     }
 
     /**
@@ -444,6 +496,28 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         }
     }
 
+    private void assertTaskCanBeDeleted(PricingTask task) {
+        String status = String.valueOf(task.getTaskStatus()).trim().toUpperCase();
+        if (List.of("PENDING", "QUEUED", "RUNNING", "RETRYING").contains(status)) {
+            throw new IllegalStateException("执行中的决策任务不能删除，请先取消或等待结束");
+        }
+    }
+
+    private void deleteTaskArtifacts(List<Long> taskIds) {
+        UpdateWrapper<PricingBatchItem> batchItemWrapper = new UpdateWrapper<>();
+        batchItemWrapper.in("task_id", taskIds)
+                .set("task_id", null);
+        pricingBatchItemMapper.update(null, batchItemWrapper);
+
+        LambdaQueryWrapper<AgentRunLog> logWrapper = new LambdaQueryWrapper<>();
+        logWrapper.in(AgentRunLog::getTaskId, taskIds);
+        logMapper.delete(logWrapper);
+
+        LambdaQueryWrapper<PricingResult> resultWrapper = new LambdaQueryWrapper<>();
+        resultWrapper.in(PricingResult::getTaskId, taskIds);
+        resultMapper.delete(resultWrapper);
+    }
+
     /**
      * 将任务实体转换为列表页摘要对象。
      */
@@ -576,10 +650,67 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
             return new LinkedHashMap<>();
         }
         try {
-            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {
+            Map<String, Object> parsed = objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {
             });
+            return parsed == null ? new LinkedHashMap<>() : parsed;
         } catch (Exception ignore) {
             return new LinkedHashMap<>();
+        }
+    }
+
+    private Map<String, Object> sanitizeSuggestion(Map<String, Object> suggestion) {
+        if (suggestion == null || suggestion.isEmpty()) {
+            return new LinkedHashMap<>();
+        }
+        Map<String, Object> sanitized = new LinkedHashMap<>(suggestion);
+        sanitized.remove("agentOpinion");
+        return sanitized;
+    }
+
+    private Map<String, Object> extractAgentOpinion(Map<String, Object> rawOutput) {
+        if (rawOutput == null || rawOutput.isEmpty()) {
+            return new LinkedHashMap<>();
+        }
+        Object opinion = rawOutput.get("agentOpinion");
+        if (!(opinion instanceof Map<?, ?> opinionMap)) {
+            return new LinkedHashMap<>();
+        }
+        Map<String, Object> normalized = new LinkedHashMap<>();
+        opinionMap.forEach((key, value) -> normalized.put(String.valueOf(key), value));
+        return normalized;
+    }
+
+    private Map<String, Object> buildLegacyAgentOpinion(AgentRunLog logItem, Integer displayOrder, Map<String, Object> suggestion) {
+        if (suggestion.isEmpty()) {
+            return new LinkedHashMap<>();
+        }
+        Map<String, Object> agentOpinion = new LinkedHashMap<>();
+        agentOpinion.put("summary", suggestion.getOrDefault("summary", logItem.getThinkingSummary()));
+        if (displayOrder != null) {
+            agentOpinion.put("agentCode", resolveAgentCode(displayOrder));
+        }
+        copyIfPresent(suggestion, agentOpinion, "acceptedOpinions");
+        copyIfPresent(suggestion, agentOpinion, "rejectedOpinions");
+        copyIfPresent(suggestion, agentOpinion, "disagreementPoints");
+        copyIfPresent(suggestion, agentOpinion, "conflicts");
+        copyIfPresent(suggestion, agentOpinion, "disagreements");
+        copyIfPresent(suggestion, agentOpinion, "conflictPoints");
+        copyIfPresent(suggestion, agentOpinion, "arbitrationDecision");
+        copyIfPresent(suggestion, agentOpinion, "arbitrationSummary");
+        copyIfPresent(suggestion, agentOpinion, "arbitrationReason");
+        copyIfPresent(suggestion, agentOpinion, "decisionSummary");
+        copyIfPresent(suggestion, agentOpinion, "decisionReason");
+        copyIfPresent(suggestion, agentOpinion, "selectedAgent");
+        copyIfPresent(suggestion, agentOpinion, "selectedOption");
+        copyIfPresent(suggestion, agentOpinion, "selectedPrice");
+        copyIfPresent(suggestion, agentOpinion, "selectedStrategy");
+        return agentOpinion;
+    }
+
+    private void copyIfPresent(Map<String, Object> source, Map<String, Object> target, String key) {
+        Object value = source.get(key);
+        if (value != null) {
+            target.put(key, value);
         }
     }
 

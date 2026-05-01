@@ -10,6 +10,7 @@ from typing import Any
 from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.repos.task_repo import TaskRepo
+from app.schemas.task import DispatchTaskResponse
 from app.services.dispatch_service import DispatchService
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,23 @@ class _DispatchRunner:
         try:
             service = DispatchService(db)
             await asyncio.to_thread(service.execute_queued_by_task_id, task_id, execution_id)
+        finally:
+            db.close()
+
+    def handle_task_failure(self, task_id: int, reason: str, max_retries: int) -> DispatchTaskResponse:
+        db = SessionLocal()
+        try:
+            service = DispatchService(db)
+            task = service.task_repo.get_by_id(task_id)
+            if task is None:
+                return DispatchTaskResponse(
+                    accepted=False,
+                    taskId=task_id,
+                    status="NOT_FOUND",
+                    message="task not found",
+                )
+            request = service.build_dispatch_request(task)
+            return service.handle_worker_failure(request, reason, max_retries=max_retries)
         finally:
             db.close()
 
@@ -225,13 +243,26 @@ class RabbitMqWorkerService:
                 await self.sleep_func(backoff)
                 await message.nack(requeue=True)
             except Exception as exc:
-                await asyncio.to_thread(
-                    repo.mark_failed_if_owner,
-                    task_id,
-                    execution_id,
-                    _truncate(str(exc)),
-                )
-                await self.progress_service.publish("TASK_FAILED", task_id, execution_id, {"reason": _truncate(str(exc))})
+                reason = _truncate(str(exc))
+                try:
+                    response = await asyncio.to_thread(
+                        self.dispatch_service.handle_task_failure,
+                        task_id,
+                        reason,
+                        int(getattr(self.settings, "agent_max_retries", 0)),
+                    )
+                except Exception:
+                    logger.exception("Failed to schedule retry after task execution failure")
+                    await asyncio.to_thread(repo.mark_failed_if_owner, task_id, execution_id, reason)
+                    await self.progress_service.publish("TASK_FAILED", task_id, execution_id, {"reason": reason})
+                    await message.ack()
+                    return
+
+                if bool(getattr(response, "accepted", False)) and str(getattr(response, "status", "")).upper() == "RETRYING":
+                    await message.nack(requeue=True)
+                    return
+
+                await self.progress_service.publish("TASK_FAILED", task_id, execution_id, {"reason": reason})
                 await message.ack()
         finally:
             if owns_repo_session:

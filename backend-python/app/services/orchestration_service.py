@@ -26,12 +26,13 @@ from sqlalchemy.orm import Session
 from app.crew.crew_factory import CrewBundle, build_pricing_crew
 from app.crew.crewai_runtime import build_crewai_llm, debug_log, extract_json_object
 from app.crew.protocols import CrewRunPayload
-from app.schemas.agent import DataAgentOutput, ManagerAgentOutput, MarketAgentOutput, RiskAgentOutput
+from app.schemas.agent import AgentOpinionV1, DataAgentOutput, ManagerAgentOutput, MarketAgentOutput, RiskAgentOutput
 from app.schemas.result import TaskFinalResult
 from app.services.resume_service import ResumeService
 from app.services.progress_event_service import get_progress_event_service
 from app.tools.log_writer_tool import LogWriterTool
 from app.tools.result_writer_tool import ResultWriterTool
+from app.repos.task_repo import TaskRepo
 from app.utils.math_utils import money
 from app.utils.text_utils import MANUAL_REVIEW_STRATEGY, to_strategy_goal_cn, to_risk_level_cn
 
@@ -113,6 +114,27 @@ def _normalize_selected_agent(val: Any) -> str | None:
     return None
 
 
+def _deep_merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(merged.get(key), dict) and isinstance(value, dict):
+            merged[key] = _deep_merge_dict(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _to_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        text = _normalize_optional_text(item)
+        if text:
+            result.append(text)
+    return result
+
+
 # ── Agent 元数据（名称和展示顺序） ──────────────────────────
 _AGENT_META = [
     {"code": "DATA_ANALYSIS", "name": "数据分析Agent", "order": 1},
@@ -129,6 +151,13 @@ _AGENT_OUTPUT_MODELS = {
     "MARKET_INTEL": MarketAgentOutput,
     "RISK_CONTROL": RiskAgentOutput,
     "MANAGER_COORDINATOR": ManagerAgentOutput,
+}
+
+_AGENT_KIND_BY_CODE = {
+    "DATA_ANALYSIS": "PRICE_PROPOSAL",
+    "MARKET_INTEL": "MARKET_ASSESSMENT",
+    "RISK_CONTROL": "RISK_ASSESSMENT",
+    "MANAGER_COORDINATOR": "ARBITRATION",
 }
 
 
@@ -149,6 +178,7 @@ class OrchestrationService:
         self.db = db
         self.execution_id = execution_id
         self.progress_service = progress_service or get_progress_event_service()
+        self.task_repo = TaskRepo(db)
         self.log_tool = LogWriterTool(db, execution_id=execution_id)
         self.result_tool = ResultWriterTool(db, execution_id=execution_id)
 
@@ -190,6 +220,9 @@ class OrchestrationService:
         try:
             model = model_cls.model_validate(parsed)
         except ValidationError as exc:
+            recovered = OrchestrationService._validate_without_untrusted_agent_opinion(model_cls, parsed, exc)
+            if recovered is not None:
+                return recovered
             raise AgentOutputValidationError(agent_code, "输出结构校验失败") from exc
         # mode="json" 将 Decimal 序列化为字符串，保证 raw_output_json 可直接存入 JSON 列，
         # 同时下游 _safe_float / _safe_int / money() 都能接受字符串输入，行为与原实现一致。
@@ -244,7 +277,25 @@ class OrchestrationService:
         parsed = extract_json_object(raw)
         if not parsed:
             raise AgentOutputValidationError(meta["code"], "输出解析失败")
-        return self._validate_agent_output(meta["code"], parsed)
+        sanitized = dict(parsed)
+        provided_opinion = None
+        for key in list(sanitized.keys()):
+            normalized_key = "".join(ch for ch in str(key).lower() if ch.isalnum())
+            if normalized_key != "agentopinion":
+                continue
+            if provided_opinion is None:
+                provided_opinion = sanitized.pop(key)
+            else:
+                sanitized.pop(key, None)
+        validated = self._validate_agent_output(meta["code"], sanitized)
+        if isinstance(provided_opinion, dict):
+            try:
+                opinion = AgentOpinionV1.model_validate(provided_opinion)
+            except ValidationError:
+                pass
+            else:
+                validated["agentOpinion"] = opinion.model_dump(by_alias=True, exclude_none=True, mode="json")
+        return validated
 
     def _publish_agent_running(self, payload: CrewRunPayload, order: int) -> None:
         meta = self._get_agent_meta(order)
@@ -330,6 +381,12 @@ class OrchestrationService:
                     first_error = exc
                 continue
 
+            parsed = self._normalize_output_with_agent_opinion(
+                payload=payload,
+                order=order,
+                parsed=parsed,
+                prior_outputs=prior_outputs,
+            )
             prior_outputs[order] = parsed
             self._write_agent_success_card(
                 payload=payload,
@@ -350,8 +407,261 @@ class OrchestrationService:
         try:
             model = model_cls.model_validate(parsed)
         except ValidationError as exc:
+            recovered = OrchestrationService._validate_without_untrusted_agent_opinion(model_cls, parsed, exc)
+            if recovered is not None:
+                return recovered
             raise AgentOutputValidationError(agent_code, "输出结构校验失败") from exc
         return model.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+    @staticmethod
+    def _validate_without_untrusted_agent_opinion(model_cls: type[Any], parsed: dict[str, Any], exc: ValidationError) -> dict[str, Any] | None:
+        if "agentOpinion" not in parsed:
+            return None
+        sanitized = dict(parsed)
+        sanitized.pop("agentOpinion", None)
+        try:
+            model = model_cls.model_validate(sanitized)
+        except ValidationError:
+            return None
+        return model.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+    @staticmethod
+    def _build_opinion_id(task_id: int, agent_code: str, run_attempt: int = 0) -> str:
+        return f"task:{task_id}:agent:{agent_code}:attempt:{run_attempt}"
+
+    @staticmethod
+    def _infer_task_id_from_prior_outputs(prior_outputs: dict[int, dict[str, Any]]) -> int:
+        for output in prior_outputs.values():
+            opinion = output.get("agentOpinion")
+            if isinstance(opinion, dict):
+                task_id = opinion.get("taskId")
+                if isinstance(task_id, int):
+                    return task_id
+                if isinstance(task_id, str) and task_id.isdigit():
+                    return int(task_id)
+        return 0
+
+    @staticmethod
+    def _infer_run_attempt_from_prior_outputs(prior_outputs: dict[int, dict[str, Any]]) -> int:
+        attempts: list[int] = []
+        for output in prior_outputs.values():
+            opinion = output.get("agentOpinion")
+            if not isinstance(opinion, dict):
+                continue
+            run_attempt = opinion.get("runAttempt")
+            if isinstance(run_attempt, int):
+                attempts.append(run_attempt)
+            elif isinstance(run_attempt, str) and run_attempt.isdigit():
+                attempts.append(int(run_attempt))
+        return max(attempts, default=0)
+
+    @staticmethod
+    def _normalize_agent_opinion(
+        *,
+        task_id: int,
+        run_attempt: int,
+        agent_code: str,
+        agent_name: str,
+        parsed: dict[str, Any],
+        prior_outputs: dict[int, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        prior_outputs = prior_outputs or {}
+        upstream_opinion_ids = [
+            str(opinion_id)
+            for order in sorted(prior_outputs.keys())
+            if order in {1, 2, 3}
+            for opinion_id in [((prior_outputs.get(order) or {}).get("agentOpinion") or {}).get("opinionId")]
+            if opinion_id
+        ]
+
+        pricing: dict[str, Any] = {
+            "recommendedPrice": _first_present(parsed, "suggestedPrice", "finalPrice"),
+            "minPrice": parsed.get("suggestedMinPrice"),
+            "maxPrice": parsed.get("suggestedMaxPrice"),
+            "safeFloorPrice": parsed.get("safeFloorPrice"),
+        }
+        impact: dict[str, Any] = {
+            "expectedSales": parsed.get("expectedSales"),
+            "expectedProfit": parsed.get("expectedProfit"),
+            "profitGrowth": parsed.get("profitGrowth"),
+        }
+        market: dict[str, Any] | None = None
+        risk: dict[str, Any] | None = None
+
+        if agent_code == "MARKET_INTEL":
+            market = {
+                "marketFloor": parsed.get("marketFloor"),
+                "marketCeiling": parsed.get("marketCeiling"),
+                "marketMedian": parsed.get("marketMedian"),
+                "marketAverage": parsed.get("marketAverage"),
+                "validCompetitorCount": _first_present(parsed, "validCompetitorCount", "usedCompetitorCount"),
+                "dataQuality": parsed.get("dataQuality"),
+                "sourceStatus": parsed.get("sourceStatus"),
+            }
+        elif agent_code == "RISK_CONTROL":
+            risk = {
+                "isPass": parsed.get("isPass"),
+                "riskLevel": parsed.get("riskLevel"),
+                "needManualReview": parsed.get("needManualReview"),
+            }
+
+        relations: dict[str, Any] = {
+            "dependsOnOpinionIds": upstream_opinion_ids if agent_code == "MANAGER_COORDINATOR" else [],
+            "acceptedOpinionIds": [],
+            "rejectedOpinionIds": [],
+            "conflictOpinionIds": [],
+            "selectedOpinionIds": [],
+        }
+        decision: dict[str, Any] | None = None
+        status = "BLOCKED" if agent_code == "RISK_CONTROL" and not bool(parsed.get("isPass", False)) else "PROPOSED"
+
+        if agent_code == "MANAGER_COORDINATOR":
+            selected_agent = _normalize_selected_agent(_first_present(parsed, "selectedAgent", "selectedOption"))
+            selected_opinion_id = (
+                OrchestrationService._build_opinion_id(task_id, selected_agent, run_attempt)
+                if selected_agent
+                else None
+            )
+            decision_type = "MERGE"
+            if selected_agent and selected_opinion_id:
+                decision_type = "FOLLOW"
+                relations["acceptedOpinionIds"] = [selected_opinion_id]
+                relations["selectedOpinionIds"] = [selected_opinion_id]
+            decision = {
+                "decisionType": decision_type,
+                "consensusScore": parsed.get("consensusScore"),
+                "arbitrationDecision": _first_present(parsed, "arbitrationDecision", "arbitrationSummary", "decisionSummary"),
+                "arbitrationReason": _first_present(parsed, "arbitrationReason", "decisionReason"),
+            }
+            status = "ACCEPTED" if decision_type == "FOLLOW" else "MERGED"
+
+        base_opinion = {
+            "version": "v1",
+            "opinionId": OrchestrationService._build_opinion_id(task_id, agent_code, run_attempt),
+            "taskId": task_id,
+            "runAttempt": run_attempt,
+            "agentCode": agent_code,
+            "agentName": agent_name,
+            "kind": _AGENT_KIND_BY_CODE[agent_code],
+            "status": status,
+            "summary": str(parsed.get("summary") or parsed.get("resultSummary") or f"{agent_name} opinion"),
+            "confidence": parsed.get("confidence"),
+            "pricing": pricing,
+            "impact": impact,
+            "market": market,
+            "risk": risk,
+            "evidence": [
+                {
+                    "key": "summary",
+                    "label": "摘要",
+                    "value": parsed.get("summary") or parsed.get("resultSummary") or "",
+                    "source": "raw_output_json",
+                }
+            ],
+            "rationale": {
+                "thinking": str(parsed.get("thinking") or ""),
+                "assumptions": [],
+                "notes": [],
+            },
+            "relations": relations,
+            "decision": decision,
+        }
+
+        provided_opinion = parsed.get("agentOpinion")
+        merged_opinion = (
+            _deep_merge_dict(base_opinion, provided_opinion)
+            if isinstance(provided_opinion, dict)
+            else base_opinion
+        )
+        opinion = AgentOpinionV1.model_validate(merged_opinion)
+        return opinion.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+    def _normalize_output_with_agent_opinion(
+        self,
+        *,
+        payload: CrewRunPayload,
+        order: int,
+        parsed: dict[str, Any],
+        prior_outputs: dict[int, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        meta = self._get_agent_meta(order)
+        normalized = dict(parsed)
+        run_attempt = self._resolve_run_attempt(payload.task_id, prior_outputs)
+        normalized["agentOpinion"] = self._normalize_agent_opinion(
+            task_id=payload.task_id,
+            run_attempt=run_attempt,
+            agent_code=meta["code"],
+            agent_name=meta["name"],
+            parsed=normalized,
+            prior_outputs=prior_outputs,
+        )
+        if meta["code"] == "MANAGER_COORDINATOR":
+            upstream_opinion_ids = [
+                str(opinion_id)
+                for upstream_order in (1, 2, 3)
+                for opinion_id in [((prior_outputs or {}).get(upstream_order, {}).get("agentOpinion") or {}).get("opinionId")]
+                if opinion_id
+            ]
+            self._validate_manager_relation_ids(normalized["agentOpinion"], upstream_opinion_ids)
+        return normalized
+
+    @staticmethod
+    def _format_opinions_for_manager_context(
+        prior_outputs: dict[int, dict[str, Any]],
+        *,
+        task_id: int | None = None,
+        run_attempt: int | None = None,
+    ) -> str | None:
+        if not prior_outputs:
+            return None
+        resolved_task_id = task_id if task_id is not None else OrchestrationService._infer_task_id_from_prior_outputs(prior_outputs)
+        resolved_run_attempt = run_attempt if run_attempt is not None else OrchestrationService._infer_run_attempt_from_prior_outputs(prior_outputs)
+        opinions: list[dict[str, Any]] = []
+        for order in sorted(prior_outputs.keys()):
+            if order not in {1, 2, 3}:
+                continue
+            meta = _AGENT_META[order - 1]
+            parsed = prior_outputs[order]
+            opinion = parsed.get("agentOpinion")
+            if not isinstance(opinion, dict):
+                opinion = OrchestrationService._normalize_agent_opinion(
+                    task_id=resolved_task_id,
+                    run_attempt=resolved_run_attempt,
+                    agent_code=meta["code"],
+                    agent_name=meta["name"],
+                    parsed=parsed,
+                    prior_outputs=prior_outputs,
+                )
+            opinions.append(opinion)
+        if not opinions:
+            return None
+        return "[AgentOpinion 列表]\n" + json.dumps(opinions, ensure_ascii=False, default=str)
+
+    def _resolve_run_attempt(self, task_id: int, prior_outputs: dict[int, dict[str, Any]] | None = None) -> int:
+        try:
+            task = self.task_repo.get_by_id(task_id)
+        except Exception:
+            task = None
+        if task is not None:
+            return max(int(task.retry_count or 0), 0)
+        if prior_outputs:
+            return self._infer_run_attempt_from_prior_outputs(prior_outputs)
+        return 0
+
+    @staticmethod
+    def _validate_manager_relation_ids(opinion: dict[str, Any], upstream_opinion_ids: list[str]) -> None:
+        if not upstream_opinion_ids:
+            return
+        relations = opinion.get("relations") if isinstance(opinion.get("relations"), dict) else {}
+        depends_on = relations.get("dependsOnOpinionIds") if isinstance(relations.get("dependsOnOpinionIds"), list) else []
+        if set(depends_on) != set(upstream_opinion_ids):
+            raise AgentOutputValidationError("MANAGER_COORDINATOR", "引用的 dependsOnOpinionIds 与上游 opinionId 不一致")
+
+        for field_name in ("acceptedOpinionIds", "rejectedOpinionIds", "conflictOpinionIds", "selectedOpinionIds"):
+            values = relations.get(field_name) if isinstance(relations.get(field_name), list) else []
+            invalid_values = [str(value) for value in values if str(value) not in upstream_opinion_ids]
+            if invalid_values:
+                raise AgentOutputValidationError("MANAGER_COORDINATOR", f"{field_name} 引用了不存在的 opinionId")
 
     @staticmethod
     def _build_data_card(
@@ -613,19 +923,25 @@ class OrchestrationService:
     ) -> None:
         """构建并写入单个 Agent 的成功卡片（包含 raw_output 以便后续回放）。"""
         meta = _AGENT_META[order - 1]
+        normalized_output = parsed if isinstance(parsed.get("agentOpinion"), dict) else self._normalize_output_with_agent_opinion(
+            payload=payload,
+            order=order,
+            parsed=parsed,
+            prior_outputs=prior_outputs,
+        )
         reason_why: str | None = None
         if order == 1:
-            thinking, evidence, suggestion = self._build_data_card(payload, parsed)
+            thinking, evidence, suggestion = self._build_data_card(payload, normalized_output)
         elif order == 2:
-            thinking, evidence, suggestion = self._build_market_card(parsed)
+            thinking, evidence, suggestion = self._build_market_card(normalized_output)
         elif order == 3:
-            thinking, evidence, suggestion = self._build_risk_card(payload, parsed)
+            thinking, evidence, suggestion = self._build_risk_card(payload, normalized_output)
         else:
             data_p = prior_outputs.get(1, {})
             market_p = prior_outputs.get(2, {})
             risk_p = prior_outputs.get(3, {})
             thinking, evidence, suggestion, reason_why = self._build_manager_card(
-                parsed, data_p, market_p, risk_p
+                normalized_output, data_p, market_p, risk_p
             )
 
         self.log_tool.write_agent_card(
@@ -636,7 +952,7 @@ class OrchestrationService:
             evidence=evidence,
             suggestion=suggestion,
             reason_why=reason_why,
-            raw_output=parsed,
+            raw_output=normalized_output,
         )
 
     def _write_agent_failed_card(
@@ -725,9 +1041,10 @@ class OrchestrationService:
             manager_order = _MANAGER_ORDER
             meta = self._get_agent_meta(manager_order)
             self._publish_agent_running(payload, manager_order)
-            manager_context = self._format_prior_outputs_for_context(
+            manager_context = self._format_opinions_for_manager_context(
                 prior_outputs,
-                target_order=manager_order,
+                task_id=payload.task_id,
+                run_attempt=self._resolve_run_attempt(payload.task_id, prior_outputs),
             )
             try:
                 raw = self._run_task_sync(
@@ -752,6 +1069,12 @@ class OrchestrationService:
                 )
                 raise
 
+            parsed = self._normalize_output_with_agent_opinion(
+                payload=payload,
+                order=manager_order,
+                parsed=parsed,
+                prior_outputs=prior_outputs,
+            )
             prior_outputs[manager_order] = parsed
             self._write_agent_success_card(
                 payload=payload,

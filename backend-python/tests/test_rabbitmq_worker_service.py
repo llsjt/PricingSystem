@@ -54,14 +54,20 @@ class FakeRepo:
 
 
 class FakeDispatchService:
-    def __init__(self, side_effect=None):
+    def __init__(self, side_effect=None, failure_response=None):
         self.side_effect = side_effect
         self.calls: list[tuple[int, str]] = []
+        self.failure_response = failure_response or SimpleNamespace(accepted=False, status="FAILED")
+        self.failure_calls: list[tuple[int, str, int]] = []
 
     async def run_task(self, task_id: int, execution_id: str) -> None:
         self.calls.append((task_id, execution_id))
         if self.side_effect:
             raise self.side_effect
+
+    def handle_task_failure(self, task_id: int, reason: str, max_retries: int):
+        self.failure_calls.append((task_id, reason, max_retries))
+        return self.failure_response
 
 
 class FakeProgressService:
@@ -128,7 +134,7 @@ class FakeConnection:
         self.closed = True
 
 
-def _build_settings(*, concurrency: int = 1, prefetch: int = 1):
+def _build_settings(*, concurrency: int = 1, prefetch: int = 1, agent_max_retries: int = 2):
     return SimpleNamespace(
         rabbitmq_host="127.0.0.1",
         rabbitmq_port=5672,
@@ -142,6 +148,7 @@ def _build_settings(*, concurrency: int = 1, prefetch: int = 1):
         task_dispatch_routing_key="pricing.task.dispatch",
         worker_max_retry=3,
         worker_retry_backoff_max_seconds=30,
+        agent_max_retries=agent_max_retries,
     )
 
 
@@ -188,6 +195,56 @@ def test_on_message_requeues_recoverable_error_after_releasing_execution():
     assert message.acked == 0
     assert message.nacked == [True]
     assert any(call[0] == "increment_consumer_retry_and_release" for call in repo.calls)
+
+
+def test_on_message_requeues_orchestration_failure_through_agent_retry_budget():
+    repo = FakeRepo(FakeTask(task_status="QUEUED"))
+    dispatch = FakeDispatchService(
+        side_effect=RuntimeError("Agent execution timed out"),
+        failure_response=SimpleNamespace(accepted=True, status="RETRYING"),
+    )
+    progress = FakeProgressService()
+    service = RabbitMqWorkerService(
+        repo=repo,
+        dispatch_service=dispatch,
+        progress_service=progress,
+        settings=_build_settings(agent_max_retries=2),
+        sleep_func=_no_sleep,
+    )
+    message = FakeMessage(json.dumps({"taskId": 22}).encode())
+
+    asyncio.run(service.on_message(message))
+
+    assert message.acked == 0
+    assert message.nacked == [True]
+    assert dispatch.failure_calls == [(22, "Agent execution timed out", 2)]
+    assert all(call[0] != "mark_failed_if_owner" for call in repo.calls)
+    assert all(call[0] != "TASK_FAILED" for call in progress.calls)
+
+
+def test_on_message_publishes_failed_when_agent_retry_budget_is_exhausted():
+    repo = FakeRepo(FakeTask(task_status="QUEUED"))
+    dispatch = FakeDispatchService(
+        side_effect=RuntimeError("bad output"),
+        failure_response=SimpleNamespace(accepted=False, status="FAILED"),
+    )
+    progress = FakeProgressService()
+    service = RabbitMqWorkerService(
+        repo=repo,
+        dispatch_service=dispatch,
+        progress_service=progress,
+        settings=_build_settings(agent_max_retries=1),
+        sleep_func=_no_sleep,
+    )
+    message = FakeMessage(json.dumps({"taskId": 23}).encode())
+
+    asyncio.run(service.on_message(message))
+
+    assert message.acked == 1
+    assert message.nacked == []
+    assert dispatch.failure_calls == [(23, "bad output", 1)]
+    assert all(call[0] != "mark_failed_if_owner" for call in repo.calls)
+    assert any(call[0] == "TASK_FAILED" for call in progress.calls)
 
 
 def test_truncate_limits_error_text_to_255_characters():

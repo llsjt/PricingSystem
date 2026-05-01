@@ -10,6 +10,7 @@ import type {
   ManagerArbitrationItem,
   PricingAgentCode
 } from '../api/decision'
+import { normalizeAgentOpinion } from './agentOpinion'
 import { formatCurrency, formatPercent } from './formatters.ts'
 
 export type DecisionDisplayLine = string
@@ -291,6 +292,44 @@ const formatSelectedAgent = (value: unknown) => {
 export const getManagerArbitrationBlock = (
   source: ManagerArbitrationSource
 ): ManagerArbitrationBlock | null => {
+  const normalizedOpinion = normalizeAgentOpinion(source as DecisionLogItem | AgentCardContent | null | undefined)
+  if (normalizedOpinion?.arbitration) {
+    const arbitration = normalizedOpinion.arbitration
+    const disagreementLines: string[] = []
+    const decisionLines: string[] = []
+    if (arbitration.consensusScoreText) disagreementLines.push(`共识度：${arbitration.consensusScoreText}`)
+    if (arbitration.disagreementSummary) disagreementLines.push(`分歧摘要：${arbitration.disagreementSummary}`)
+    arbitration.disagreementPoints.forEach((line, index) => {
+      disagreementLines.push(`分歧点 ${index + 1}：${line}`)
+    })
+    if (arbitration.decisionSummary) decisionLines.push(`裁决结论：${arbitration.decisionSummary}`)
+    if (arbitration.decisionReason) decisionLines.push(`裁决理由：${arbitration.decisionReason}`)
+    arbitration.acceptedOpinions.forEach((line, index) => {
+      decisionLines.push(`采纳意见 ${index + 1}：${line}`)
+    })
+    arbitration.rejectedOpinions.forEach((line, index) => {
+      decisionLines.push(`未采纳意见 ${index + 1}：${line}`)
+    })
+    if (arbitration.selectedAgentLabel) decisionLines.push(`采纳方案：${arbitration.selectedAgentLabel}`)
+    if (arbitration.selectedPriceText) decisionLines.push(`采纳价格：${arbitration.selectedPriceText}`)
+    if (arbitration.selectedStrategy) decisionLines.push(`采纳策略：${toNaturalChinese(arbitration.selectedStrategy)}`)
+    return {
+      consensusScoreText: arbitration.consensusScoreText,
+      consensusScorePercent: arbitration.consensusScorePercent,
+      disagreementSummary: arbitration.disagreementSummary,
+      disagreementPoints: arbitration.disagreementPoints,
+      decisionSummary: arbitration.decisionSummary,
+      decisionReason: arbitration.decisionReason,
+      acceptedOpinions: arbitration.acceptedOpinions,
+      rejectedOpinions: arbitration.rejectedOpinions,
+      selectedAgent: arbitration.selectedAgentLabel,
+      selectedPrice: arbitration.selectedPriceText,
+      selectedStrategy: arbitration.selectedStrategy ? toNaturalChinese(arbitration.selectedStrategy) : null,
+      disagreementLines,
+      decisionLines
+    }
+  }
+
   const disagreementLines: string[] = []
   const decisionLines: string[] = []
 

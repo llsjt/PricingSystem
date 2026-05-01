@@ -46,6 +46,9 @@ public class AgentRunLog {
     @TableField("suggestion_json")
     private String suggestionJson;
 
+    @TableField("raw_output_json")
+    private String rawOutputJson;
+
     @TableField("final_reason")
     private String finalReason;
 

@@ -183,11 +183,13 @@ class PricingTaskStreamServiceTest {
                 "thinking",
                 List.of(Map.of("label", "x", "value", 1)),
                 Map.of("summary", "ok", "strategy", "DIRECT"),
+                Map.of("opinionId", "op-1", "summary", "raw opinion"),
                 null
         );
 
         assertEquals("thinking", payload.get("thinking"));
         assertEquals("\u4eba\u5de5\u5ba1\u6838", ((Map<?, ?>) payload.get("suggestion")).get("strategy"));
+        assertEquals(Map.of("opinionId", "op-1", "summary", "raw opinion"), payload.get("agentOpinion"));
         assertNull(payload.get("reasonWhy"));
     }
 
@@ -266,6 +268,27 @@ class PricingTaskStreamServiceTest {
     }
 
     @Test
+    void failedAgentLogAllowsNullLiteralRawOutputWithoutThrowing() {
+        PricingTaskStreamService service = new PricingTaskStreamService(null, null, null, null);
+        AgentRunLog log = new AgentRunLog();
+        log.setTaskId(10L);
+        log.setRoleName("Manager Agent");
+        log.setDisplayOrder(4);
+        log.setStage("failed");
+        log.setThinkingSummary("Agent execution failed: LLM API timeout");
+        log.setSuggestionJson("{\"error\":true,\"message\":\"LLM API timeout\"}");
+        log.setRawOutputJson("null");
+
+        Map<String, Object> payload = ReflectionTestUtils.invokeMethod(service, "toAgentCard", 10L, log);
+
+        assertEquals("agent_card", payload.get("type"));
+        assertEquals("failed", payload.get("stage"));
+        Map<?, ?> card = (Map<?, ?>) payload.get("card");
+        assertFalse(card.containsKey("agentOpinion"));
+        assertEquals(Boolean.TRUE, ((Map<?, ?>) card.get("suggestion")).get("error"));
+    }
+
+    @Test
     void legacyErrorSuggestionAlsoProducesFailedPayload() {
         PricingTaskStreamService service = new PricingTaskStreamService(null, null, null, null);
         AgentRunLog log = new AgentRunLog();
@@ -309,10 +332,20 @@ class PricingTaskStreamServiceTest {
         PricingTaskStreamService service = new PricingTaskStreamService(null, null, null, null);
         AgentRunLog log = completedLog(105L, "exec-manager", 1, 4, "Manager summary");
         log.setRoleName("Manager Agent");
+        log.setRawOutputJson("""
+                {
+                  "agentOpinion": {
+                    "opinionId": "raw-manager-1",
+                    "summary": "Prefer market opinion",
+                    "status": "MERGED"
+                  }
+                }
+                """);
         log.setSuggestionJson("""
                 {
                   "strategy":"DIRECT",
                   "summary":"Use coupon defense",
+                  "agentOpinion":{"opinionId":"wrong-source"},
                   "disagreementPoints":[{"field":"price","reason":"market down"}],
                   "arbitrationDecision":"follow market",
                   "arbitrationReason":"sample is reliable",
@@ -325,22 +358,82 @@ class PricingTaskStreamServiceTest {
         Map<String, Object> payload = ReflectionTestUtils.invokeMethod(service, "toAgentCard", 105L, log);
 
         Map<?, ?> card = (Map<?, ?>) payload.get("card");
-        assertEquals(Set.of("thinking", "evidence", "suggestion", "reasonWhy"), card.keySet());
+        assertEquals(Set.of("thinking", "evidence", "suggestion", "agentOpinion", "reasonWhy"), card.keySet());
         assertNull(card.get("disagreementPoints"));
         assertNull(card.get("acceptedOpinions"));
         assertNull(card.get("rejectedOpinions"));
         assertNull(card.get("arbitrationDecision"));
         assertNull(card.get("arbitrationReason"));
+        assertEquals(Map.of(
+                "opinionId", "raw-manager-1",
+                "summary", "Prefer market opinion",
+                "status", "MERGED"
+        ), card.get("agentOpinion"));
 
         Map<?, ?> suggestion = (Map<?, ?>) card.get("suggestion");
         assertEquals("\u4eba\u5de5\u5ba1\u6838", suggestion.get("strategy"));
         assertEquals("Use coupon defense", suggestion.get("summary"));
+        assertFalse(suggestion.containsKey("agentOpinion"));
         assertEquals(List.of(Map.of("field", "price", "reason", "market down")), suggestion.get("disagreementPoints"));
         assertEquals("follow market", suggestion.get("arbitrationDecision"));
         assertEquals("sample is reliable", suggestion.get("arbitrationReason"));
         assertEquals(List.of("market"), suggestion.get("acceptedOpinions"));
         assertEquals(List.of("risk"), suggestion.get("rejectedOpinions"));
         assertEquals(0.72d, suggestion.get("consensusScore"));
+    }
+
+    @Test
+    void snapshotAndRealtimeAgentCardsUseSameAgentOpinionPayload() {
+        PricingTaskMapper taskMapper = mock(PricingTaskMapper.class);
+        PricingResultMapper resultMapper = mock(PricingResultMapper.class);
+        AgentRunLogMapper logMapper = mock(AgentRunLogMapper.class);
+        PricingTaskStreamService service = new PricingTaskStreamService(taskMapper, resultMapper, logMapper, null);
+        PricingTask task = task(106L, "RUNNING", "exec-106");
+        AgentRunLog currentLog = completedLog(106L, "exec-106", 1, 2, "Market current");
+        currentLog.setRoleName("Market Agent");
+        currentLog.setRawOutputJson("""
+                {
+                  "agentOpinion": {
+                    "opinionId": "snapshot-rt-1",
+                    "summary": "Use the same opinion everywhere"
+                  }
+                }
+                """);
+
+        when(taskMapper.selectById(106L)).thenReturn(task);
+        when(logMapper.selectList(ArgumentMatchers.any())).thenReturn(List.of(currentLog));
+
+        RecordingSseEmitter snapshotEmitter = new RecordingSseEmitter();
+        ReflectionTestUtils.invokeMethod(service, "emitSnapshot", 106L, snapshotEmitter);
+
+        RecordingSseEmitter realtimeEmitter = new RecordingSseEmitter();
+        service.register(106L, realtimeEmitter);
+        service.handleProgressEvent(new TaskProgressEvent(
+                "evt-106",
+                "AGENT_CARD_COMPLETED",
+                106L,
+                "exec-106",
+                "trace-106",
+                Map.of("agentName", "Market Agent"),
+                Instant.parse("2026-04-30T10:02:00Z")
+        ));
+
+        Map<String, Object> snapshotCard = snapshotEmitter.payloads().stream()
+                .filter(item -> "agent_card".equals(item.get("type")))
+                .findFirst()
+                .map(item -> (Map<String, Object>) item.get("card"))
+                .orElseThrow();
+        Map<String, Object> realtimeCard = realtimeEmitter.payloads().stream()
+                .filter(item -> "agent_card".equals(item.get("type")))
+                .findFirst()
+                .map(item -> (Map<String, Object>) item.get("card"))
+                .orElseThrow();
+
+        assertEquals(snapshotCard, realtimeCard);
+        assertEquals(Map.of(
+                "opinionId", "snapshot-rt-1",
+                "summary", "Use the same opinion everywhere"
+        ), snapshotCard.get("agentOpinion"));
     }
 
     private static PricingTask task(Long taskId, String status, String currentExecutionId) {

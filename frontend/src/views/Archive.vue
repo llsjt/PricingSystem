@@ -121,16 +121,29 @@
         <div class="section-title">
           <h3>任务列表</h3>
         </div>
+        <div class="toolbar-actions">
+          <el-tag v-if="selectedTaskIds.length > 0" type="success">已选择 {{ selectedTaskIds.length }} 条</el-tag>
+          <el-button link type="danger" :disabled="selectedTaskIds.length === 0" @click="clearTaskSelection">
+            清空选择
+          </el-button>
+          <el-button type="danger" :disabled="selectedTaskIds.length === 0" @click="handleBatchDeleteTasks">
+            批量删除
+          </el-button>
+        </div>
       </div>
 
       <el-table
+        ref="taskTableRef"
         v-loading="loading"
         :data="tasks"
+        row-key="id"
         border
         stripe
         :resizable="false"
+        @selection-change="handleTaskSelectionChange"
         @sort-change="handleSortChange"
       >
+        <el-table-column type="selection" width="46" :reserve-selection="true" :selectable="canDeleteTask" />
         <el-table-column prop="taskCode" label="任务编号" min-width="220" show-overflow-tooltip />
         <el-table-column prop="productTitle" label="商品名称" min-width="220" show-overflow-tooltip />
         <el-table-column label="当前售价" width="120">
@@ -150,9 +163,18 @@
         <el-table-column prop="createdAt" label="创建时间" width="180" sortable="custom">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" width="110">
+        <el-table-column label="操作" fixed="right" width="160">
           <template #default="{ row }">
             <el-button link type="primary" @click="viewDetails(row)">查看详情</el-button>
+            <el-button
+              link
+              type="danger"
+              :disabled="!canDeleteTask(row)"
+              :loading="isTaskDeleting(Number(row.id))"
+              @click="handleDeleteTask(row)"
+            >
+              删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -298,6 +320,66 @@
         </el-tab-pane>
 
         <el-tab-pane label="协同日志" name="logs">
+          <section v-if="archiveEvidenceBoard" class="panel-card embedded-panel archive-evidence-board">
+            <div class="section-head archive-evidence-head">
+              <div class="section-title">
+                <span class="archive-evidence-kicker">Decision Evidence</span>
+                <h3>决策证据板</h3>
+                <p>{{ archiveEvidenceBoard.decisionSummary || '汇总四个席位的证据、处理状态与最终裁决。' }}</p>
+              </div>
+            </div>
+            <div class="archive-evidence-overview">
+              <article v-for="item in archiveEvidenceBoard.overviewItems" :key="item.label" class="archive-evidence-metric">
+                <span>{{ item.label }}</span>
+                <strong>{{ item.value }}</strong>
+              </article>
+            </div>
+            <div
+              v-if="archiveEvidenceBoard.decisionSummary || archiveEvidenceBoard.decisionReason || archiveEvidenceBoard.selectedStrategy"
+              class="archive-evidence-summary"
+            >
+              <article v-if="archiveEvidenceBoard.decisionSummary" class="archive-evidence-summary-item">
+                <span>裁决结论</span>
+                <p>{{ archiveEvidenceBoard.decisionSummary }}</p>
+              </article>
+              <article v-if="archiveEvidenceBoard.decisionReason" class="archive-evidence-summary-item">
+                <span>裁决理由</span>
+                <p>{{ archiveEvidenceBoard.decisionReason }}</p>
+              </article>
+              <article v-if="archiveEvidenceBoard.selectedStrategy" class="archive-evidence-summary-item">
+                <span>采纳策略</span>
+                <p>{{ archiveEvidenceBoard.selectedStrategy }}</p>
+              </article>
+            </div>
+            <div class="archive-evidence-matrix archive-matrix-grid">
+              <div class="archive-evidence-matrix-head archive-matrix-grid">
+                <span>席位</span>
+                <span>建议价</span>
+                <span>置信度/风险</span>
+                <span>证据摘要</span>
+                <span>处理状态</span>
+              </div>
+              <div
+                v-for="row in archiveEvidenceBoard.matrixRows"
+                :key="row.key"
+                class="archive-evidence-matrix-row archive-matrix-grid"
+              >
+                <div class="archive-evidence-seat">
+                  <span class="archive-evidence-mark">{{ row.agentMark }}</span>
+                  <div>
+                    <strong>{{ row.agentName }}</strong>
+                    <span>{{ row.roleLabel }}</span>
+                  </div>
+                </div>
+                <span class="archive-evidence-price">{{ row.priceText }}</span>
+                <span class="archive-evidence-copy">{{ row.confidenceText }}</span>
+                <span class="archive-evidence-copy">{{ row.evidenceText }}</span>
+                <span class="archive-evidence-state">
+                  <el-tag size="small" :type="row.stateType">{{ row.stateText }}</el-tag>
+                </span>
+              </div>
+            </div>
+          </section>
           <div class="logs-panel archive-agent-timeline">
             <article
               v-for="card in orderedLogCards"
@@ -471,13 +553,16 @@ const {
   activeTab,
   applyingResultIds,
   applyPrice,
+  archiveEvidenceBoard,
   batchGoalLabel,
   batchLoading,
   batchProgressText,
   batchQueryParams,
   batchStatusTagType,
   batchStatusText,
+  canDeleteTask,
   chartRef,
+  clearTaskSelection,
   comparisonData,
   currentTask,
   dateRange,
@@ -502,12 +587,16 @@ const {
   getLogThinking,
   getRunStatusType,
   getRunStatusText,
+  handleBatchDeleteTasks,
   handleBatchPageChange,
   handleBatchSizeChange,
   handleDateChange,
+  handleDeleteTask,
   handleSearch,
   handleSortChange,
+  handleTaskSelectionChange,
   isFailedLog,
+  isTaskDeleting,
   loading,
   openBatchDetail,
   orderedLogCards,
@@ -515,11 +604,13 @@ const {
   recentBatches,
   recentBatchTotal,
   resetFilters,
+  selectedTaskIds,
   stats,
   statusMap,
   statusOptions,
   statusTypeMap,
   summaryRow,
+  taskTableRef,
   tasks,
   toNaturalChinese,
   total,
@@ -534,6 +625,116 @@ const {
 
 .archive-hero {
   padding: 12px 14px;
+}
+
+.archive-evidence-board {
+  display: grid;
+  gap: 14px;
+}
+
+.archive-evidence-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.archive-evidence-metric {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid #dbe5f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.archive-evidence-metric span {
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.archive-evidence-metric strong {
+  font-size: 20px;
+  line-height: 1.2;
+  color: #0f172a;
+}
+
+.archive-evidence-reason {
+  margin: 0;
+  color: #475569;
+  line-height: 1.8;
+}
+
+.archive-evidence-matrix {
+  display: grid;
+  gap: 10px;
+}
+
+.archive-evidence-matrix-head,
+.archive-evidence-matrix-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.1fr) minmax(88px, 0.7fr) minmax(110px, 0.9fr) minmax(220px, 1.7fr) minmax(88px, 0.7fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.archive-evidence-matrix-head {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.archive-evidence-matrix-row {
+  padding: 12px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #334155;
+}
+
+.archive-evidence-seat {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.archive-evidence-seat strong {
+  display: block;
+  color: #0f172a;
+  line-height: 1.4;
+}
+
+.archive-evidence-seat span {
+  display: block;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+.archive-evidence-mark {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid #dbeafe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.archive-evidence-strategy {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  color: #475569;
+}
+
+.archive-evidence-strategy strong {
+  color: #0f172a;
 }
 
 .archive-hero .section-title {
@@ -1111,7 +1312,8 @@ const {
 
 @media (max-width: 1200px) {
   .summary-strip,
-  .drawer-meta {
+  .drawer-meta,
+  .archive-evidence-overview {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1128,10 +1330,19 @@ const {
   .summary-strip,
   .drawer-meta,
   .filter-grid,
+  .archive-evidence-overview,
   .archive-agent-output-grid,
   .archive-arbitration-summary-grid,
   .archive-arbitration-detail-grid,
   .archive-final-decision-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .archive-evidence-matrix-head {
+    display: none;
+  }
+
+  .archive-evidence-matrix-row {
     grid-template-columns: 1fr;
   }
 

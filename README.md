@@ -7,7 +7,7 @@
 - 内部智能任务后端：FastAPI + Python 3.12 + CrewAI
 - 数据层：MySQL 8.4
 - 异步派发：RabbitMQ 3.13
-- 部署入口：Nginx + Docker Compose
+- 部署入口：Docker Compose；本地 Docker 运行前端使用 Vite dev server，静态镜像使用 Nginx
 
 ## 界面展示
 
@@ -165,19 +165,29 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy-public-beta.ps1
 docker compose --env-file .env.public-beta -f docker-compose.public-beta.yml up -d --build
 ```
 
-当前 `docker-compose.public-beta.yml` 面向本地 Docker Desktop 直接启动做了热加载优化：
+当前 `docker-compose.public-beta.yml` 面向本地 Docker Desktop 直接启动：
 
 - Python Worker 挂载 `backend-python/` 并通过 `uvicorn --reload` 运行
 - Frontend 挂载 `frontend/` 并通过 Vite dev server 运行，仍对外暴露 `FRONTEND_PUBLIC_PORT`
-- Java Backend 挂载 `backend-java/` 并通过 `mvn spring-boot:run` 在容器启动时编译当前源码
+- Java Backend 构建最终 jar 镜像并直接运行，Maven 依赖只在镜像构建阶段解析
 
-如果已有旧容器，需要先重新创建一次容器，让新的挂载和启动命令生效：
+前端热重载生效时，`docker ps` 中 frontend 应显示为 `node:20-alpine`，端口映射应类似 `0.0.0.0:8081->5173/tcp`。如果看到的是 `graduation_project-frontend`、`nginx` 或 `0.0.0.0:8081->80/tcp`，说明仍在复用旧的静态前端容器，需要先重新创建一次容器，让新的挂载和启动命令生效：
 
 ```powershell
 docker compose --env-file .env.public-beta -f docker-compose.public-beta.yml up -d --build --force-recreate
 ```
 
-之后只修改应用源码时，可以直接在 Docker Desktop 启动这组容器；修改依赖文件或 Dockerfile 时再重新执行 `up -d --build`。
+之后只修改前端或 Python 源码时，可以直接在 Docker Desktop 启动这组容器，前端源码会通过 Vite 热重载刷新。修改 Java 源码、`frontend/package.json`、`package-lock.json`、Dockerfile 或 Compose 配置时，再重新执行 `up -d --build --force-recreate`。
+
+如果 Windows / Docker Desktop 下保存文件后页面仍不刷新，优先检查：
+
+1. frontend 容器是否已经是 `node:20-alpine` + `5173` 的 Vite dev server。
+2. 浏览器是否访问 `FRONTEND_PUBLIC_PORT`，默认 `http://127.0.0.1:8081/`。
+3. 容器日志里 Vite 是否启动成功：
+
+```powershell
+docker compose --env-file .env.public-beta -f docker-compose.public-beta.yml logs -f frontend
+```
 
 说明：
 

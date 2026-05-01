@@ -7,6 +7,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   applyDecision,
+  batchDeleteDecisionTasks,
+  deleteDecisionTask,
   getPricingTaskDetail,
   getTaskComparison,
   getTaskList,
@@ -41,6 +43,7 @@ import {
   normalizeAgentCode,
   toNaturalChinese
 } from '../utils/decisionDisplay'
+import { normalizeAgentOpinion, type NormalizedAgentOpinion } from '../utils/agentOpinion'
 import { resolveRequestErrorMessage } from '../utils/error'
 import { getFailureSummary } from '../utils/failureSummary'
 import { filterLatestAgentRunRound } from '../utils/agentTimeline'
@@ -79,6 +82,8 @@ const STATUS_OPTIONS = [
   { label: '失败', value: 'FAILED' }
 ]
 
+const ACTIVE_TASK_STATUSES = new Set(['PENDING', 'QUEUED', 'RUNNING', 'RETRYING'])
+
 const ARCHIVE_AGENT_MARK: Record<PricingAgentCode, string> = {
   DATA_ANALYSIS: '数',
   MARKET_INTEL: '市',
@@ -91,6 +96,102 @@ const ARCHIVE_AGENT_ROLE_LABEL: Record<PricingAgentCode, string> = {
   MARKET_INTEL: '市场校准',
   RISK_CONTROL: '风险约束',
   MANAGER_COORDINATOR: '分歧裁决'
+}
+
+const trimText = (value: unknown) => {
+  const text = String(value ?? '').trim()
+  return text || null
+}
+
+const dedupeLines = (lines: string[]) => [...new Set(lines.filter((line) => Boolean(trimText(line))))]
+
+const formatConfidenceText = (value: number | null) => {
+  if (value == null) return null
+  const percent = value > 1 ? value : value * 100
+  const digits = percent >= 10 ? 0 : 1
+  return `${percent.toFixed(digits)}%`
+}
+
+const getArchiveHighlightLabel = (code: PricingAgentCode | null) => {
+  if (code === 'MANAGER_COORDINATOR') return '最终建议价'
+  if (code === 'RISK_CONTROL') return '风控建议价'
+  return '建议定价'
+}
+
+const buildOpinionSuggestionLines = (code: PricingAgentCode | null, opinion: NormalizedAgentOpinion) => {
+  const lines: string[] = []
+  if (opinion.recommendedPrice != null) {
+    lines.push(`${getArchiveHighlightLabel(code)}：${formatCurrency(opinion.recommendedPrice)}`)
+  }
+  if (opinion.minPrice != null && opinion.maxPrice != null) {
+    lines.push(`建议区间：${formatCurrency(opinion.minPrice)} ~ ${formatCurrency(opinion.maxPrice)}`)
+  }
+  if (opinion.safeFloorPrice != null) {
+    lines.push(`安全底价：${formatCurrency(opinion.safeFloorPrice)}`)
+  }
+  if (opinion.expectedSales != null) {
+    lines.push(`预期销量：${opinion.expectedSales}`)
+  }
+  if (opinion.expectedProfit != null) {
+    lines.push(`预期利润：${formatCurrency(opinion.expectedProfit)}`)
+  }
+  if (opinion.confidence != null) {
+    lines.push(`置信度：${formatConfidenceText(opinion.confidence)}`)
+  }
+  if (opinion.riskLevel) {
+    lines.push(`风险等级：${toNaturalChinese(opinion.riskLevel)}`)
+  }
+  if (opinion.summary) {
+    lines.push(`意见摘要：${opinion.summary}`)
+  }
+  return dedupeLines(lines)
+}
+
+const buildArchiveArbitrationBlock = (opinion: NormalizedAgentOpinion | null, log: DecisionLogItem) => {
+  if (!opinion?.arbitration) {
+    return getManagerArbitrationBlock(log)
+  }
+
+  const arbitration = opinion.arbitration
+  const disagreementLines: string[] = []
+  const decisionLines: string[] = []
+  if (arbitration.consensusScoreText) disagreementLines.push(`共识度：${arbitration.consensusScoreText}`)
+  if (arbitration.disagreementSummary) disagreementLines.push(`分歧摘要：${arbitration.disagreementSummary}`)
+  arbitration.disagreementPoints.forEach((line, index) => {
+    disagreementLines.push(`分歧点 ${index + 1}：${line}`)
+  })
+  if (arbitration.decisionSummary) decisionLines.push(`裁决结论：${arbitration.decisionSummary}`)
+  if (arbitration.decisionReason) decisionLines.push(`裁决理由：${arbitration.decisionReason}`)
+  arbitration.acceptedOpinions.forEach((line, index) => {
+    decisionLines.push(`采纳意见 ${index + 1}：${line}`)
+  })
+  arbitration.rejectedOpinions.forEach((line, index) => {
+    decisionLines.push(`未采纳意见 ${index + 1}：${line}`)
+  })
+  if (arbitration.selectedAgentLabel) decisionLines.push(`采纳方案：${arbitration.selectedAgentLabel}`)
+  if (arbitration.selectedPriceText) decisionLines.push(`采纳价格：${arbitration.selectedPriceText}`)
+  if (arbitration.selectedStrategy) decisionLines.push(`采纳策略：${arbitration.selectedStrategy}`)
+
+  return {
+    consensusScoreText: arbitration.consensusScoreText,
+    consensusScorePercent: arbitration.consensusScorePercent,
+    disagreementSummary: arbitration.disagreementSummary,
+    disagreementPoints: arbitration.disagreementPoints,
+    decisionSummary: arbitration.decisionSummary,
+    decisionReason: arbitration.decisionReason,
+    acceptedOpinions: arbitration.acceptedOpinions,
+    rejectedOpinions: arbitration.rejectedOpinions,
+    selectedAgent: arbitration.selectedAgentLabel,
+    selectedPrice: arbitration.selectedPriceText,
+    selectedStrategy: arbitration.selectedStrategy,
+    disagreementLines,
+    decisionLines
+  }
+}
+
+const getEvidencePreview = (lines: string[], summary: string | null, reason: string | null) => {
+  const preferred = trimText(summary) || trimText(lines[0]) || trimText(reason)
+  return preferred || '-'
 }
 
 const buildComparisonChartOption = (rows: DecisionComparisonItem[]) => ({
@@ -159,8 +260,12 @@ export const useArchivePage = () => {
   const currentTask = ref<DecisionTaskItem | null>(null)
   const dateRange = ref<string[]>([])
   const applyingResultIds = ref<number[]>([])
+  const deletingTaskIds = ref<number[]>([])
+  const selectedTaskIds = ref<number[]>([])
+  const taskTableRef = ref<any>(null)
   const openedRouteTaskId = ref<number | null>(null)
   let hasSkippedInitialActivation = false
+  let syncingTaskSelection = false
   const stats = ref<DecisionTaskStats>({
     total: 0,
     completed: 0,
@@ -217,8 +322,13 @@ export const useArchivePage = () => {
   const orderedLogCards = computed(() =>
     orderedLogs.value.map((log) => {
       const agentCode = getLogAgentCode(log)
+      const opinion = normalizeAgentOpinion(log)
+      const evidenceLines = opinion?.evidenceLines.length ? opinion.evidenceLines : getLogEvidenceLines(log)
+      const suggestionLines = opinion ? buildOpinionSuggestionLines(agentCode, opinion) : []
+      const suggestionHighlightPrice = opinion?.arbitration?.selectedPrice ?? opinion?.recommendedPrice ?? getLogSuggestionHighlightPrice(log)
       return {
         log,
+        opinion,
         agentCode,
         agentMark: agentCode ? ARCHIVE_AGENT_MARK[agentCode] : '智',
         roleLabel: agentCode ? ARCHIVE_AGENT_ROLE_LABEL[agentCode] : '协同记录',
@@ -227,15 +337,81 @@ export const useArchivePage = () => {
         runStatusText: getRunStatusText(log.runStatus),
         failureSummary: getLogFailureSummary(log),
         thinking: getLogThinking(log),
-        evidenceLines: getLogEvidenceLines(log),
-        suggestionHighlightLabel: getLogSuggestionHighlightLabel(log),
-        suggestionHighlightPrice: getLogSuggestionHighlightPrice(log),
-        suggestionLines: getLogSuggestionLines(log),
+        evidenceLines,
+        suggestionHighlightLabel: getArchiveHighlightLabel(agentCode),
+        suggestionHighlightPrice,
+        suggestionLines: suggestionLines.length ? suggestionLines : getLogSuggestionLines(log),
         reason: getLogReason(log),
-        arbitration: getManagerArbitrationBlock(log)
+        arbitration: buildArchiveArbitrationBlock(opinion, log)
       }
     })
   )
+
+  const archiveEvidenceBoard = computed(() => {
+    const cards = orderedLogCards.value
+    if (!cards.length) return null
+
+    const matrixRows = cards.map((card) => {
+      const evidenceCount = card.evidenceLines.filter((line) => trimText(line) && line !== '暂无依据内容').length
+      const confidenceText = formatConfidenceText(card.opinion?.confidence ?? null)
+      const riskText = trimText(card.opinion?.riskLevel ? toNaturalChinese(card.opinion.riskLevel) : card.log.riskLevel ? toNaturalChinese(card.log.riskLevel) : '')
+      const confidenceSummary = [confidenceText ? `置信 ${confidenceText}` : null, riskText ? `风险 ${riskText}` : null]
+        .filter((item): item is string => Boolean(item))
+        .join(' / ') || card.runStatusText
+
+      return {
+        key: `${card.agentCode || 'archive'}-${card.log.id}`,
+        agentName: card.agentName,
+        roleLabel: card.roleLabel,
+        agentMark: card.agentMark,
+        priceText: card.suggestionHighlightPrice != null ? formatCurrency(card.suggestionHighlightPrice) : '-',
+        confidenceText: confidenceSummary,
+        evidenceCount,
+        evidenceText: getEvidencePreview(card.evidenceLines, card.opinion?.summary || null, card.reason || null),
+        stateText: card.arbitration?.decisionSummary ? '已裁决' : isFailedLog(card.log) ? '执行失败' : card.runStatusText,
+        stateType: card.arbitration?.decisionSummary ? 'success' : card.runStatusType
+      }
+    })
+
+    const latestCard = [...cards].reverse().find((card) => !isFailedLog(card.log)) || cards[0]
+    const managerCard = cards.find((card) => card.agentCode === 'MANAGER_COORDINATOR' && !isFailedLog(card.log)) || latestCard
+    const totalEvidenceCount = matrixRows.reduce((sum, row) => sum + row.evidenceCount, 0)
+    const failedCount = cards.filter((card) => isFailedLog(card.log)).length
+    const overviewItems = [
+      {
+        label: '最终采纳价',
+        value: managerCard?.arbitration?.selectedPrice
+          || (managerCard?.suggestionHighlightPrice != null ? formatCurrency(managerCard.suggestionHighlightPrice) : '-')
+      },
+      {
+        label: '主导席位',
+        value: managerCard?.arbitration?.selectedAgent || managerCard?.agentName || '-'
+      },
+      {
+        label: '证据条目',
+        value: `${totalEvidenceCount} 条`
+      },
+      {
+        label: '异常席位',
+        value: `${failedCount} 个`
+      }
+    ]
+
+    if (managerCard?.arbitration?.consensusScoreText) {
+      overviewItems.splice(2, 0, {
+        label: '共识度',
+        value: managerCard.arbitration.consensusScoreText
+      })
+    }
+
+    return {
+      overviewItems,
+      decisionSummary: managerCard?.arbitration?.decisionSummary || managerCard?.opinion?.summary || null,
+      decisionReason: managerCard?.arbitration?.decisionReason || managerCard?.reason || null,
+      selectedStrategy: managerCard?.arbitration?.selectedStrategy || null,
+      matrixRows
+    }
+  })
 
   const fetchStats = async () => {
     try {
@@ -281,11 +457,169 @@ export const useArchivePage = () => {
 
       tasks.value = res.data?.records || []
       total.value = Number(res.data?.total || 0)
+      await syncTaskTableSelection()
       await fetchStats()
     } catch (error) {
       ElMessage.error(await resolveRequestErrorMessage(error, '获取任务列表失败'))
     } finally {
       loading.value = false
+    }
+  }
+
+  const normalizeTaskStatus = (status?: string | null) => String(status || '').trim().toUpperCase()
+
+  const canDeleteTask = (row: DecisionTaskItem) => !ACTIVE_TASK_STATUSES.has(normalizeTaskStatus(row.taskStatus))
+
+  const isTaskDeleting = (taskId: number) => deletingTaskIds.value.includes(Number(taskId))
+
+  const getTaskId = (row: Pick<DecisionTaskItem, 'id'>) => {
+    const id = Number(row.id)
+    return Number.isFinite(id) && id > 0 ? id : null
+  }
+
+  const syncTaskTableSelection = async () => {
+    syncingTaskSelection = true
+    try {
+      await nextTick()
+      const table = taskTableRef.value
+      if (!table) return
+
+      const selectedSet = new Set(selectedTaskIds.value)
+      table.clearSelection()
+      tasks.value.forEach((row) => {
+        const id = getTaskId(row)
+        if (id != null && selectedSet.has(id) && canDeleteTask(row)) {
+          table.toggleRowSelection(row, true)
+        }
+      })
+      await nextTick()
+    } finally {
+      syncingTaskSelection = false
+    }
+  }
+
+  const handleTaskSelectionChange = (selection: DecisionTaskItem[]) => {
+    if (syncingTaskSelection) return
+
+    const selectedSet = new Set(selectedTaskIds.value)
+    const currentPageIds = tasks.value.map(getTaskId).filter((id): id is number => id != null)
+
+    currentPageIds.forEach((id) => selectedSet.delete(id))
+    selection.forEach((item) => {
+      const id = getTaskId(item)
+      if (id != null && canDeleteTask(item)) {
+        selectedSet.add(id)
+      }
+    })
+
+    selectedTaskIds.value = Array.from(selectedSet)
+  }
+
+  const clearTaskSelection = () => {
+    selectedTaskIds.value = []
+    taskTableRef.value?.clearSelection?.()
+  }
+
+  const normalizePageAfterDelete = (deletedCount: number) => {
+    const remaining = Math.max(total.value - deletedCount, 0)
+    const maxPage = Math.max(Math.ceil(remaining / queryParams.size), 1)
+    if (queryParams.page > maxPage) {
+      queryParams.page = maxPage
+    }
+  }
+
+  const closeDrawerIfCurrentTaskDeleted = (ids: number[]) => {
+    if (!currentTask.value || !ids.includes(Number(currentTask.value.id))) return
+    drawerVisible.value = false
+  }
+
+  const markTasksDeleting = (ids: number[]) => {
+    deletingTaskIds.value = Array.from(new Set([...deletingTaskIds.value, ...ids]))
+  }
+
+  const unmarkTasksDeleting = (ids: number[]) => {
+    const deletedSet = new Set(ids)
+    deletingTaskIds.value = deletingTaskIds.value.filter((id) => !deletedSet.has(id))
+  }
+
+  const confirmDeleteTasks = async (count: number) => {
+    await ElMessageBox.confirm(
+      `确定删除已选择的 ${count} 个决策档案吗？相关结果报告与协同日志将一并删除，此操作不可恢复。`,
+      '删除决策档案',
+      {
+        type: 'warning',
+        confirmButtonText: '确认删除',
+        cancelButtonText: '取消'
+      }
+    )
+  }
+
+  const handleDeleteTask = async (row: DecisionTaskItem) => {
+    if (!canDeleteTask(row)) {
+      ElMessage.warning('执行中的决策任务不能删除，请先取消或等待结束')
+      return
+    }
+
+    const taskId = Number(row.id)
+    if (!taskId) return
+
+    try {
+      await confirmDeleteTasks(1)
+      markTasksDeleting([taskId])
+      const res: any = await deleteDecisionTask(taskId)
+      if (res.code !== 200) {
+        ElMessage.error(res.message || '删除失败')
+        return
+      }
+
+      ElMessage.success('决策档案已删除')
+      selectedTaskIds.value = selectedTaskIds.value.filter((id) => id !== taskId)
+      closeDrawerIfCurrentTaskDeleted([taskId])
+      normalizePageAfterDelete(1)
+      await fetchTasks()
+    } catch (error: any) {
+      if (error !== 'cancel' && error !== 'close') {
+        ElMessage.error(await resolveRequestErrorMessage(error, '删除失败'))
+      }
+    } finally {
+      unmarkTasksDeleting([taskId])
+    }
+  }
+
+  const handleBatchDeleteTasks = async () => {
+    const ids = Array.from(new Set(selectedTaskIds.value))
+    selectedTaskIds.value = ids
+    if (ids.length === 0) {
+      ElMessage.warning('请先选择要删除的决策档案')
+      return
+    }
+
+    const selectedCurrentRows = tasks.value.filter((item) => ids.includes(Number(item.id)))
+    if (selectedCurrentRows.some((item) => !canDeleteTask(item))) {
+      ElMessage.warning('已选择的档案中包含执行中的任务，请先取消或等待结束')
+      return
+    }
+
+    try {
+      await confirmDeleteTasks(ids.length)
+      markTasksDeleting(ids)
+      const res: any = await batchDeleteDecisionTasks(selectedTaskIds.value)
+      if (res.code !== 200) {
+        ElMessage.error(res.message || '批量删除失败')
+        return
+      }
+
+      ElMessage.success('决策档案已批量删除')
+      closeDrawerIfCurrentTaskDeleted(ids)
+      clearTaskSelection()
+      normalizePageAfterDelete(ids.length)
+      await fetchTasks()
+    } catch (error: any) {
+      if (error !== 'cancel' && error !== 'close') {
+        ElMessage.error(await resolveRequestErrorMessage(error, '批量删除失败'))
+      }
+    } finally {
+      unmarkTasksDeleting(ids)
     }
   }
 
@@ -534,13 +868,16 @@ export const useArchivePage = () => {
     activeTab,
     agentLogs,
     applyingResultIds,
+    archiveEvidenceBoard,
     batchGoalLabel,
     batchLoading,
     batchProgressText,
     batchQueryParams,
     batchStatusTagType,
     batchStatusText,
+    canDeleteTask,
     chartRef,
+    clearTaskSelection,
     comparisonData,
     currentTask,
     dateRange,
@@ -567,11 +904,15 @@ export const useArchivePage = () => {
     getRunStatusText,
     handleBatchPageChange,
     handleBatchSizeChange,
+    handleBatchDeleteTasks,
     handleDateChange,
+    handleDeleteTask,
     handleSearch,
     handleSortChange,
+    handleTaskSelectionChange,
     isSuccessStatus,
     isFailedLog,
+    isTaskDeleting,
     loading,
     openBatchDetail,
     orderedLogs,
@@ -580,11 +921,13 @@ export const useArchivePage = () => {
     recentBatches,
     recentBatchTotal,
     resetFilters,
+    selectedTaskIds,
     stats,
     statusMap: STATUS_MAP,
     statusOptions: STATUS_OPTIONS,
     statusTypeMap: STATUS_TYPE_MAP,
     summaryRow,
+    taskTableRef,
     tasks,
     toNaturalChinese,
     total,

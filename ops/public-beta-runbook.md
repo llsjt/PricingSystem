@@ -19,6 +19,17 @@ What it does:
 - waits for MySQL, Python, Java, and frontend readiness
 - applies pending SQL migrations exactly once
 
+Frontend runtime note:
+
+- The current local Docker Compose stack runs the frontend as `node:20-alpine` with Vite dev server, mounting `frontend/` into the container for hot reload.
+- After changing from an older Nginx/static frontend container, recreate the stack once:
+
+```powershell
+docker compose --env-file .env.public-beta -f docker-compose.public-beta.yml up -d --build --force-recreate
+```
+
+- In `docker ps`, the hot-reload frontend should map `FRONTEND_PUBLIC_PORT` to container port `5173`, not `80`.
+
 ## 3. Back up the database
 
 ```powershell

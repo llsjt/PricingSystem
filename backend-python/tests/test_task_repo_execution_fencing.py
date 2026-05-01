@@ -82,6 +82,24 @@ def test_increment_consumer_retry_and_release_clears_owner():
     assert refreshed.failure_reason == "temporary failure"
 
 
+def test_mark_retrying_clears_owner_for_next_execution_claim():
+    db = build_session()
+    create_task(db, task_id=7, status="RUNNING", execution_id="exec-7", consumer_retry_count=0)
+    repo = TaskRepo(db)
+
+    task = db.get(PricingTask, 7)
+    assert task is not None
+
+    repo.mark_retrying(task, trace_id="trace-7b", failure_reason="agent failed")
+
+    refreshed = db.get(PricingTask, 7)
+    assert refreshed is not None
+    assert refreshed.task_status == "RETRYING"
+    assert refreshed.retry_count == 1
+    assert refreshed.current_execution_id is None
+    assert refreshed.failure_reason == "agent failed"
+
+
 def test_mark_failed_if_owner_does_not_override_cancelled_task():
     db = build_session()
     create_task(db, task_id=4, status="CANCELLED", execution_id="exec-4", consumer_retry_count=0)

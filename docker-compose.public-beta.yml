@@ -106,13 +106,7 @@ services:
   backend-java:
     build:
       context: ./backend-java
-      target: build
-    command: mvn spring-boot:run
-    working_dir: /workspace
     restart: unless-stopped
-    volumes:
-      - ./backend-java:/workspace
-      - maven_cache:/root/.m2
     environment:
       APP_ENV: ${APP_ENV:-prod}
       DB_URL: jdbc:mysql://mysql:3306/pricing_system2.0?useUnicode=true&characterEncoding=utf-8&allowMultiQueries=true&useSSL=false&serverTimezone=GMT%2b8&allowPublicKeyRetrieval=true
@@ -180,12 +174,11 @@ services:
       test:
         - CMD-SHELL
         - >-
-          node -e "require('http').get('http://127.0.0.1:5173/', r => process.exit(r.statusCode >= 200 && r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))"
+          node -e "require('http').get('http://127.0.0.1:5173/@vite/client', r => process.exit(r.statusCode >= 200 && r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))"
       interval: 15s
       timeout: 5s
       retries: 10
 
 volumes:
   mysql_data:
-  maven_cache:
   frontend_node_modules:

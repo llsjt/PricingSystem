@@ -14,7 +14,9 @@ backend-java/.project
 # Local agent / workspace tooling
 .claude/
 .codex/
+.codex-runtime/
 .agents/
+.omx/
 codex-smoke/
 
 # Secrets / local env

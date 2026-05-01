@@ -218,6 +218,7 @@ class TaskRepo:
     ) -> PricingTask:
         task.task_status = "RETRYING"
         task.retry_count = int(task.retry_count or 0) + 1
+        task.current_execution_id = None
         task.trace_id = trace_id or task.trace_id
         task.failure_reason = failure_reason[:255] if failure_reason else None
         task.started_at = None

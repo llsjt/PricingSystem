@@ -6,166 +6,141 @@ import { build } from 'esbuild'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const outdir = join(root, 'node_modules', '.cache', 'decision-display-test')
-const outfile = join(outdir, 'decisionDisplay.mjs')
+const agentOpinionOutfile = join(outdir, 'agentOpinion.mjs')
+const decisionDisplayOutfile = join(outdir, 'decisionDisplay.mjs')
 
 await mkdir(outdir, { recursive: true })
 await build({
+  entryPoints: [join(root, 'src', 'utils', 'agentOpinion.ts')],
+  outfile: agentOpinionOutfile,
+  bundle: true,
+  format: 'esm',
+  platform: 'node',
+  logLevel: 'silent'
+})
+await build({
   entryPoints: [join(root, 'src', 'utils', 'decisionDisplay.ts')],
-  outfile,
+  outfile: decisionDisplayOutfile,
   bundle: true,
   format: 'esm',
   platform: 'node',
   logLevel: 'silent'
 })
 
-const {
-  formatEvidenceValue,
-  getLogAgentName,
-  getManagerArbitrationBlock,
-  getSuggestionLines
-} = await import(`${pathToFileURL(outfile).href}?${Date.now()}`)
+const { normalizeAgentOpinion } = await import(`${pathToFileURL(agentOpinionOutfile).href}?${Date.now()}`)
+const { getManagerArbitrationBlock } = await import(`${pathToFileURL(decisionDisplayOutfile).href}?${Date.now()}`)
 
-assert.equal(formatEvidenceValue('质量原因', ['valid competitors >= 5']), '有效竞品数不少于5个')
-assert.equal(formatEvidenceValue('竞品状态', 'OK'), '正常')
-assert.equal(formatEvidenceValue('硬约束通过', true), '是')
-assert.equal(
-  getLogAgentName({ agentName: '市场情报Agent', agentCode: 'MARKET_INTEL', roleName: '' }),
-  '市场情报智能体'
-)
-assert.equal(
-  getLogAgentName({ agentName: 'Manager Agent', agentCode: '', roleName: 'Manager Agent' }),
-  '经理协调智能体'
-)
-assert.deepEqual(
-  getSuggestionLines(null, {
-    source: 'TMALL_CSV',
-    sourceStatus: 'OK',
-    dataQuality: 'LOW',
-    usedCompetitorCount: 2,
-    riskNotes: '本次竞品数据不足，仅供参考'
-  }),
-  [
-    '竞品来源：天猫真实样本',
-    '竞品状态：正常',
-    '数据质量：低',
-    '纳入分析竞品：2',
-    '风险提示：本次竞品数据不足，仅供参考'
-  ]
-)
-
-assert.deepEqual(
-  getManagerArbitrationBlock({
-    consensusScore: 0,
-    disagreementSummary: '数据建议偏激进，市场建议更贴近竞品带宽',
-    disagreementPoints: [
-      '数据分析建议价：¥29.90',
-      '市场情报建议价：¥31.50'
-    ],
-    acceptedOpinions: [
-      '采纳市场情报给出的竞品区间',
-      '采纳风控底价约束'
-    ],
-    rejectedOpinions: [
-      '未完全采纳数据分析的激进提价建议'
-    ],
-    arbitrationDecision: '采纳市场情报建议价并保留风控底线',
-    arbitrationReason: '在利润约束内更接近当前竞品价格带',
-    selectedAgent: 'MARKET_INTEL',
-    selectedPrice: 31.5,
-    selectedStrategy: 'MANUAL_REVIEW'
-  }),
-  {
-    consensusScoreText: '0.00%',
-    consensusScorePercent: 0,
-    disagreementSummary: '数据建议偏激进，市场建议更贴近竞品带宽',
-    disagreementPoints: [
-      '数据分析建议价：¥29.90',
-      '市场情报建议价：¥31.50'
-    ],
-    decisionSummary: '采纳市场情报建议价并保留风控底线',
-    decisionReason: '在利润约束内更接近当前竞品价格带',
-    acceptedOpinions: [
-      '采纳市场情报给出的竞品区间',
-      '采纳风控底价约束'
-    ],
-    rejectedOpinions: [
-      '未完全采纳数据分析的激进提价建议'
-    ],
-    selectedAgent: '市场情报智能体',
-    selectedPrice: '¥31.50',
-    selectedStrategy: '人工审核',
-    disagreementLines: [
-      '共识度：0.00%',
-      '分歧摘要：数据建议偏激进，市场建议更贴近竞品带宽',
-      '分歧点 1：数据分析建议价：¥29.90',
-      '分歧点 2：市场情报建议价：¥31.50'
-    ],
-    decisionLines: [
-      '裁决结论：采纳市场情报建议价并保留风控底线',
-      '裁决理由：在利润约束内更接近当前竞品价格带',
-      '采纳意见 1：采纳市场情报给出的竞品区间',
-      '采纳意见 2：采纳风控底价约束',
-      '未采纳意见 1：未完全采纳数据分析的激进提价建议',
-      '采纳方案：市场情报智能体',
-      '采纳价格：¥31.50',
-      '采纳策略：人工审核'
-    ]
+const normalizedNewOpinion = normalizeAgentOpinion({
+  agentCode: 'MANAGER_COORDINATOR',
+  summary: '旧摘要',
+  confidenceScore: 0.12,
+  consensusScore: 0.88,
+  arbitrationDecision: '旧裁决',
+  arbitrationReason: '旧理由',
+  suggestion: {
+    recommendedPrice: 99.9
   },
-  'renders normalized manager arbitration fields, including zero consensus score'
-)
-
-assert.equal(
-  getManagerArbitrationBlock({
-    finalPrice: 29.9,
-    summary: '综合决策完成'
-  }),
-  null,
-  'keeps legacy manager suggestions compatible when no arbitration fields were returned'
-)
-
-assert.deepEqual(
-  getManagerArbitrationBlock({
-    suggestion: {
+  agentOpinion: {
+    opinionId: 'task:agent:MANAGER_COORDINATOR:1',
+    agentCode: 'MANAGER_COORDINATOR',
+    agentName: '经理协调智能体',
+    status: 'ADOPTED',
+    summary: '新结构摘要',
+    confidence: 0.66,
+    pricing: {
+      recommendedPrice: 32.5
+    },
+    evidence: [
+      { label: '价格带', value: '贴近竞品区间' }
+    ],
+    relations: {
+      acceptedOpinionIds: ['task:agent:MARKET_INTEL:1'],
+      rejectedOpinionIds: ['task:agent:RISK_CONTROL:1'],
+      selectedOpinionIds: ['task:agent:MARKET_INTEL:1']
+    },
+    decision: {
       consensusScore: 0,
-      conflicts: ['legacy price gap'],
-      acceptedOpinions: ['accept market'],
-      rejectedOpinions: ['reject risk'],
-      arbitrationSummary: 'legacy summary',
-      decisionReason: 'legacy reason',
-      selectedOption: 'MARKET_INTEL'
+      arbitrationDecision: '采纳市场判断',
+      arbitrationReason: '竞品带宽更稳定'
     }
-  }),
-  {
-    consensusScoreText: '0.00%',
-    consensusScorePercent: 0,
-    disagreementSummary: null,
-    disagreementPoints: [
-      'legacy price gap'
+  }
+})
+
+assert.ok(normalizedNewOpinion, 'normalizes the new agentOpinion payload')
+assert.equal(normalizedNewOpinion.summary, '新结构摘要', 'prefers summary from the new agentOpinion payload')
+assert.equal(normalizedNewOpinion.confidence, 0.66, 'prefers confidence from the new agentOpinion payload')
+assert.equal(normalizedNewOpinion.recommendedPrice, 32.5, 'prefers pricing from the new agentOpinion payload')
+assert.equal(normalizedNewOpinion.arbitration?.decisionSummary, '采纳市场判断', 'prefers arbitration decision from the new agentOpinion payload')
+assert.equal(normalizedNewOpinion.arbitration?.decisionReason, '竞品带宽更稳定', 'prefers arbitration reason from the new agentOpinion payload')
+assert.equal(normalizedNewOpinion.arbitration?.consensusScore, 0, 'keeps zero consensus score from the new agentOpinion payload')
+assert.equal(normalizedNewOpinion.arbitration?.consensusScoreText, '0.00%', 'formats zero consensus score without dropping it')
+
+const normalizedLegacyOpinion = normalizeAgentOpinion({
+  resultSummary: '旧仲裁摘要',
+  suggestedPrice: 28.8,
+  evidence: [
+    { label: '渠道判断', value: '旧证据仍可展示' }
+  ],
+  suggestion: {
+    finalPrice: 31.5,
+    strategy: 'MANUAL_REVIEW'
+  },
+  consensusScore: 0,
+  conflicts: [
+    { field: '价格带', reason: '与竞品价差过大' }
+  ],
+  acceptedOpinions: [
+    { summary: '采纳市场方案' }
+  ],
+  rejectedOpinions: [
+    { field: '利润率', reason: '低于风控底线' }
+  ],
+  arbitrationSummary: '保留市场价格带',
+  arbitrationReason: '竞品更稳定',
+  selectedOption: 'MARKET_INTEL'
+})
+
+assert.ok(normalizedLegacyOpinion, 'falls back to legacy payloads when agentOpinion is missing')
+assert.equal(normalizedLegacyOpinion.summary, '旧仲裁摘要', 'falls back to legacy summary fields')
+assert.equal(normalizedLegacyOpinion.recommendedPrice, 31.5, 'falls back to legacy suggestion pricing fields')
+assert.equal(normalizedLegacyOpinion.arbitration?.decisionSummary, '保留市场价格带', 'falls back to legacy arbitration summary fields')
+assert.equal(normalizedLegacyOpinion.arbitration?.decisionReason, '竞品更稳定', 'falls back to legacy arbitration reason fields')
+assert.equal(normalizedLegacyOpinion.arbitration?.selectedAgentCode, 'MARKET_INTEL', 'falls back to legacy selected option fields')
+assert.equal(normalizedLegacyOpinion.arbitration?.consensusScore, 0, 'keeps zero consensus score through legacy fallback')
+
+for (const line of [
+  ...(normalizedLegacyOpinion.arbitration?.disagreementPoints || []),
+  ...(normalizedLegacyOpinion.arbitration?.acceptedOpinions || []),
+  ...(normalizedLegacyOpinion.arbitration?.rejectedOpinions || [])
+]) {
+  assert.equal(typeof line, 'string', 'formats legacy arbitration object items as strings')
+  assert.doesNotMatch(line, /\[object Object\]/, 'does not leak raw object stringification into arbitration text')
+}
+
+const arbitrationBlock = getManagerArbitrationBlock({
+  suggestion: {
+    consensusScore: 0,
+    conflicts: [
+      { field: '价格带', reason: '与竞品价差过大' }
     ],
-    decisionSummary: 'legacy summary',
-    decisionReason: 'legacy reason',
     acceptedOpinions: [
-      'accept market'
+      { summary: '采纳市场方案' }
     ],
     rejectedOpinions: [
-      'reject risk'
+      { field: '利润率', reason: '低于风控底线' }
     ],
-    selectedAgent: '市场情报智能体',
-    selectedPrice: null,
-    selectedStrategy: null,
-    disagreementLines: [
-      '共识度：0.00%',
-      '分歧点 1：legacy price gap'
-    ],
-    decisionLines: [
-      '裁决结论：legacy summary',
-      '裁决理由：legacy reason',
-      '采纳意见 1：accept market',
-      '未采纳意见 1：reject risk',
-      '采纳方案：市场情报智能体'
-    ]
-  },
-  'reads legacy arbitration fields from nested suggestion payloads'
+    arbitrationSummary: '保留市场价格带',
+    decisionReason: '竞品更稳定',
+    selectedOption: 'MARKET_INTEL'
+  }
+})
+
+assert.ok(arbitrationBlock, 'builds a display block from legacy fallback fields')
+assert.equal(arbitrationBlock.consensusScoreText, '0.00%', 'decision display keeps zero consensus score visible')
+assert.equal(arbitrationBlock.consensusScorePercent, 0, 'decision display keeps zero consensus score percent')
+assert.ok(
+  [...arbitrationBlock.disagreementLines, ...arbitrationBlock.decisionLines].every((line) => !line.includes('[object Object]')),
+  'decision display never renders arbitration object arrays as [object Object]'
 )
 
 console.log('decision display tests passed')

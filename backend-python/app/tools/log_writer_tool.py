@@ -16,6 +16,12 @@ class LogWriterTool:
         self.task_repo = TaskRepo(db)
         self.execution_id = execution_id
 
+    def _resolve_task(self, task_id: int):
+        try:
+            return self.task_repo.get_by_id(task_id)
+        except Exception:
+            return None
+
     def write_agent_card(
         self,
         task_id: int,
@@ -28,10 +34,10 @@ class LogWriterTool:
         stage: str = "completed",
         raw_output: dict[str, Any] | None = None,
     ) -> None:
-        task = self.task_repo.get_by_id(task_id)
-        if task is None or str(task.task_status or "").upper() == "CANCELLED":
+        task = self._resolve_task(task_id)
+        if task is not None and str(task.task_status or "").upper() == "CANCELLED":
             return
-        run_attempt = max(int(task.retry_count or 0), 0)
+        run_attempt = max(int(getattr(task, "retry_count", 0) or 0), 0)
 
         self.log_repo.append_card(
             task_id=task_id,
@@ -53,10 +59,10 @@ class LogWriterTool:
         agent_name: str,
         display_order: int,
     ) -> None:
-        task = self.task_repo.get_by_id(task_id)
-        if task is None or str(task.task_status or "").upper() == "CANCELLED":
+        task = self._resolve_task(task_id)
+        if task is not None and str(task.task_status or "").upper() == "CANCELLED":
             return
-        run_attempt = max(int(task.retry_count or 0), 0)
+        run_attempt = max(int(getattr(task, "retry_count", 0) or 0), 0)
 
         self.log_repo.append_running_card(
             task_id=task_id,

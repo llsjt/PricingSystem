@@ -466,6 +466,8 @@
 | `/api/decision/result/{taskId}` | `GET` | Bearer | Path：`taskId` | `Result<DecisionComparisonVO[]>` | 查询结果 |
 | `/api/decision/logs/{taskId}` | `GET` | Bearer | Path：`taskId` | `Result<DecisionLogVO[]>` | 查询日志 |
 | `/api/decision/tasks` | `GET` | Bearer | Query：`page=1`、`size=10`、`status?`、`startTime?`、`endTime?`、`sortOrder=desc` | `Result<Page<DecisionTaskItemVO>>` | 历史任务列表 |
+| `/api/decision/tasks/{taskId}` | `DELETE` | Bearer | Path：`taskId` | `Result<null>` | 删除单个非执行中的决策档案及其日志、结果 |
+| `/api/decision/tasks/batch-delete` | `DELETE` | Bearer | Query：`ids=1,2,3` | `Result<number>` | 批量删除非执行中的决策档案及其日志、结果 |
 | `/api/decision/tasks/stats` | `GET` | Bearer | Query：`startTime?`、`endTime?` | `Result<DecisionTaskStats>` | 任务统计 |
 | `/api/decision/comparison/{taskId}` | `GET` | Bearer | Path：`taskId` | `Result<DecisionComparisonVO[]>` | 查询价格对比 |
 | `/api/decision/apply/{resultId}` | `POST` | Bearer | Path：`resultId` | `Result<null>` | 应用价格建议到本系统商品当前售价，不调用外部电商平台改价接口 |

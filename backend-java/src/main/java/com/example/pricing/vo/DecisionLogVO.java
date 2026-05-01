@@ -41,6 +41,7 @@ public class DecisionLogVO {
     private String thinking;
     private List<Map<String, Object>> evidence;
     private Map<String, Object> suggestion;
+    private Map<String, Object> agentOpinion;
     private String reasonWhy;
     private LocalDateTime createdAt;
 }
