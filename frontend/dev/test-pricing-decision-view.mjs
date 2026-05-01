@@ -52,6 +52,8 @@ assert.deepEqual(
   {
     analysisCompletedCount: 0,
     analysisRunningCount: 3,
+    isTimelineInconsistent: false,
+    canShowManagerCompleted: false,
     analysisStatusText: '0/3 已完成',
     managerStatusText: '等待经理仲裁',
     primaryStatusText: '三个分析并行中',
@@ -70,6 +72,8 @@ assert.deepEqual(
   {
     analysisCompletedCount: 3,
     analysisRunningCount: 0,
+    isTimelineInconsistent: false,
+    canShowManagerCompleted: false,
     analysisStatusText: '3/3 已完成',
     managerStatusText: '等待经理仲裁',
     primaryStatusText: '3/3 完成，等待经理仲裁',
@@ -89,6 +93,8 @@ assert.deepEqual(
   {
     analysisCompletedCount: 3,
     analysisRunningCount: 0,
+    isTimelineInconsistent: false,
+    canShowManagerCompleted: true,
     analysisStatusText: '3/3 已完成',
     managerStatusText: 'Manager 已完成',
     primaryStatusText: 'Manager 已完成',
@@ -96,6 +102,25 @@ assert.deepEqual(
     finalPriceLabel: '最终建议价'
   },
   'surfaces the manager completion state and final suggested price once arbitration is done'
+)
+
+const managerAheadCards = emptyCards()
+managerAheadCards.DATA_ANALYSIS = { __stage: 'completed' }
+managerAheadCards.MANAGER_COORDINATOR = { __stage: 'completed' }
+assert.deepEqual(
+  buildDecisionStatusOverview(managerAheadCards, 31.2),
+  {
+    analysisCompletedCount: 1,
+    analysisRunningCount: 0,
+    isTimelineInconsistent: true,
+    canShowManagerCompleted: false,
+    analysisStatusText: '1/3 已完成',
+    managerStatusText: '等待快照对齐',
+    primaryStatusText: '结果同步中',
+    finalPrice: 31.2,
+    finalPriceLabel: '最终建议价'
+  },
+  'holds manager completion copy until the snapshot catches all three analysis lanes up'
 )
 
 console.log('pricing decision view tests passed')

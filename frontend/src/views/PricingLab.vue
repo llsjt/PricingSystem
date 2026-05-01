@@ -172,8 +172,8 @@
                       <span class="agent-role">{{ agentRoleLabel[agent.code] }}</span>
                     </div>
                   </div>
-                  <el-tag size="small" :type="isCardFailed(agent.code) ? 'danger' : isCardCompleted(agent.code) ? 'success' : isCardRunning(agent.code) ? 'warning' : 'info'">
-                    {{ isCardFailed(agent.code) ? '失败' : isCardCompleted(agent.code) ? '已完成' : isCardRunning(agent.code) ? '分析中' : '等待中' }}
+                  <el-tag size="small" :type="getAgentStatusType(agent.code)">
+                    {{ getAgentStatusText(agent.code) }}
                   </el-tag>
                 </div>
                 <template v-if="isCardCompleted(agent.code)">
@@ -417,6 +417,7 @@ const currentRunAttempt = ref<number | null>(null)
 let aborter: AbortController | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let loadToken = 0
+let snapshotLoadToken = 0
 let routePrefillToken = 0
 const liveRevealEnabled = ref(false)
 const streamArrivedCards = reactive(new Set<PricingAgentCode>())
@@ -426,6 +427,12 @@ const revealStages = reactive({} as Partial<Record<PricingAgentCode, AgentReveal
 const revealLineCounts = reactive({} as Partial<Record<PricingAgentCode, RevealLineCounts>>)
 const expandedAgentSections = reactive({} as Partial<Record<PricingAgentCode, Partial<Record<AgentDetailSection, boolean>>>>)
 
+const normalizeReplayMeta = (card?: AgentCardContent | null) => ({
+  replayed: card?.replayed === true ? true : undefined,
+  sourceLogId: card?.sourceLogId,
+  sourceExecutionId: card?.sourceExecutionId,
+  sourceRunAttempt: card?.sourceRunAttempt
+})
 const normalizeCard = (card?: AgentCardContent | null, stage: AgentStage = 'completed'): InternalAgentCardContent => ({
   thinking: String(card?.thinking || ''),
   evidence: Array.isArray(card?.evidence) ? card.evidence : [],
@@ -433,6 +440,7 @@ const normalizeCard = (card?: AgentCardContent | null, stage: AgentStage = 'comp
   agentOpinion: card?.agentOpinion || null,
   reasonWhy: card?.reasonWhy || null,
   opinion: normalizeAgentOpinion(card),
+  ...normalizeReplayMeta(card),
   ...extractManagerArbitrationFields(card),
   __stage: stage
 })
@@ -474,9 +482,22 @@ const expectedProfit = computed(() => numberOf(managerSuggestion.value.expectedP
 const strategyText = computed(() => state.strategy || String(managerSuggestion.value.strategy || ''))
 const reportSummary = computed(() => archiveReportSummary.value.trim() || state.finalSummary || String(managerSuggestion.value.summary || ''))
 const decisionOverview = computed(() => buildDecisionStatusOverview(state.cards, state.finalPrice))
+const getAgentDisplayStatus = (code: PricingAgentCode) => {
+  if (code === MANAGER_AGENT_CODE && decisionOverview.value.isTimelineInconsistent && isCardCompleted(code)) {
+    return { stage: 'running', text: '等待快照对齐', tagType: 'warning' }
+  }
+  if (isCardFailed(code)) return { stage: 'failed', text: '失败', tagType: 'danger' }
+  if (isCardCompleted(code)) return { stage: 'completed', text: '已完成', tagType: 'success' }
+  if (isCardRunning(code)) return { stage: 'running', text: '分析中', tagType: 'warning' }
+  return { stage: 'idle', text: '等待中', tagType: 'info' }
+}
+const getAgentStatusText = (code: PricingAgentCode) => getAgentDisplayStatus(code).text
+const getAgentStatusType = (code: PricingAgentCode) => getAgentDisplayStatus(code).tagType
 const opinionMatrixRows = computed(() => agents.map((agent) => {
   const card = state.cards[agent.code]
   const opinion = card?.opinion || null
+  const displayStatus = getAgentDisplayStatus(agent.code)
+  const isManagerTimelineInconsistent = agent.code === MANAGER_AGENT_CODE && decisionOverview.value.isTimelineInconsistent
   const price = opinion?.recommendedPrice
   const confidenceText = opinion?.confidence != null
     ? `${(opinion.confidence * 100).toFixed(0)}%`
@@ -490,15 +511,11 @@ const opinionMatrixRows = computed(() => agents.map((agent) => {
       : isCardFailed(agent.code)
         ? getAgentFailureSummary(agent.code)
         : '暂无证据'
-  const stateText = opinion?.status
+  const stateText = isManagerTimelineInconsistent
+    ? displayStatus.text
+    : opinion?.status
     ? (opinionStatusLabelMap[opinion.status] || opinion.status)
-    : isCardFailed(agent.code)
-      ? '失败'
-      : isCardCompleted(agent.code)
-        ? '已完成'
-        : isCardRunning(agent.code)
-          ? '分析中'
-          : '等待中'
+    : displayStatus.text
   return {
     code: agent.code,
     name: agent.name,
@@ -507,7 +524,7 @@ const opinionMatrixRows = computed(() => agents.map((agent) => {
     confidenceText,
     evidenceText,
     stateText,
-    stage: card?.__stage || 'idle'
+    stage: displayStatus.stage
   }
 }))
 
@@ -834,7 +851,9 @@ const mergeSnapshotLogs = (logs: DecisionLogItem[]) => {
 }
 const applySnapshotComparison = (comparison: DecisionComparisonItem[]) => { comparisonData.value = comparison; archiveReportSummary.value = comparisonData.value.find((row) => String(row.resultSummary || '').trim())?.resultSummary || '' }
 const loadSnapshot = async (id: number, options: SnapshotLoadOptions = {}) => {
+  const requestToken = ++snapshotLoadToken
   const res = await getPricingTaskSnapshot(id) as ApiResponse<PricingTaskSnapshot>
+  if (requestToken !== snapshotLoadToken) return
   if (res.code !== 200 || !res.data) return
   applySnapshotDetail(res.data.detail)
   if (options.applyLogs !== false) {
@@ -842,7 +861,7 @@ const loadSnapshot = async (id: number, options: SnapshotLoadOptions = {}) => {
     if (options.mergeLogs) mergeSnapshotLogs(logs)
     else applySnapshotLogs(logs)
   }
-  applySnapshotComparison(Array.isArray(res.data.comparison) ? res.data.comparison : [])
+  if (requestToken === snapshotLoadToken) applySnapshotComparison(Array.isArray(res.data.comparison) ? res.data.comparison : [])
 }
 const skipRevealAnimation = async () => {
   liveRevealEnabled.value = false
@@ -855,6 +874,13 @@ const openExistingTaskArchive = async (id: number) => {
 }
 
 // SSE 只负责推进状态，不直接假设本地 UI 完整；完成或失败后仍会回拉一次快照做最终对齐。
+const finalizeTaskFromServer = async (id: number) => {
+  liveRevealEnabled.value = false
+  clearAgentRevealProgress()
+  await loadSnapshot(id, { applyLogs: true, mergeLogs: false })
+  stopRealtime()
+}
+
 const handleStream = async (payload: PricingTaskStreamMessage) => {
   if (payload.type === 'task_started') state.taskStatus = (payload.status || 'RUNNING') as PricingTaskStatus
   if (payload.type === 'agent_card') {
@@ -870,22 +896,18 @@ const handleStream = async (payload: PricingTaskStreamMessage) => {
   }
   if (payload.type === 'task_completed') {
     state.taskStatus = (payload.status || 'COMPLETED') as PricingTaskStatus
-    liveRevealEnabled.value = false
     if (payload.result) {
       state.finalPrice = numberOf(payload.result.finalPrice)
       state.strategy = String(payload.result.strategy || state.strategy || '')
       state.finalSummary = String(payload.result.summary || state.finalSummary || '')
     }
-    if (taskId.value) await loadSnapshot(taskId.value, { applyLogs: !hasRevealInProgress() })
-    stopRealtime()
+    await finalizeTaskFromServer(payload.taskId)
     ElMessage[state.taskStatus === 'MANUAL_REVIEW' ? 'warning' : 'success'](state.taskStatus === 'MANUAL_REVIEW' ? '任务已完成，当前结果需要人工审核' : '智能决策已完成，可以查看结果报告')
   }
   if (payload.type === 'task_failed') {
     state.taskStatus = (payload.status || 'FAILED') as PricingTaskStatus
-    liveRevealEnabled.value = false
     state.errorMessage = sanitizeErrorMessage(payload.message, state.taskStatus === 'CANCELLED' ? '任务已取消' : '任务执行失败')
-    if (taskId.value) await loadSnapshot(taskId.value, { applyLogs: !hasRevealInProgress() })
-    stopRealtime()
+    await finalizeTaskFromServer(payload.taskId)
     ElMessage[state.taskStatus === 'CANCELLED' || state.taskStatus === 'MANUAL_REVIEW' ? 'warning' : 'error'](state.errorMessage)
   }
 }

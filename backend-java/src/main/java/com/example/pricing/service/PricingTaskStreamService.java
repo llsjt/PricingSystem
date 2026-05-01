@@ -21,7 +21,6 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -42,6 +41,7 @@ public class PricingTaskStreamService {
     private final PricingResultMapper resultMapper;
     private final AgentRunLogMapper logMapper;
     private final DecisionTaskService decisionTaskService;
+    private final EffectiveAgentTimelineProjector effectiveAgentTimelineProjector = new EffectiveAgentTimelineProjector();
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Map<Long, CopyOnWriteArrayList<SseEmitter>> emitters = new ConcurrentHashMap<>();
 
@@ -109,13 +109,14 @@ public class PricingTaskStreamService {
             send(emitter, baseMessage(taskId, "task_started", Map.of("status", task.getTaskStatus())));
 
             List<AgentRunLog> logs = listTaskLogs(taskId);
-            List<AgentRunLog> effectiveLogs = filterEffectiveLogs(task, logs);
-            for (AgentRunLog logItem : effectiveLogs) {
+            List<EffectiveAgentTimelineProjector.ProjectedAgentLog> effectiveLogs =
+                    effectiveAgentTimelineProjector.project(task, logs);
+            for (EffectiveAgentTimelineProjector.ProjectedAgentLog logItem : effectiveLogs) {
                 send(emitter, toAgentCard(taskId, logItem));
             }
 
             PricingResult result = getResultForTask(task);
-            int completedCardCount = (int) effectiveLogs.stream().filter(PricingTaskStreamService::isCompletedAgentCard).count();
+            int completedCardCount = countCompletedCards(effectiveLogs);
             if (shouldEmitCompletedEvent(task, result, completedCardCount)) {
                 send(emitter, baseMessage(taskId, "task_completed", Map.of(
                         "status", normalizeStatus(task),
@@ -147,12 +148,13 @@ public class PricingTaskStreamService {
         return switch (eventType) {
             case "TASK_STARTED" -> List.of(baseMessage(taskId, "task_started", Map.of("status", resolveTaskStatus(taskId))));
             case "AGENT_CARD_RUNNING", "AGENT_CARD_COMPLETED" -> {
-                AgentRunLog log = findLatestAgentLog(taskId, task, agentNameFromPayload(event.payload()));
+                EffectiveAgentTimelineProjector.ProjectedAgentLog log =
+                        findLatestAgentLog(taskId, task, agentNameFromPayload(event.payload()));
                 yield log == null ? List.of() : List.of(toAgentCard(taskId, log));
             }
             case "TASK_COMPLETED", "TASK_MANUAL_REVIEW" -> {
                 PricingResult result = getResultForTask(task);
-                int completedCardCount = countCompletedCards(task, listTaskLogs(taskId));
+                int completedCardCount = countCompletedCards(effectiveAgentTimelineProjector.project(task, listTaskLogs(taskId)));
                 if (task == null || !shouldEmitCompletedEvent(task, result, completedCardCount)) {
                     yield List.of();
                 }
@@ -174,7 +176,7 @@ public class PricingTaskStreamService {
         };
     }
 
-    private AgentRunLog findLatestAgentLog(Long taskId, PricingTask task, String agentName) {
+    private EffectiveAgentTimelineProjector.ProjectedAgentLog findLatestAgentLog(Long taskId, PricingTask task, String agentName) {
         LambdaQueryWrapper<AgentRunLog> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(AgentRunLog::getTaskId, taskId);
         if (agentName != null && !agentName.isBlank()) {
@@ -182,7 +184,8 @@ public class PricingTaskStreamService {
         }
         wrapper.orderByAsc(AgentRunLog::getId);
         List<AgentRunLog> logs = logMapper.selectList(wrapper);
-        List<AgentRunLog> effectiveLogs = filterEffectiveLogs(task, logs);
+        List<EffectiveAgentTimelineProjector.ProjectedAgentLog> effectiveLogs =
+                effectiveAgentTimelineProjector.project(task, logs);
         if (effectiveLogs.isEmpty()) {
             return null;
         }
@@ -219,48 +222,18 @@ public class PricingTaskStreamService {
         return logMapper.selectList(logWrapper);
     }
 
-    private int countCompletedCards(PricingTask task, List<AgentRunLog> logs) {
-        return (int) filterEffectiveLogs(task, logs).stream()
+    private int countCompletedCards(List<EffectiveAgentTimelineProjector.ProjectedAgentLog> logs) {
+        return (int) logs.stream()
+                .map(EffectiveAgentTimelineProjector.ProjectedAgentLog::log)
                 .filter(PricingTaskStreamService::isCompletedAgentCard)
                 .count();
-    }
-
-    private List<AgentRunLog> filterEffectiveLogs(PricingTask task, List<AgentRunLog> logs) {
-        if (logs == null || logs.isEmpty()) {
-            return List.of();
-        }
-        String currentExecutionId = task == null ? null : task.getCurrentExecutionId();
-        if (currentExecutionId != null && !currentExecutionId.isBlank()) {
-            return logs.stream()
-                    .filter(log -> currentExecutionId.equals(log.getExecutionId()))
-                    .toList();
-        }
-        if (isTerminalStatus(task)) {
-            int latestRunAttempt = logs.stream()
-                    .map(PricingTaskStreamService::resolveRunAttempt)
-                    .max(Integer::compareTo)
-                    .orElse(0);
-            return logs.stream()
-                    .filter(log -> resolveRunAttempt(log) == latestRunAttempt)
-                    .toList();
-        }
-        return logs;
     }
 
     private PricingResult getResultForTask(PricingTask task) {
         if (task == null || task.getId() == null) {
             return null;
         }
-        PricingResult result = getResultByTaskId(task.getId());
-        if (result == null) {
-            return null;
-        }
-        String currentExecutionId = task.getCurrentExecutionId();
-        if (currentExecutionId != null && !currentExecutionId.isBlank()
-                && !Objects.equals(currentExecutionId, result.getExecutionId())) {
-            return null;
-        }
-        return result;
+        return getResultByTaskId(task.getId());
     }
 
     static boolean shouldEmitCompletedEvent(PricingTask task, PricingResult result, int completedCardCount) {
@@ -317,6 +290,11 @@ public class PricingTaskStreamService {
      * 把数据库里的单条 agent_run_log 转成前端消费的 agent_card 事件载荷。
      */
     private Map<String, Object> toAgentCard(Long taskId, AgentRunLog item) {
+        return toAgentCard(taskId, EffectiveAgentTimelineProjector.ProjectedAgentLog.fresh(item));
+    }
+
+    private Map<String, Object> toAgentCard(Long taskId, EffectiveAgentTimelineProjector.ProjectedAgentLog projectedLog) {
+        AgentRunLog item = projectedLog.log();
         int order = resolveDisplayOrder(item);
         String agentCode = switch (order) {
             case 1 -> "DATA_ANALYSIS";
@@ -329,7 +307,11 @@ public class PricingTaskStreamService {
         payload.put("agentCode", agentCode);
         payload.put("agentName", item.getRoleName());
         payload.put("displayOrder", order);
-        payload.put("runAttempt", item.getRunAttempt() == null ? 0 : item.getRunAttempt());
+        payload.put("runAttempt", projectedLog.runAttempt() == null ? 0 : projectedLog.runAttempt());
+        payload.put("replayed", projectedLog.replayed());
+        payload.put("sourceLogId", projectedLog.sourceLogId());
+        payload.put("sourceExecutionId", projectedLog.sourceExecutionId());
+        payload.put("sourceRunAttempt", projectedLog.sourceRunAttempt());
         String stage = normalizeLogStage(item);
         payload.put("stage", stage);
         if ("running".equals(stage)) {

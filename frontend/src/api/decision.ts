@@ -55,6 +55,12 @@ export interface DecisionTaskItem {
   createdAt: string
 }
 
+export interface ReplaySourceMeta {
+  logId?: number | null
+  executionId?: string | null
+  runAttempt?: number | null
+}
+
 export interface DecisionLogItem {
   id: number
   roleName?: string
@@ -95,6 +101,11 @@ export interface DecisionLogItem {
   selectedOption?: string | null
   selectedPrice?: number | null
   selectedStrategy?: string | null
+  replayed?: boolean
+  source?: ReplaySourceMeta | null
+  sourceLogId?: number | null
+  sourceExecutionId?: string | null
+  sourceRunAttempt?: number | null
   createdAt: string
 }
 
@@ -219,6 +230,10 @@ export interface AgentCardContent extends ManagerArbitrationFields {
   suggestion: AgentSuggestion
   agentOpinion?: AgentOpinion | null
   reasonWhy?: string | null
+  replayed?: boolean
+  sourceLogId?: number | null
+  sourceExecutionId?: string | null
+  sourceRunAttempt?: number | null
 }
 
 export interface PricingTaskDetail {
@@ -277,6 +292,10 @@ export interface PricingAgentCardMessage {
   agentName: string
   displayOrder: number
   runAttempt?: number
+  replayed?: boolean
+  sourceLogId?: number | null
+  sourceExecutionId?: string | null
+  sourceRunAttempt?: number | null
   stage: 'running' | 'completed' | 'failed' | string
   card: AgentCardContent
 }

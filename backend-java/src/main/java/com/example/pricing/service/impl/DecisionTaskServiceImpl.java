@@ -22,6 +22,7 @@ import com.example.pricing.mapper.PricingTaskMapper;
 import com.example.pricing.mapper.ProductMapper;
 import com.example.pricing.mapper.UserLlmConfigMapper;
 import com.example.pricing.service.DecisionTaskService;
+import com.example.pricing.service.EffectiveAgentTimelineProjector;
 import com.example.pricing.service.PricingTaskReuseSupport;
 import com.example.pricing.service.ShopService;
 import com.example.pricing.service.TaskDispatchPublisher;
@@ -82,6 +83,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     @Value("${app.pricing.min-margin-rate:0.05}")
     private BigDecimal minMarginRate;
 
+    private final EffectiveAgentTimelineProjector effectiveAgentTimelineProjector = new EffectiveAgentTimelineProjector();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
@@ -198,51 +200,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     @Override
     public List<DecisionLogVO> getTaskLogs(Long taskId, Long userId) {
         verifyTaskOwnership(taskId, userId);
-        LambdaQueryWrapper<AgentRunLog> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(AgentRunLog::getTaskId, taskId)
-                .orderByAsc(AgentRunLog::getDisplayOrder, AgentRunLog::getSpeakOrder, AgentRunLog::getId);
-        return logMapper.selectList(wrapper).stream().map(logItem -> {
-            DecisionLogVO vo = new DecisionLogVO();
-            Integer displayOrder = logItem.getDisplayOrder() == null ? logItem.getSpeakOrder() : logItem.getDisplayOrder();
-            String thinking = logItem.getThinkingSummary();
-            if (thinking == null || thinking.isBlank()) {
-                thinking = logItem.getThoughtContent();
-            }
-
-            List<Map<String, Object>> evidence = parseJsonArray(logItem.getEvidenceJson());
-            Map<String, Object> rawOutput = parseJsonObject(logItem.getRawOutputJson());
-            Map<String, Object> suggestion = sanitizeSuggestion(parseJsonObject(logItem.getSuggestionJson()));
-            normalizeSuggestionStrategy(suggestion);
-            Map<String, Object> agentOpinion = extractAgentOpinion(rawOutput);
-            if (agentOpinion.isEmpty()) {
-                agentOpinion = buildLegacyAgentOpinion(logItem, displayOrder, suggestion);
-            }
-            String action = String.valueOf(suggestion.getOrDefault("action", ""));
-            boolean needManualReview = "MANUAL_REVIEW".equalsIgnoreCase(action) || "人工审核".equals(action);
-
-            vo.setId(logItem.getId());
-            vo.setTaskId(logItem.getTaskId());
-            vo.setRoleName(logItem.getRoleName());
-            vo.setSpeakOrder(logItem.getSpeakOrder());
-            vo.setThoughtContent(logItem.getThoughtContent());
-            vo.setAgentCode(resolveAgentCode(displayOrder));
-            vo.setAgentName(logItem.getRoleName());
-            vo.setRunAttempt(logItem.getRunAttempt() == null ? 0 : logItem.getRunAttempt());
-            vo.setRunOrder(displayOrder);
-            vo.setDisplayOrder(displayOrder);
-            String stage = normalizeLogStage(logItem.getStage(), suggestion);
-            vo.setStage(stage);
-            vo.setRunStatus(resolveRunStatus(stage));
-            vo.setOutputSummary(thinking);
-            vo.setNeedManualReview(needManualReview);
-            vo.setThinking(thinking);
-            vo.setEvidence(evidence);
-            vo.setSuggestion(suggestion);
-            vo.setAgentOpinion(agentOpinion.isEmpty() ? null : agentOpinion);
-            vo.setReasonWhy(logItem.getFinalReason());
-            vo.setCreatedAt(logItem.getCreatedAt());
-            return vo;
-        }).toList();
+        return listTaskLogs(taskId).stream()
+                .map(logItem -> toDecisionLogVO(logItem, null))
+                .toList();
     }
 
     /**
@@ -374,7 +334,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         }
         verifyTaskOwnership(task, userId);
         Product product = productMapper.selectById(task.getProductId());
-        PricingResult result = getResultByTaskId(taskId);
+        PricingResult result = getVisibleResultForTask(task);
 
         PricingTaskDetailVO vo = new PricingTaskDetailVO();
         vo.setTaskId(task.getId());
@@ -396,9 +356,16 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
 
     @Override
     public PricingTaskSnapshotVO getTaskSnapshot(Long taskId, Long userId) {
+        PricingTask task = taskMapper.selectById(taskId);
+        if (task == null) {
+            throw new IllegalArgumentException("任务不存在");
+        }
+        verifyTaskOwnership(task, userId);
         PricingTaskSnapshotVO snapshot = new PricingTaskSnapshotVO();
         snapshot.setDetail(getTaskDetail(taskId, userId));
-        snapshot.setLogs(getTaskLogs(taskId, userId));
+        snapshot.setLogs(effectiveAgentTimelineProjector.project(task, listTaskLogs(taskId)).stream()
+                .map(projectedLog -> toDecisionLogVO(projectedLog.log(), projectedLog))
+                .toList());
         snapshot.setComparison(getTaskComparison(taskId, userId));
         return snapshot;
     }
@@ -523,7 +490,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
      */
     private DecisionTaskItemVO toTaskItem(PricingTask task) {
         Product product = productMapper.selectById(task.getProductId());
-        PricingResult result = getResultByTaskId(task.getId());
+        PricingResult result = getVisibleResultForTask(task);
         DecisionTaskItemVO vo = new DecisionTaskItemVO();
         vo.setId(task.getId());
         vo.setTaskCode(task.getTaskCode());
@@ -549,7 +516,7 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         }
         // 当前单任务只对应一个商品，因此结果页和导出页都复用这一行对比数据。
         Product product = productMapper.selectById(task.getProductId());
-        PricingResult result = getResultByTaskId(taskId);
+        PricingResult result = getVisibleResultForTask(task);
         if (product == null || result == null) {
             return new ArrayList<>();
         }
@@ -585,10 +552,98 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
     /**
      * 查询任务对应的定价结果记录。
      */
+    private List<AgentRunLog> listTaskLogs(Long taskId) {
+        LambdaQueryWrapper<AgentRunLog> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(AgentRunLog::getTaskId, taskId)
+                .orderByAsc(AgentRunLog::getDisplayOrder, AgentRunLog::getSpeakOrder, AgentRunLog::getId);
+        return logMapper.selectList(wrapper);
+    }
+
+    private DecisionLogVO toDecisionLogVO(
+            AgentRunLog logItem,
+            EffectiveAgentTimelineProjector.ProjectedAgentLog projectionMeta
+    ) {
+        DecisionLogVO vo = new DecisionLogVO();
+        Integer displayOrder = logItem.getDisplayOrder() == null ? logItem.getSpeakOrder() : logItem.getDisplayOrder();
+        String thinking = logItem.getThinkingSummary();
+        if (thinking == null || thinking.isBlank()) {
+            thinking = logItem.getThoughtContent();
+        }
+
+        List<Map<String, Object>> evidence = parseJsonArray(logItem.getEvidenceJson());
+        Map<String, Object> rawOutput = parseJsonObject(logItem.getRawOutputJson());
+        Map<String, Object> suggestion = sanitizeSuggestion(parseJsonObject(logItem.getSuggestionJson()));
+        normalizeSuggestionStrategy(suggestion);
+        Map<String, Object> agentOpinion = extractAgentOpinion(rawOutput);
+        if (agentOpinion.isEmpty()) {
+            agentOpinion = buildLegacyAgentOpinion(logItem, displayOrder, suggestion);
+        }
+        String action = String.valueOf(suggestion.getOrDefault("action", ""));
+        boolean needManualReview = "MANUAL_REVIEW".equalsIgnoreCase(action) || MANUAL_REVIEW_STRATEGY.equals(action);
+
+        vo.setId(logItem.getId());
+        vo.setTaskId(logItem.getTaskId());
+        vo.setRoleName(logItem.getRoleName());
+        vo.setSpeakOrder(logItem.getSpeakOrder());
+        vo.setThoughtContent(logItem.getThoughtContent());
+        vo.setAgentCode(resolveAgentCode(displayOrder));
+        vo.setAgentName(logItem.getRoleName());
+        vo.setRunAttempt(projectionMeta == null || projectionMeta.runAttempt() == null
+                ? (logItem.getRunAttempt() == null ? 0 : logItem.getRunAttempt())
+                : projectionMeta.runAttempt());
+        vo.setRunOrder(displayOrder);
+        vo.setDisplayOrder(displayOrder);
+        vo.setReplayed(projectionMeta != null ? projectionMeta.replayed() : Boolean.FALSE);
+        vo.setSourceLogId(projectionMeta == null ? null : projectionMeta.sourceLogId());
+        vo.setSourceExecutionId(projectionMeta == null ? null : projectionMeta.sourceExecutionId());
+        vo.setSourceRunAttempt(projectionMeta == null ? null : projectionMeta.sourceRunAttempt());
+        String stage = normalizeLogStage(logItem.getStage(), suggestion);
+        vo.setStage(stage);
+        vo.setRunStatus(resolveRunStatus(stage));
+        vo.setOutputSummary(thinking);
+        vo.setNeedManualReview(needManualReview);
+        vo.setThinking(thinking);
+        vo.setEvidence(evidence);
+        vo.setSuggestion(suggestion);
+        vo.setAgentOpinion(agentOpinion.isEmpty() ? null : agentOpinion);
+        vo.setReasonWhy(logItem.getFinalReason());
+        vo.setCreatedAt(logItem.getCreatedAt());
+        return vo;
+    }
+
     private PricingResult getResultByTaskId(Long taskId) {
         LambdaQueryWrapper<PricingResult> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(PricingResult::getTaskId, taskId).last("LIMIT 1");
         return resultMapper.selectOne(wrapper);
+    }
+
+    private PricingResult getVisibleResultForTask(PricingTask task) {
+        if (task == null || task.getId() == null) {
+            return null;
+        }
+        PricingResult result = getResultByTaskId(task.getId());
+        if (result == null || shouldExposeResult(task, result)) {
+            return result;
+        }
+        log.warn(
+                "Hide stale pricing result from active task snapshot, taskId={}, currentExecutionId={}, resultExecutionId={}",
+                task.getId(),
+                task.getCurrentExecutionId(),
+                result.getExecutionId()
+        );
+        return null;
+    }
+
+    private boolean shouldExposeResult(PricingTask task, PricingResult result) {
+        String currentExecutionId = task.getCurrentExecutionId();
+        if (currentExecutionId == null || currentExecutionId.isBlank()) {
+            return true;
+        }
+        String status = String.valueOf(task.getTaskStatus()).trim().toUpperCase();
+        if ("COMPLETED".equals(status) || "MANUAL_REVIEW".equals(status)) {
+            return true;
+        }
+        return Objects.equals(currentExecutionId, result.getExecutionId());
     }
 
     /**

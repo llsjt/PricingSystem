@@ -662,6 +662,8 @@ def test_manager_agent_invalid_opinion_reference_raises_validation_error(monkeyp
 def test_orchestration_service_reruns_only_manager_after_manager_failure(monkeypatch):
     db = build_session(PricingTask.__table__, AgentRunLog.__table__)
     task = create_running_task(db, task_id=54)
+    task.retry_count = 1
+    db.commit()
     repo = LogRepo(db)
     repo.append_card(
         task_id=task.id,
@@ -727,16 +729,92 @@ def test_orchestration_service_reruns_only_manager_after_manager_failure(monkeyp
 
     manager_context = bundle.tasks[3].captured_context
     assert manager_context is not None
-    assert _opinion_id(task.id, "DATA_ANALYSIS") in manager_context
-    assert _opinion_id(task.id, "MARKET_INTEL") in manager_context
-    assert _opinion_id(task.id, "RISK_CONTROL") in manager_context
+    assert _opinion_id(task.id, "DATA_ANALYSIS", 1) in manager_context
+    assert _opinion_id(task.id, "MARKET_INTEL", 1) in manager_context
+    assert _opinion_id(task.id, "RISK_CONTROL", 1) in manager_context
 
     logs = LogRepo(db).list_by_task_id(task.id)
     completed_orders = [log.display_order for log in logs if log.stage == "completed"]
+    current_attempt_completed = sorted(
+        log.display_order for log in logs if log.stage == "completed" and log.run_attempt == 1
+    )
+    current_attempt_analysis_logs = [
+        (log.display_order, log.stage)
+        for log in logs
+        if log.run_attempt == 1 and log.display_order in {1, 2, 3}
+    ]
     assert completed_orders.count(1) == 1
     assert completed_orders.count(2) == 1
     assert completed_orders.count(3) == 1
     assert completed_orders.count(4) == 1
+    assert current_attempt_completed == [4]
+    assert current_attempt_analysis_logs == []
+
+
+def test_orchestration_service_runs_only_manager_without_writing_replay_completed_cards(monkeypatch):
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=55)
+    task.retry_count = 1
+    db.commit()
+    repo = LogRepo(db)
+    for order, raw_output in (
+        (1, _valid_data_output()),
+        (2, _valid_market_output()),
+        (3, _valid_risk_output()),
+    ):
+        repo.append_card(
+            task_id=task.id,
+            agent_name=f"Agent-{order}",
+            display_order=order,
+            thinking_summary="done",
+            evidence=[],
+            suggestion={"summary": "done"},
+            raw_output=raw_output,
+            run_attempt=0,
+        )
+
+    bundle = _fake_bundle(
+        [
+            _valid_data_output(),
+            _valid_market_output(),
+            _valid_risk_output(),
+            _valid_manager_output(),
+        ]
+    )
+    bundle.tasks[0].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("data task should not rerun"))  # type: ignore[assignment]
+    bundle.tasks[1].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("market task should not rerun"))  # type: ignore[assignment]
+    bundle.tasks[2].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("risk task should not rerun"))  # type: ignore[assignment]
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: bundle,
+    )
+
+    service = OrchestrationService(db)
+    service.result_tool = SimpleNamespace(write_final_result=lambda payload: None)
+    service.run(_payload(task.id))
+
+    manager_context = bundle.tasks[3].captured_context
+    assert manager_context is not None
+    assert _opinion_id(task.id, "DATA_ANALYSIS", 1) in manager_context
+    assert _opinion_id(task.id, "MARKET_INTEL", 1) in manager_context
+    assert _opinion_id(task.id, "RISK_CONTROL", 1) in manager_context
+
+    logs = LogRepo(db).list_by_task_id(task.id)
+    current_attempt_completed = sorted(
+        log.display_order for log in logs if log.stage == "completed" and log.run_attempt == 1
+    )
+    current_attempt_analysis_logs = [
+        (log.display_order, log.stage)
+        for log in logs
+        if log.run_attempt == 1 and log.display_order in {1, 2, 3}
+    ]
+    assert current_attempt_completed == [4]
+    assert current_attempt_analysis_logs == []
 
 
 def test_orchestration_validation_failure_writes_failed_card_and_blocks_result(monkeypatch):
@@ -846,6 +924,8 @@ def test_orchestration_service_writes_three_analysis_running_cards_before_collec
 def test_orchestration_service_only_replays_missing_analysis_agents_before_running_manager(monkeypatch):
     db = build_session(PricingTask.__table__, AgentRunLog.__table__)
     task = create_running_task(db, task_id=32)
+    task.retry_count = 1
+    db.commit()
     repo = LogRepo(db)
     repo.append_card(
         task_id=task.id,
@@ -893,10 +973,22 @@ def test_orchestration_service_only_replays_missing_analysis_agents_before_runni
     manager_context = bundle.tasks[3].captured_context
     assert manager_context is not None
     assert "[AgentOpinion 列表]" in manager_context
-    assert _opinion_id(task.id, "DATA_ANALYSIS") in manager_context
-    assert _opinion_id(task.id, "MARKET_INTEL") in manager_context
-    assert _opinion_id(task.id, "RISK_CONTROL") in manager_context
+    assert _opinion_id(task.id, "DATA_ANALYSIS", 1) in manager_context
+    assert _opinion_id(task.id, "MARKET_INTEL", 1) in manager_context
+    assert _opinion_id(task.id, "RISK_CONTROL", 1) in manager_context
     assert '"suggestedPrice": "30.50"' not in manager_context
+
+    logs = LogRepo(db).list_by_task_id(task.id)
+    current_attempt_completed = sorted(
+        log.display_order for log in logs if log.stage == "completed" and log.run_attempt == 1
+    )
+    current_attempt_replayed_analysis = [
+        (log.display_order, log.stage)
+        for log in logs
+        if log.run_attempt == 1 and log.display_order in {1, 3}
+    ]
+    assert current_attempt_completed == [2, 4]
+    assert current_attempt_replayed_analysis == []
 
 
 def test_parallel_analysis_failure_keeps_other_completed_cards_and_blocks_manager(monkeypatch):

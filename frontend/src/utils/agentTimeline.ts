@@ -31,17 +31,17 @@ const toRunAttempt = (value: unknown): number | null => {
   return Number.isFinite(attempt) && attempt >= 0 ? attempt : null
 }
 
+export const hasExplicitAgentRunAttempt = (logs: readonly AgentRunRoundLog[]): boolean =>
+  logs.some((log) => toRunAttempt(log.runAttempt) !== null)
+
 export const filterLatestAgentRunRound = <TLog extends AgentRunRoundLog>(logs: readonly TLog[]): TLog[] => {
   let latestAttempt: number | null = null
-  const attempts = new Set<number>()
   for (const log of logs) {
     const attempt = toRunAttempt(log.runAttempt)
     if (attempt === null) continue
-    attempts.add(attempt)
     latestAttempt = latestAttempt === null ? attempt : Math.max(latestAttempt, attempt)
   }
   if (latestAttempt === null) return filterLatestInferredRunRound(logs)
-  if (attempts.size <= 1) return filterLatestInferredRunRound(logs)
   return logs.filter((log) => toRunAttempt(log.runAttempt) === latestAttempt)
 }
 

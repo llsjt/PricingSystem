@@ -1,15 +1,6 @@
-"""ResumeService 单元测试
+"""ResumeService contract tests for resume/retry behavior."""
 
-覆盖 compute_resume_point 的核心分支：
-- 空 task：无任何历史 → 全量执行
-- 单前缀已完成：DATA_ANALYSIS completed → 从 MARKET_INTEL 开始
-- 连续前缀完成：DATA + MARKET completed → 从 RISK_CONTROL 开始
-- 断点（非连续）：MARKET completed 但 DATA 缺失 → 仍从 DATA 开始（连续前缀规则）
-- raw_output_json 为空视作未完成：DATA 有 completed 行但 raw_output_json=NULL → 从 DATA 开始
-- 全部完成：4 个 Agent 全部 completed → start_from=5（调用方不应进入此分支执行重试）
-- 多轮 run_attempt：同一 order 多条 completed，取最新 run_attempt 那条的 raw_output
-"""
-
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.sql import text
@@ -68,6 +59,32 @@ def _add_completed(
     )
 
 
+def _insert_completed_row(
+    db: Session,
+    *,
+    task_id: int,
+    order: int,
+    raw_output: dict | None,
+    run_attempt: int = 0,
+) -> None:
+    db.add(
+        AgentRunLog(
+            task_id=task_id,
+            role_name=f"Agent-{order}",
+            speak_order=order,
+            thought_content="ok",
+            thinking_summary="ok",
+            evidence_json=[],
+            suggestion_json={"summary": "ok"},
+            raw_output_json=raw_output,
+            display_order=order,
+            stage="completed",
+            run_attempt=run_attempt,
+        )
+    )
+    db.commit()
+
+
 def _add_failed(db: Session, task_id: int, order: int, run_attempt: int = 0) -> None:
     repo = LogRepo(db)
     repo.append_card(
@@ -110,11 +127,6 @@ def test_data_and_market_done_resumes_from_risk():
 
 
 def test_non_contiguous_prefix_breaks_at_first_gap():
-    """MARKET 已 completed 但 DATA 缺失 → 仍从 DATA 开始（连续前缀规则）。
-
-    MANAGER_COORDINATOR.context=[data, market, risk] 依赖上游全部可用，所以即使
-    MARKET 已完成也不能跳过 DATA。
-    """
     db = _build_session()
     _add_completed(db, task_id=1, order=2, raw={"agent": "market"})
     svc = ResumeService(db)
@@ -123,17 +135,20 @@ def test_non_contiguous_prefix_breaks_at_first_gap():
     assert prior == {}
 
 
-def test_completed_without_raw_output_treated_as_incomplete():
-    """老数据或中间态 completed 行若 raw_output_json 为空，视作未完成。
-
-    因为没有 raw_output 就无法在下游 Task 的 context 里回放这段输出。
-    """
+@pytest.mark.parametrize(
+    ("raw_output", "case_label"),
+    [
+        (None, "null"),
+        ({}, "empty-object"),
+    ],
+)
+def test_completed_without_reusable_raw_output_treated_as_incomplete(raw_output: dict | None, case_label: str):
     db = _build_session()
-    _add_completed(db, task_id=1, order=1, raw=None)  # 无 raw_output
+    _insert_completed_row(db, task_id=1, order=1, raw_output=raw_output)
     svc = ResumeService(db)
     start_from, prior = svc.compute_resume_point(task_id=1)
     assert start_from == 1
-    assert prior == {}
+    assert prior == {}, case_label
 
 
 def test_all_four_done_returns_past_last_order():
@@ -142,15 +157,11 @@ def test_all_four_done_returns_past_last_order():
         _add_completed(db, task_id=1, order=order, raw={"order": order})
     svc = ResumeService(db)
     start_from, prior = svc.compute_resume_point(task_id=1)
-    assert start_from == 5  # 超过 4 → 调用方走 finalize 分支
+    assert start_from == 5
     assert sorted(prior.keys()) == [1, 2, 3, 4]
 
 
 def test_latest_run_attempt_wins_when_multiple_completed_rows_for_same_order():
-    """历史数据可能同一 order 多次 completed（理论不会发生但 schema 允许）。
-
-    应按 run_attempt 倒序取第一条非空 raw_output_json。
-    """
     db = _build_session()
     _add_completed(db, task_id=1, order=1, raw={"v": "old"}, run_attempt=0)
     _add_completed(db, task_id=1, order=1, raw={"v": "new"}, run_attempt=1)
@@ -163,7 +174,7 @@ def test_latest_run_attempt_wins_when_multiple_completed_rows_for_same_order():
 def test_failed_rows_do_not_count_as_completed():
     db = _build_session()
     _add_completed(db, task_id=1, order=1, raw={"agent": "data"}, run_attempt=0)
-    _add_failed(db, task_id=1, order=2, run_attempt=0)  # MARKET failed
+    _add_failed(db, task_id=1, order=2, run_attempt=0)
     svc = ResumeService(db)
     start_from, prior = svc.compute_resume_point(task_id=1)
     assert start_from == 2
@@ -203,6 +214,24 @@ def test_resume_plan_only_replays_missing_analysis_orders():
     assert plan.manager_completed is False
     assert plan.should_run_manager_now is False
     assert plan.all_done is False
+
+
+def test_resume_plan_keeps_non_contiguous_reusable_outputs_without_faking_continuous_prefix():
+    db = _build_session()
+    _add_completed(db, task_id=1, order=1, raw={"agent": "data"})
+    _add_completed(db, task_id=1, order=3, raw={"agent": "risk"})
+
+    service = ResumeService(db)
+    plan = service.compute_resume_plan(task_id=1)
+    start_from, prior = service.compute_resume_point(task_id=1)
+
+    assert plan.analysis_orders_to_run == [2]
+    assert plan.prior_outputs == {
+        1: {"agent": "data"},
+        3: {"agent": "risk"},
+    }
+    assert start_from == 2
+    assert prior == {1: {"agent": "data"}}
 
 
 def test_resume_plan_runs_only_manager_when_all_analysis_outputs_exist():

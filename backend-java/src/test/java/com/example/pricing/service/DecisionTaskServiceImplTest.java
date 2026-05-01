@@ -13,6 +13,7 @@ import com.example.pricing.mapper.PricingTaskMapper;
 import com.example.pricing.mapper.ProductMapper;
 import com.example.pricing.mapper.UserLlmConfigMapper;
 import com.example.pricing.service.impl.DecisionTaskServiceImpl;
+import com.example.pricing.vo.DecisionLogVO;
 import com.example.pricing.vo.PricingTaskSnapshotVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -301,6 +302,7 @@ class DecisionTaskServiceImplTest {
         task.setProductId(101L);
         task.setTaskStatus("RUNNING");
         task.setCurrentPrice(new BigDecimal("99.00"));
+        task.setCurrentExecutionId("exec-current");
 
         Product product = new Product();
         product.setId(101L);
@@ -315,6 +317,7 @@ class DecisionTaskServiceImplTest {
         result.setExpectedProfit(new BigDecimal("1234.56"));
         result.setProfitGrowth(new BigDecimal("120.00"));
         result.setIsPass(1);
+        result.setExecutionId("exec-current");
         result.setExecuteStrategy("DIRECT");
         result.setResultSummary("ok");
         result.setReviewRequired(0);
@@ -322,12 +325,14 @@ class DecisionTaskServiceImplTest {
         AgentRunLog runLog = new AgentRunLog();
         runLog.setId(1L);
         runLog.setTaskId(20L);
+        runLog.setExecutionId("exec-current");
         runLog.setRoleName("数据分析Agent");
         runLog.setDisplayOrder(1);
         runLog.setStage("completed");
         runLog.setThinkingSummary("thinking");
         runLog.setEvidenceJson("[{\"label\":\"x\",\"value\":1}]");
-        runLog.setSuggestionJson("{\"summary\":\"fine\",\"strategy\":\"DIRECT\"}");
+        runLog.setSuggestionJson("{\"summary\":\"fine\",\"strategy\":\"DIRECT\",\"action\":\"人工审核\"}");
+        runLog.setRawOutputJson("{\"agentOpinion\":{\"summary\":\"thinking\"}}");
 
         when(shopService.getShopIdsByUser(77L)).thenReturn(List.of(9L));
         when(taskMapper.selectById(20L)).thenReturn(task);
@@ -346,10 +351,133 @@ class DecisionTaskServiceImplTest {
         assertEquals("DATA_ANALYSIS", snapshot.getLogs().get(0).getAgentCode());
         assertEquals("completed", snapshot.getLogs().get(0).getStage());
         assertEquals("人工审核", snapshot.getLogs().get(0).getSuggestion().get("strategy"));
+        assertEquals(true, snapshot.getLogs().get(0).getNeedManualReview());
 
         assertEquals(1, snapshot.getComparison().size());
         assertEquals(new BigDecimal("105.00"), snapshot.getComparison().get(0).getSuggestedPrice());
         assertEquals("人工审核", snapshot.getComparison().get(0).getExecuteStrategy());
+    }
+
+    @Test
+    void getTaskSnapshotUsesEffectiveTimelineWhileGetTaskLogsKeepsAuditTrail() {
+        PricingTask task = new PricingTask();
+        task.setId(21L);
+        task.setShopId(9L);
+        task.setProductId(101L);
+        task.setTaskStatus("RUNNING");
+        task.setCurrentPrice(new BigDecimal("99.00"));
+        task.setCurrentExecutionId("exec-current");
+
+        Product product = new Product();
+        product.setId(101L);
+        product.setTitle("娴嬭瘯鍟嗗搧");
+        product.setCurrentPrice(new BigDecimal("99.00"));
+
+        PricingResult result = new PricingResult();
+        result.setId(201L);
+        result.setTaskId(21L);
+        result.setExecutionId("exec-old-1");
+        result.setFinalPrice(new BigDecimal("105.00"));
+        result.setExpectedSales(321);
+        result.setExpectedProfit(new BigDecimal("1234.56"));
+        result.setProfitGrowth(new BigDecimal("120.00"));
+        result.setIsPass(1);
+        result.setExecuteStrategy("DIRECT");
+        result.setResultSummary("ok");
+        result.setReviewRequired(0);
+
+        AgentRunLog historyData = completedReplayableLog(2101L, 21L, "exec-old-1", 1, 1, "thinking");
+        AgentRunLog historyMarket = completedReplayableLog(2102L, 21L, "exec-old-1", 1, 2, "market");
+        AgentRunLog historyRisk = completedReplayableLog(2103L, 21L, "exec-old-1", 1, 3, "risk");
+        AgentRunLog currentManager = completedReplayableLog(2104L, 21L, "exec-current", 2, 4, "manager");
+
+        when(shopService.getShopIdsByUser(77L)).thenReturn(List.of(9L));
+        when(taskMapper.selectById(21L)).thenReturn(task);
+        when(productMapper.selectById(101L)).thenReturn(product);
+        when(resultMapper.selectOne(any())).thenReturn(result);
+        when(logMapper.selectList(any())).thenReturn(List.of(historyData, historyMarket, historyRisk, currentManager));
+
+        PricingTaskSnapshotVO snapshot = service.getTaskSnapshot(21L, 77L);
+        List<DecisionLogVO> allLogs = service.getTaskLogs(21L, 77L);
+
+        assertEquals(4, snapshot.getLogs().size());
+        assertEquals(List.of(1, 2, 3, 4), snapshot.getLogs().stream().map(DecisionLogVO::getDisplayOrder).toList());
+        assertEquals(List.of(2, 2, 2, 2), snapshot.getLogs().stream().map(DecisionLogVO::getRunAttempt).toList());
+        assertEquals(List.of(true, true, true, false), snapshot.getLogs().stream().map(DecisionLogVO::getReplayed).toList());
+        assertEquals(java.util.Arrays.asList(2101L, 2102L, 2103L, null), snapshot.getLogs().stream().map(DecisionLogVO::getSourceLogId).toList());
+        assertEquals(java.util.Arrays.asList("exec-old-1", "exec-old-1", "exec-old-1", null), snapshot.getLogs().stream().map(DecisionLogVO::getSourceExecutionId).toList());
+        assertEquals(java.util.Arrays.asList(1, 1, 1, null), snapshot.getLogs().stream().map(DecisionLogVO::getSourceRunAttempt).toList());
+
+        assertEquals(4, allLogs.size());
+        assertEquals(List.of(false, false, false, false), allLogs.stream().map(log -> Boolean.TRUE.equals(log.getReplayed())).toList());
+    }
+
+    @Test
+    void activeRetrySnapshotDoesNotExposeStaleResultFromPreviousExecution() {
+        PricingTask task = new PricingTask();
+        task.setId(22L);
+        task.setShopId(9L);
+        task.setProductId(101L);
+        task.setTaskStatus("RETRYING");
+        task.setCurrentExecutionId("exec-current");
+        task.setCurrentPrice(new BigDecimal("99.00"));
+
+        Product product = new Product();
+        product.setId(101L);
+        product.setTitle("测试商品");
+        product.setCurrentPrice(new BigDecimal("99.00"));
+
+        PricingResult staleResult = new PricingResult();
+        staleResult.setId(202L);
+        staleResult.setTaskId(22L);
+        staleResult.setExecutionId("exec-old");
+        staleResult.setFinalPrice(new BigDecimal("105.00"));
+        staleResult.setExpectedSales(321);
+        staleResult.setExpectedProfit(new BigDecimal("1234.56"));
+        staleResult.setProfitGrowth(new BigDecimal("120.00"));
+
+        when(shopService.getShopIdsByUser(77L)).thenReturn(List.of(9L));
+        when(taskMapper.selectById(22L)).thenReturn(task);
+        when(productMapper.selectById(101L)).thenReturn(product);
+        when(resultMapper.selectOne(any())).thenReturn(staleResult);
+        when(logMapper.selectList(any())).thenReturn(List.of());
+
+        PricingTaskSnapshotVO snapshot = service.getTaskSnapshot(22L, 77L);
+
+        assertEquals(null, snapshot.getDetail().getFinalPrice());
+        assertEquals(null, snapshot.getDetail().getStrategy());
+        assertEquals(List.of(), snapshot.getComparison());
+    }
+
+    @Test
+    void getTaskSnapshotDoesNotReplayHistoricalCompletedCardWhenRawOutputIsEmpty() {
+        PricingTask task = new PricingTask();
+        task.setId(35L);
+        task.setShopId(9L);
+        task.setProductId(101L);
+        task.setTaskStatus("RUNNING");
+        task.setCurrentExecutionId("exec-current");
+
+        Product product = new Product();
+        product.setId(101L);
+        product.setTitle("娴嬭瘯鍟嗗搧");
+
+        AgentRunLog invalidHistory = completedReplayableLog(11L, 35L, "exec-old-1", 1, 1, "bad-history");
+        invalidHistory.setRawOutputJson("{}");
+        AgentRunLog historyMarket = completedReplayableLog(12L, 35L, "exec-old-1", 1, 2, "market");
+        AgentRunLog historyRisk = completedReplayableLog(13L, 35L, "exec-old-1", 1, 3, "risk");
+        AgentRunLog currentManager = completedReplayableLog(14L, 35L, "exec-current", 2, 4, "manager");
+
+        when(shopService.getShopIdsByUser(77L)).thenReturn(List.of(9L));
+        when(taskMapper.selectById(35L)).thenReturn(task);
+        when(productMapper.selectById(101L)).thenReturn(product);
+        when(resultMapper.selectOne(any())).thenReturn(null);
+        when(logMapper.selectList(any())).thenReturn(List.of(invalidHistory, historyMarket, historyRisk, currentManager));
+
+        PricingTaskSnapshotVO snapshot = service.getTaskSnapshot(35L, 77L);
+
+        assertEquals(List.of(2, 3, 4), snapshot.getLogs().stream().map(DecisionLogVO::getDisplayOrder).toList());
+        assertEquals(List.of(true, true, false), snapshot.getLogs().stream().map(DecisionLogVO::getReplayed).toList());
     }
 
     @Test
@@ -526,5 +654,20 @@ class DecisionTaskServiceImplTest {
         assertEquals("failed", logs.get(0).getRunStatus());
         assertEquals(Map.of(), logs.get(0).getSuggestion());
         assertEquals(null, logs.get(0).getAgentOpinion());
+    }
+
+    private static AgentRunLog completedReplayableLog(Long id, Long taskId, String executionId, int runAttempt, int displayOrder, String thinking) {
+        AgentRunLog log = new AgentRunLog();
+        log.setId(id);
+        log.setTaskId(taskId);
+        log.setExecutionId(executionId);
+        log.setRunAttempt(runAttempt);
+        log.setDisplayOrder(displayOrder);
+        log.setRoleName("Agent-" + displayOrder);
+        log.setStage("completed");
+        log.setThinkingSummary(thinking);
+        log.setSuggestionJson("{\"summary\":\"ok\",\"strategy\":\"DIRECT\"}");
+        log.setRawOutputJson("{\"agentOpinion\":{\"summary\":\"" + thinking + "\"}}");
+        return log;
     }
 }

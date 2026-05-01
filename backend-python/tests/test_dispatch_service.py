@@ -8,6 +8,7 @@ from app.db.base import Base
 from app.models.agent_run_log import AgentRunLog
 from app.models.pricing_task import PricingTask
 from app.models.user_llm_config import UserLlmConfig
+from app.repos.log_repo import LogRepo
 from app.repos.task_repo import TaskRepo
 from app.schemas.task import DispatchTaskRequest
 from app.services.dispatch_service import DispatchService
@@ -137,6 +138,81 @@ def test_handle_worker_failure_requeues_until_retry_budget_then_marks_failed():
     assert refreshed.task_status == "FAILED"
     assert refreshed.retry_count == 1
     assert refreshed.failure_reason == "second boom"
+
+
+def test_handle_worker_failure_preserves_completed_analysis_cards_for_manager_only_retry():
+    db = build_session()
+    task = create_task(
+        db,
+        task_id=203,
+        status="RUNNING",
+        retry_count=0,
+    )
+    repo = LogRepo(db)
+    for row_id, (order, raw_output) in enumerate(
+        (
+            (1, {"agent": "data"}),
+            (2, {"agent": "market"}),
+            (3, {"agent": "risk"}),
+        ),
+        start=1,
+    ):
+        db.add(
+            AgentRunLog(
+                id=row_id,
+                task_id=task.id,
+                role_name=f"Agent-{order}",
+                speak_order=order,
+                thought_content="done",
+                thinking_summary="done",
+                evidence_json=[],
+                suggestion_json={"summary": "done"},
+                raw_output_json=raw_output,
+                display_order=order,
+                stage="completed",
+                run_attempt=0,
+            )
+        )
+    db.add(
+        AgentRunLog(
+            id=4,
+            task_id=task.id,
+            role_name="Agent-4",
+            speak_order=4,
+            thought_content="boom",
+            thinking_summary="boom",
+            evidence_json=[],
+            suggestion_json={"error": True, "message": "boom"},
+            display_order=4,
+            stage="failed",
+            run_attempt=0,
+        )
+    )
+    db.commit()
+
+    request = DispatchTaskRequest(
+        taskId=task.id,
+        productId=task.product_id,
+        productIds=[task.product_id],
+        strategyGoal=task.strategy_goal,
+        constraints=task.constraint_text,
+        traceId=task.trace_id,
+    )
+    service = DispatchService(db)
+
+    response = service.handle_worker_failure(request, "manager failed", max_retries=2)
+    refreshed = db.get(PricingTask, task.id)
+    logs = repo.list_by_task_id(task.id)
+
+    assert response.accepted is True
+    assert response.status == "RETRYING"
+    assert refreshed is not None
+    assert refreshed.retry_count == 1
+    assert [(log.display_order, log.stage, log.run_attempt) for log in logs] == [
+        (1, "completed", 0),
+        (2, "completed", 0),
+        (3, "completed", 0),
+    ]
 
 
 def test_recover_pending_tasks_marks_stale_running_failed_after_retry_budget():

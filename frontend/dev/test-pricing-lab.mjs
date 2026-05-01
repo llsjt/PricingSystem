@@ -100,8 +100,18 @@ assert.match(pricingLabSource, /const runningCard = \(\): InternalAgentCardConte
 assert.match(pricingLabSource, /<div class="opinion-grid opinion-grid-head">[\s\S]*席位[\s\S]*建议价[\s\S]*置信度\/风险[\s\S]*证据摘要[\s\S]*处理状态/s, 'renders opinion matrix headers for the unified comparison view')
 assert.match(
   pricingLabSource,
-  /const opinionMatrixRows = computed\(\(\) => agents\.map\(\(agent\) => \{[\s\S]*const opinion = card\?\.opinion \|\| null[\s\S]*priceText:[\s\S]*confidenceText,[\s\S]*evidenceText,[\s\S]*stateText,[\s\S]*stage: card\?\.__stage \|\| 'idle'[\s\S]*\}\)\)/s,
+  /const opinionMatrixRows = computed\(\(\) => agents\.map\(\(agent\) => \{[\s\S]*const displayStatus = getAgentDisplayStatus\(agent\.code\)[\s\S]*priceText:[\s\S]*confidenceText,[\s\S]*evidenceText,[\s\S]*stateText,[\s\S]*stage: displayStatus\.stage[\s\S]*\}\)\)/s,
   'derives opinion matrix rows from normalized opinions and per-card stage state'
+)
+assert.match(
+  pricingLabSource,
+  /const getAgentDisplayStatus[\s\S]*decisionOverview\.value\.isTimelineInconsistent[\s\S]*等待快照对齐/,
+  'uses the shared decision overview to keep manager badge and matrix state aligned during inconsistent timelines'
+)
+assert.match(
+  pricingLabSource,
+  /<el-tag size="small" :type="getAgentStatusType\(agent\.code\)">\s*\{\{ getAgentStatusText\(agent\.code\) \}\}/,
+  'renders agent badges through the shared status helpers'
 )
 assert.match(pricingLabSource, /matrix-state-chip/, 'renders matrix state chips for each seat')
 assert.doesNotMatch(pricingLabSource, /const coerceManagerArbitrationRecord =/, 'does not keep local arbitration record coercion helpers')
@@ -109,5 +119,40 @@ assert.doesNotMatch(pricingLabSource, /const readManagerArbitrationField =/, 'do
 assert.doesNotMatch(pricingLabSource, /const extractManagerArbitrationFields =/, 'does not keep inline arbitration extraction logic')
 assert.match(pricingLabSource, /watch\(\s*\(\) => \[\s*route\.path[\s\S]*route\.query\.productId[\s\S]*route\.query\.shopId[\s\S]*route\.query\.platform[\s\S]*route\.query\.productName[\s\S]*\][\s\S]*syncRoutePrefill/s, 're-applies product prefill when the cached lab route receives new query parameters')
 assert.match(pricingLabSource, /onActivated\(\(\) => \{[\s\S]*syncRoutePrefill\(\)/, 're-applies product prefill when returning to an already-open smart pricing tab')
+assert.match(
+  pricingLabSource,
+  /const finalizeTaskFromServer = async \([\s\S]*liveRevealEnabled\.value = false[\s\S]*clearAgentRevealProgress\(\)[\s\S]*await loadSnapshot\(id, \{ applyLogs: true, mergeLogs: false \}\)[\s\S]*stopRealtime\(\)/,
+  'forces a terminal snapshot reconciliation before realtime teardown'
+)
+assert.match(
+  pricingLabSource,
+  /if \(payload\.type === 'task_completed'\) \{[\s\S]*await finalizeTaskFromServer\(payload\.taskId\)/,
+  'routes task_completed through the shared terminal finalizer'
+)
+assert.match(
+  pricingLabSource,
+  /if \(payload\.type === 'task_failed'\) \{[\s\S]*await finalizeTaskFromServer\(payload\.taskId\)/,
+  'routes task_failed through the shared terminal finalizer'
+)
+assert.doesNotMatch(
+  pricingLabSource,
+  /task_completed[\s\S]*applyLogs: !hasRevealInProgress\(\)|task_failed[\s\S]*applyLogs: !hasRevealInProgress\(\)/,
+  'does not skip terminal snapshot logs just because reveal animation is still in progress'
+)
+assert.match(
+  pricingLabSource,
+  /let snapshotLoadToken = 0/,
+  'tracks a dedicated token for snapshot request ordering'
+)
+assert.match(
+  pricingLabSource,
+  /const requestToken = \+\+snapshotLoadToken[\s\S]*if \(requestToken !== snapshotLoadToken\) return/,
+  'ignores stale snapshot responses that resolve after a newer request'
+)
+assert.match(
+  pricingLabSource,
+  /if \(requestToken === snapshotLoadToken\) applySnapshotComparison/,
+  'applies comparison rows only for the newest snapshot response'
+)
 
 console.log('pricing lab tests passed')

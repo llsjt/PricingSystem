@@ -30,6 +30,10 @@ public class DecisionLogVO {
     private Integer runAttempt;
     private Integer runOrder;
     private Integer displayOrder;
+    private Boolean replayed;
+    private Long sourceLogId;
+    private String sourceExecutionId;
+    private Integer sourceRunAttempt;
     private String stage;
     private String runStatus;
     private String outputSummary;

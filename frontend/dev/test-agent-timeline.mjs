@@ -81,6 +81,16 @@ assert.deepEqual(
 
 assert.deepEqual(
   filterLatestAgentRunRound([
+    { id: 1, agentCode: 'DATA_ANALYSIS', displayOrder: 1, stage: 'completed', runAttempt: 2 },
+    { id: 2, agentCode: 'MARKET_INTEL', displayOrder: 2, stage: 'running' },
+    { id: 3, agentCode: 'RISK_CONTROL', displayOrder: 3, stage: 'completed' }
+  ]).map((log) => log.id),
+  [1],
+  'treats any explicit runAttempt as authoritative and drops logs from attempts that lack that explicit marker'
+)
+
+assert.deepEqual(
+  filterLatestAgentRunRound([
     { id: 1, agentCode: 'DATA_ANALYSIS', displayOrder: 1, stage: 'completed' },
     { id: 2, agentCode: 'MARKET_INTEL', displayOrder: 2, stage: 'running' }
   ]).map((log) => log.id),
@@ -90,15 +100,15 @@ assert.deepEqual(
 
 assert.deepEqual(
   filterLatestAgentRunRound([
-    { id: 1, agentCode: 'DATA_ANALYSIS', displayOrder: 1, stage: 'running', runAttempt: 0 },
-    { id: 2, agentCode: 'DATA_ANALYSIS', displayOrder: 1, stage: 'completed', runAttempt: 0 },
-    { id: 3, agentCode: 'MARKET_INTEL', displayOrder: 2, stage: 'running', runAttempt: 0 },
-    { id: 4, agentCode: 'MARKET_INTEL', displayOrder: 2, stage: 'failed', runAttempt: 0 },
-    { id: 5, agentCode: 'DATA_ANALYSIS', displayOrder: 1, stage: 'running', runAttempt: 0 },
-    { id: 6, agentCode: 'DATA_ANALYSIS', displayOrder: 1, stage: 'failed', runAttempt: 0 }
+    { id: 1, agentCode: 'DATA_ANALYSIS', displayOrder: 1, stage: 'running' },
+    { id: 2, agentCode: 'DATA_ANALYSIS', displayOrder: 1, stage: 'completed' },
+    { id: 3, agentCode: 'MARKET_INTEL', displayOrder: 2, stage: 'running' },
+    { id: 4, agentCode: 'MARKET_INTEL', displayOrder: 2, stage: 'failed' },
+    { id: 5, agentCode: 'DATA_ANALYSIS', displayOrder: 1, stage: 'running' },
+    { id: 6, agentCode: 'DATA_ANALYSIS', displayOrder: 1, stage: 'failed' }
   ]).map((log) => log.id),
   [5, 6],
-  'infers latest retry round from repeated first-agent running logs when runAttempt was not incremented'
+  'infers the latest retry round only when every log lacks an explicit attempt increment'
 )
 
 assert.equal(shouldKeepRevealEnabledAfterRefresh('RUNNING', true), true, 'keeps reveal mode while task is running')
