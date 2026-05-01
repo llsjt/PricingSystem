@@ -4,6 +4,8 @@ import { filterLatestAgentRunRound, hasExplicitAgentRunAttempt, resolveLatestAge
 import { AGENT_ORDER_BY_CODE, getLogAgentCode } from './decisionDisplay'
 
 export type SnapshotAgentStage = 'running' | 'completed' | 'failed'
+export type SnapshotExistingCard = (AgentCardContent & { __stage?: SnapshotAgentStage }) | null
+export type SnapshotExistingCardMap = Partial<Record<PricingAgentCode, SnapshotExistingCard>>
 
 export interface SnapshotAgentCard {
   code: PricingAgentCode
@@ -103,4 +105,31 @@ export const buildSnapshotAgentCards = (logs: readonly DecisionLogItem[]): Snaps
     missingAgentCodes: SNAPSHOT_AGENT_ORDER.filter((code) => !visibleCodes.has(code)),
     cards
   }
+}
+
+export const applySnapshotCardsPreservingTerminalState = (
+  existingCards: SnapshotExistingCardMap,
+  snapshot: SnapshotAgentCards
+): SnapshotExistingCardMap => {
+  const nextCards: SnapshotExistingCardMap = {
+    ...existingCards
+  }
+
+  snapshot.cards.forEach(({ code, stage, card }) => {
+    const existingCard = existingCards[code]
+    if (stage === 'running') {
+      if (!existingCard || existingCard.__stage === 'running') nextCards[code] = null
+      return
+    }
+    if (!card) {
+      nextCards[code] = null
+      return
+    }
+    nextCards[code] = {
+      ...card,
+      __stage: stage
+    }
+  })
+
+  return nextCards
 }

@@ -89,14 +89,29 @@ const ARCHIVE_AGENT_MARK: Record<PricingAgentCode, string> = {
   DATA_ANALYSIS: '数',
   MARKET_INTEL: '市',
   RISK_CONTROL: '控',
-  MANAGER_COORDINATOR: '裁'
+  MANAGER_COORDINATOR: '协'
+}
+
+const ARCHIVE_AGENT_NAME: Record<PricingAgentCode, string> = {
+  DATA_ANALYSIS: '数据分析智能体',
+  MARKET_INTEL: '市场情报智能体',
+  RISK_CONTROL: '风险控制智能体',
+  MANAGER_COORDINATOR: '经理决策智能体'
 }
 
 const ARCHIVE_AGENT_ROLE_LABEL: Record<PricingAgentCode, string> = {
-  DATA_ANALYSIS: '数据测算',
-  MARKET_INTEL: '市场校准',
-  RISK_CONTROL: '风险约束',
-  MANAGER_COORDINATOR: '分歧裁决'
+  DATA_ANALYSIS: '数据分析',
+  MARKET_INTEL: '市场情报',
+  RISK_CONTROL: '风险控制',
+  MANAGER_COORDINATOR: '经理决策'
+}
+
+const OPINION_STATUS_LABEL_MAP: Record<string, string> = {
+  PROPOSED: '已提出',
+  ACCEPTED: '已采纳',
+  REJECTED: '未采纳',
+  MERGED: '已合并',
+  BLOCKED: '已阻断'
 }
 
 const trimText = (value: unknown) => {
@@ -193,6 +208,34 @@ const buildArchiveArbitrationBlock = (opinion: NormalizedAgentOpinion | null, lo
 const getEvidencePreview = (lines: string[], summary: string | null, reason: string | null) => {
   const preferred = trimText(summary) || trimText(lines[0]) || trimText(reason)
   return preferred || '-'
+}
+
+const formatMatrixConfidencePercent = (value: number | null) => {
+  if (value == null) return '-'
+  const percent = value > 1 ? value : value * 100
+  return `${Math.max(0, Math.min(100, percent)).toFixed(0)}%`
+}
+
+const inferMatrixConfidence = (opinion: NormalizedAgentOpinion | null) => {
+  if (opinion?.confidence != null) return opinion.confidence
+  if (opinion?.arbitration?.consensusScore != null) return opinion.arbitration.consensusScore
+  const riskLevel = String(opinion?.riskLevel || '').trim().toUpperCase()
+  if (riskLevel === 'LOW' || riskLevel === '低') return 0.85
+  if (riskLevel === 'MEDIUM' || riskLevel === '中') return 0.65
+  if (riskLevel === 'HIGH' || riskLevel === '高') return 0.45
+  return null
+}
+
+const matrixEvidencePreview = (
+  suggestion: Record<string, unknown>,
+  evidenceLines: string[],
+  opinion: NormalizedAgentOpinion | null,
+  reason: string | null
+) => {
+  const painPoint = trimText(suggestion.merchantPainPoint)
+  if (painPoint) return painPoint
+  if (opinion?.summary) return opinion.summary
+  return getEvidencePreview(evidenceLines, null, reason)
 }
 
 const buildComparisonChartOption = (rows: DecisionComparisonItem[]) => ({
@@ -334,12 +377,13 @@ export const useArchivePage = () => {
         agentCode,
         agentMark: agentCode ? ARCHIVE_AGENT_MARK[agentCode] : '智',
         roleLabel: agentCode ? ARCHIVE_AGENT_ROLE_LABEL[agentCode] : '协同记录',
-        agentName: getLogAgentName(log),
+        agentName: agentCode ? ARCHIVE_AGENT_NAME[agentCode] : getLogAgentName(log),
         runStatusType: getRunStatusType(log.runStatus),
         runStatusText: getRunStatusText(log.runStatus),
         failureSummary: getLogFailureSummary(log),
         thinking: getLogThinking(log),
         evidenceLines,
+        suggestion: log.suggestion && typeof log.suggestion === 'object' ? log.suggestion : {},
         suggestionHighlightLabel: getArchiveHighlightLabel(agentCode),
         suggestionHighlightPrice,
         suggestionLines: suggestionLines.length ? suggestionLines : getLogSuggestionLines(log),
@@ -355,11 +399,14 @@ export const useArchivePage = () => {
 
     const matrixRows = cards.map((card) => {
       const evidenceCount = card.evidenceLines.filter((line) => trimText(line) && line !== '暂无依据内容').length
-      const confidenceText = formatConfidenceText(card.opinion?.confidence ?? null)
-      const riskText = trimText(card.opinion?.riskLevel ? toNaturalChinese(card.opinion.riskLevel) : card.log.riskLevel ? toNaturalChinese(card.log.riskLevel) : '')
-      const confidenceSummary = [confidenceText ? `置信 ${confidenceText}` : null, riskText ? `风险 ${riskText}` : null]
-        .filter((item): item is string => Boolean(item))
-        .join(' / ') || card.runStatusText
+      const confidenceText = formatMatrixConfidencePercent(inferMatrixConfidence(card.opinion))
+      const stateText = card.arbitration?.decisionSummary
+        ? '已裁决'
+        : isFailedLog(card.log)
+          ? '执行失败'
+          : card.opinion?.status
+            ? (OPINION_STATUS_LABEL_MAP[card.opinion.status] || card.opinion.status)
+            : card.runStatusText
 
       return {
         key: `${card.agentCode || 'archive'}-${card.log.id}`,
@@ -367,10 +414,10 @@ export const useArchivePage = () => {
         roleLabel: card.roleLabel,
         agentMark: card.agentMark,
         priceText: card.suggestionHighlightPrice != null ? formatCurrency(card.suggestionHighlightPrice) : '-',
-        confidenceText: confidenceSummary,
+        confidenceText,
         evidenceCount,
-        evidenceText: getEvidencePreview(card.evidenceLines, card.opinion?.summary || null, card.reason || null),
-        stateText: card.arbitration?.decisionSummary ? '已裁决' : isFailedLog(card.log) ? '执行失败' : card.runStatusText,
+        evidenceText: matrixEvidencePreview(card.suggestion, card.evidenceLines, card.opinion, card.reason || null),
+        stateText,
         stateType: card.arbitration?.decisionSummary ? 'success' : card.runStatusType
       }
     })
@@ -386,7 +433,7 @@ export const useArchivePage = () => {
           || (managerCard?.suggestionHighlightPrice != null ? formatCurrency(managerCard.suggestionHighlightPrice) : '-')
       },
       {
-        label: '主导席位',
+        label: '主导智能体',
         value: managerCard?.arbitration?.selectedAgent || managerCard?.agentName || '-'
       },
       {
@@ -922,7 +969,6 @@ export const useArchivePage = () => {
     batchStatusTagType,
     batchStatusText,
     canDeleteTask,
-    canRetryTask,
     chartRef,
     clearTaskSelection,
     comparisonData,
@@ -981,6 +1027,7 @@ export const useArchivePage = () => {
     tasks,
     toNaturalChinese,
     total,
+    canRetryTask,
     viewDetails,
     applyPrice
   }

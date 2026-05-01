@@ -28,7 +28,7 @@ await build({
 })
 
 const { normalizeAgentOpinion } = await import(`${pathToFileURL(agentOpinionOutfile).href}?${Date.now()}`)
-const { getManagerArbitrationBlock } = await import(`${pathToFileURL(decisionDisplayOutfile).href}?${Date.now()}`)
+const { getManagerArbitrationBlock, getSuggestionLines } = await import(`${pathToFileURL(decisionDisplayOutfile).href}?${Date.now()}`)
 
 const normalizedNewOpinion = normalizeAgentOpinion({
   agentCode: 'MANAGER_COORDINATOR',
@@ -142,5 +142,49 @@ assert.ok(
   [...arbitrationBlock.disagreementLines, ...arbitrationBlock.decisionLines].every((line) => !line.includes('[object Object]')),
   'decision display never renders arbitration object arrays as [object Object]'
 )
+
+const merchantDataLines = getSuggestionLines('DATA_ANALYSIS', {
+  recommendedPrice: 22,
+  expectedSales: 96,
+  expectedProfit: 620,
+  priceChangeRate: 0.1,
+  profitGrowth: 120,
+  merchantPainPoint: '判断调价后销量和利润是否划算',
+  merchantAction: '优先查看利润变化'
+})
+assert.ok(merchantDataLines.includes('调价幅度：+10.00%'), 'shows merchant-facing price change rate')
+assert.ok(merchantDataLines.includes('利润变化：+¥120.00'), 'shows merchant-facing profit growth')
+assert.ok(merchantDataLines.includes('解决痛点：判断调价后销量和利润是否划算'), 'shows merchant pain point')
+assert.ok(merchantDataLines.includes('下一步：优先查看利润变化'), 'shows recommended merchant action')
+
+const merchantRiskLines = getSuggestionLines('RISK_CONTROL', {
+  recommendedPrice: 18.5,
+  safeFloorPrice: 18.5,
+  pass: false,
+  needManualReview: true,
+  merchantPainPoint: '确认是否会亏损、低毛利或突破价格红线',
+  merchantAction: '按安全底价或约束修正后再提交人工审核'
+})
+assert.ok(merchantRiskLines.includes('安全底价：¥18.50'), 'shows risk guardrail floor')
+assert.ok(merchantRiskLines.includes('是否需要人工复核：是'), 'shows manual review need')
+assert.ok(merchantRiskLines.includes('下一步：按安全底价或约束修正后再提交人工审核'), 'shows risk next action')
+
+const merchantManagerLines = getSuggestionLines('MANAGER_COORDINATOR', {
+  finalPrice: 21.5,
+  expectedSales: 98,
+  expectedProfit: 650,
+  profitGrowth: 150,
+  strategy: '人工审核',
+  merchantPainPoint: '给出商家可落地的最终价格、预期收益和复核动作',
+  merchantAction: '进入人工审核，核对库存、活动节奏后再应用建议价'
+})
+assert.ok(merchantManagerLines.includes('利润变化：+¥150.00'), 'shows final profit delta')
+assert.ok(merchantManagerLines.includes('解决痛点：给出商家可落地的最终价格、预期收益和复核动作'), 'shows manager pain point')
+assert.ok(merchantManagerLines.includes('下一步：进入人工审核，核对库存、活动节奏后再应用建议价'), 'shows manager next action')
+
+const genericFallbackLines = getSuggestionLines(null, {
+  priceChangeRate: 0.1
+})
+assert.ok(genericFallbackLines.includes('调价幅度：10.00%'), 'formats rate-like fallback fields as percentages instead of currency')
 
 console.log('decision display tests passed')

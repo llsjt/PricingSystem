@@ -28,9 +28,10 @@ class FakeTask:
 
 
 class FakeRepo:
-    def __init__(self, task):
+    def __init__(self, task, *, mark_failed_result: int = 1):
         self.task = task
         self.calls: list[tuple] = []
+        self.mark_failed_result = mark_failed_result
 
     def get_by_id(self, task_id: int):
         self.calls.append(("get_by_id", task_id))
@@ -46,7 +47,7 @@ class FakeRepo:
 
     def mark_failed_if_owner(self, task_id: int, execution_id: str, reason: str | None) -> int:
         self.calls.append(("mark_failed_if_owner", task_id, execution_id, reason))
-        return 1
+        return self.mark_failed_result
 
     def mark_failed_force(self, task_id: int, reason: str | None) -> int:
         self.calls.append(("mark_failed_force", task_id, reason))
@@ -71,6 +72,8 @@ class FakeDispatchService:
 
     def handle_task_failure(self, task_id: int, execution_id: str, reason: str, max_retries: int):
         self.failure_calls.append((task_id, execution_id, reason, max_retries))
+        if isinstance(self.failure_response, Exception):
+            raise self.failure_response
         return self.failure_response
 
 
@@ -254,6 +257,54 @@ def test_on_message_publishes_failed_when_agent_retry_budget_is_exhausted():
     assert dispatch.failure_calls[0][2:] == ("bad output", 1)
     assert all(call[0] != "mark_failed_if_owner" for call in repo.calls)
     assert any(call[0] == "TASK_FAILED" for call in progress.calls)
+
+
+def test_on_message_does_not_publish_failed_when_execution_owner_changed():
+    repo = FakeRepo(FakeTask(task_status="QUEUED"))
+    dispatch = FakeDispatchService(
+        side_effect=RuntimeError("old execution failed"),
+        failure_response=SimpleNamespace(accepted=False, status="RUNNING", message="execution owner changed"),
+    )
+    progress = FakeProgressService()
+    service = RabbitMqWorkerService(
+        repo=repo,
+        dispatch_service=dispatch,
+        progress_service=progress,
+        settings=_build_settings(agent_max_retries=2),
+        sleep_func=_no_sleep,
+    )
+    message = FakeMessage(json.dumps({"taskId": 24}).encode())
+
+    asyncio.run(service.on_message(message))
+
+    assert message.acked == 1
+    assert message.nacked == []
+    assert len(dispatch.failure_calls) == 1
+    assert all(call[0] != "TASK_FAILED" for call in progress.calls)
+
+
+def test_on_message_retry_scheduling_fallback_does_not_publish_failed_when_owner_changed():
+    repo = FakeRepo(FakeTask(task_status="QUEUED"), mark_failed_result=0)
+    dispatch = FakeDispatchService(
+        side_effect=RuntimeError("old execution failed"),
+        failure_response=RuntimeError("retry scheduling unavailable"),
+    )
+    progress = FakeProgressService()
+    service = RabbitMqWorkerService(
+        repo=repo,
+        dispatch_service=dispatch,
+        progress_service=progress,
+        settings=_build_settings(agent_max_retries=2),
+        sleep_func=_no_sleep,
+    )
+    message = FakeMessage(json.dumps({"taskId": 25}).encode())
+
+    asyncio.run(service.on_message(message))
+
+    assert message.acked == 1
+    assert message.nacked == []
+    assert any(call[0] == "mark_failed_if_owner" for call in repo.calls)
+    assert all(call[0] != "TASK_FAILED" for call in progress.calls)
 
 
 def test_truncate_limits_error_text_to_255_characters():

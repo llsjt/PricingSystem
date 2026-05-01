@@ -146,6 +146,23 @@ def test_handle_worker_failure_does_not_override_new_execution_owner():
     task.current_execution_id = "exec-new"
     db.add(task)
     db.commit()
+    db.add(
+        AgentRunLog(
+            id=1,
+            task_id=task.id,
+            execution_id="exec-new",
+            role_name="Agent-1",
+            speak_order=1,
+            thought_content="new execution running",
+            thinking_summary="new execution running",
+            evidence_json=[],
+            suggestion_json={},
+            display_order=1,
+            stage="running",
+            run_attempt=0,
+        )
+    )
+    db.commit()
     request = DispatchTaskRequest(
         taskId=task.id,
         productId=task.product_id,
@@ -159,6 +176,7 @@ def test_handle_worker_failure_does_not_override_new_execution_owner():
     response = service.handle_worker_failure(request, "old execution failed", max_retries=2, execution_id="exec-old")
 
     refreshed = db.get(PricingTask, task.id)
+    logs = LogRepo(db).list_by_task_id(task.id)
     assert response.accepted is False
     assert response.status == "RUNNING"
     assert refreshed is not None
@@ -166,6 +184,7 @@ def test_handle_worker_failure_does_not_override_new_execution_owner():
     assert refreshed.retry_count == 0
     assert refreshed.current_execution_id == "exec-new"
     assert refreshed.failure_reason is None
+    assert [(log.execution_id, log.stage, log.run_attempt) for log in logs] == [("exec-new", "running", 0)]
 
 
 def test_handle_worker_failure_preserves_completed_analysis_cards_for_manager_only_retry():

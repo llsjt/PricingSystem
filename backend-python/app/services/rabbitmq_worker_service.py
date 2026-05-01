@@ -284,8 +284,9 @@ class RabbitMqWorkerService:
                     )
                 except Exception:
                     logger.exception("Failed to schedule retry after task execution failure")
-                    await asyncio.to_thread(repo.mark_failed_if_owner, task_id, execution_id, reason)
-                    await self.progress_service.publish("TASK_FAILED", task_id, execution_id, {"reason": reason})
+                    updated = await asyncio.to_thread(repo.mark_failed_if_owner, task_id, execution_id, reason)
+                    if int(updated or 0) > 0:
+                        await self.progress_service.publish("TASK_FAILED", task_id, execution_id, {"reason": reason})
                     await message.ack()
                     return
 
@@ -293,7 +294,9 @@ class RabbitMqWorkerService:
                     await message.nack(requeue=True)
                     return
 
-                await self.progress_service.publish("TASK_FAILED", task_id, execution_id, {"reason": reason})
+                terminal_status = str(getattr(response, "status", "")).upper()
+                if terminal_status in {"FAILED", "CANCELLED"}:
+                    await self.progress_service.publish("TASK_FAILED", task_id, execution_id, {"reason": reason})
                 await message.ack()
             finally:
                 await self._stop_heartbeat(heartbeat_task)

@@ -1,4 +1,5 @@
 import json
+import threading
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -158,7 +159,7 @@ def _valid_market_output() -> dict:
         "confidence": 0.78,
         "thinking": "market-thinking",
         "summary": "market-summary",
-        "competitorSamples": 5,
+        "validCompetitorCount": 5,
     }
 
 
@@ -238,6 +239,30 @@ class _RaisingTask:
 
     def execute_sync(self, agent=None, context=None, tools=None):
         raise self._error
+
+
+class _CoordinatedTask:
+    """Mock Task whose completion order can be controlled by test events."""
+
+    def __init__(
+        self,
+        raw_json: str,
+        *,
+        wait_for: threading.Event | None = None,
+        signal: threading.Event | None = None,
+    ):
+        self._raw_json = raw_json
+        self._wait_for = wait_for
+        self._signal = signal
+        self.captured_context: str | None = None
+
+    def execute_sync(self, agent=None, context=None, tools=None):
+        self.captured_context = context
+        if self._wait_for is not None:
+            assert self._wait_for.wait(timeout=2), "coordinated task timed out"
+        if self._signal is not None:
+            self._signal.set()
+        return _FakeTaskOutput(self._raw_json)
 
 
 def _fake_bundle(outputs: list) -> CrewBundle:
@@ -817,6 +842,156 @@ def test_orchestration_service_runs_only_manager_without_writing_replay_complete
     assert current_attempt_analysis_logs == []
 
 
+def test_manager_retry_accepts_replayed_upstream_opinion_id(monkeypatch):
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=56)
+    task.retry_count = 1
+    db.commit()
+    repo = LogRepo(db)
+    replayed_outputs = (
+        (1, _valid_data_output(), "DATA_ANALYSIS", "Data Agent", "PRICE_PROPOSAL", "PROPOSED"),
+        (2, _valid_market_output(), "MARKET_INTEL", "Market Agent", "MARKET_ASSESSMENT", "PROPOSED"),
+        (3, _valid_risk_output(), "RISK_CONTROL", "Risk Agent", "RISK_ASSESSMENT", "BLOCKED"),
+    )
+    for order, raw_output, agent_code, agent_name, kind, status in replayed_outputs:
+        repo.append_card(
+            task_id=task.id,
+            agent_name=agent_name,
+            display_order=order,
+            thinking_summary="done",
+            evidence=[],
+            suggestion={"summary": "done"},
+            raw_output=_attach_agent_opinion(
+                task.id,
+                raw_output,
+                agent_code,
+                agent_name,
+                kind=kind,
+                status=status,
+            ),
+            run_attempt=0,
+        )
+
+    manager_output = _valid_manager_output()
+    manager_output["selectedAgent"] = "RISK_CONTROL"
+    bundle = _fake_bundle([
+        _valid_data_output(),
+        _valid_market_output(),
+        _valid_risk_output(),
+        manager_output,
+    ])
+    bundle.tasks[0].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("data task should not rerun"))  # type: ignore[assignment]
+    bundle.tasks[1].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("market task should not rerun"))  # type: ignore[assignment]
+    bundle.tasks[2].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("risk task should not rerun"))  # type: ignore[assignment]
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: bundle,
+    )
+
+    service = OrchestrationService(db)
+    service.result_tool = SimpleNamespace(write_final_result=lambda payload: None)
+    service.run(_payload(task.id))
+
+    risk_opinion_id = _opinion_id(task.id, "RISK_CONTROL", 0)
+    logs = LogRepo(db).list_by_task_id(task.id)
+    manager_log = next(log for log in logs if log.display_order == 4 and log.stage == "completed")
+    manager_opinion = manager_log.raw_output_json["agentOpinion"]
+
+    assert manager_log.run_attempt == 1
+    assert manager_opinion["opinionId"] == _opinion_id(task.id, "MANAGER_COORDINATOR", 1)
+    assert manager_opinion["relations"]["acceptedOpinionIds"] == [risk_opinion_id]
+    assert manager_opinion["relations"]["selectedOpinionIds"] == [risk_opinion_id]
+
+
+def test_manager_retry_remaps_llm_relation_attempt_to_replayed_opinion_id(monkeypatch):
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=57)
+    task.retry_count = 1
+    db.commit()
+    repo = LogRepo(db)
+    replayed_outputs = (
+        (1, _valid_data_output(), "DATA_ANALYSIS", "Data Agent", "PRICE_PROPOSAL", "PROPOSED"),
+        (2, _valid_market_output(), "MARKET_INTEL", "Market Agent", "MARKET_ASSESSMENT", "PROPOSED"),
+        (3, _valid_risk_output(), "RISK_CONTROL", "Risk Agent", "RISK_ASSESSMENT", "BLOCKED"),
+    )
+    for order, raw_output, agent_code, agent_name, kind, status in replayed_outputs:
+        repo.append_card(
+            task_id=task.id,
+            agent_name=agent_name,
+            display_order=order,
+            thinking_summary="done",
+            evidence=[],
+            suggestion={"summary": "done"},
+            raw_output=_attach_agent_opinion(
+                task.id,
+                raw_output,
+                agent_code,
+                agent_name,
+                kind=kind,
+                status=status,
+            ),
+            run_attempt=0,
+        )
+
+    manager_output = _valid_manager_output()
+    manager_output["selectedAgent"] = "RISK_CONTROL"
+    risk_opinion_id = _opinion_id(task.id, "RISK_CONTROL", 0)
+    bad_retry_risk_opinion_id = _opinion_id(task.id, "RISK_CONTROL", 1)
+    manager_opinion = _attach_agent_opinion(
+        task.id,
+        manager_output,
+        "MANAGER_COORDINATOR",
+        "Manager Agent",
+        kind="ARBITRATION",
+        status="ACCEPTED",
+    )["agentOpinion"]
+    manager_opinion["opinionId"] = _opinion_id(task.id, "MANAGER_COORDINATOR", 1)
+    manager_opinion["runAttempt"] = 1
+    manager_opinion["relations"]["dependsOnOpinionIds"] = [
+        _opinion_id(task.id, "DATA_ANALYSIS", 0),
+        _opinion_id(task.id, "MARKET_INTEL", 0),
+        risk_opinion_id,
+    ]
+    manager_opinion["relations"]["acceptedOpinionIds"] = [bad_retry_risk_opinion_id]
+    manager_opinion["relations"]["selectedOpinionIds"] = [bad_retry_risk_opinion_id]
+    manager_output["agentOpinion"] = manager_opinion
+
+    bundle = _fake_bundle([
+        _valid_data_output(),
+        _valid_market_output(),
+        _valid_risk_output(),
+        manager_output,
+    ])
+    bundle.tasks[0].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("data task should not rerun"))  # type: ignore[assignment]
+    bundle.tasks[1].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("market task should not rerun"))  # type: ignore[assignment]
+    bundle.tasks[2].execute_sync = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("risk task should not rerun"))  # type: ignore[assignment]
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: bundle,
+    )
+
+    service = OrchestrationService(db)
+    service.result_tool = SimpleNamespace(write_final_result=lambda payload: None)
+    service.run(_payload(task.id))
+
+    logs = LogRepo(db).list_by_task_id(task.id)
+    manager_log = next(log for log in logs if log.display_order == 4 and log.stage == "completed")
+    normalized_relations = manager_log.raw_output_json["agentOpinion"]["relations"]
+
+    assert normalized_relations["acceptedOpinionIds"] == [risk_opinion_id]
+    assert normalized_relations["selectedOpinionIds"] == [risk_opinion_id]
+
+
 def test_orchestration_validation_failure_writes_failed_card_and_blocks_result(monkeypatch):
     """数据分析 Agent 输出校验失败时，并行同轮已完成的分析卡片应保留，Manager 不启动。"""
     db = build_session(PricingTask.__table__, AgentRunLog.__table__)
@@ -920,6 +1095,44 @@ def test_orchestration_service_writes_three_analysis_running_cards_before_collec
         (2, "running"),
         (3, "running"),
     ]
+
+
+def test_parallel_analysis_writes_success_cards_together_in_agent_order(monkeypatch):
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=310)
+    market_done = threading.Event()
+    risk_done = threading.Event()
+    data_task = _CoordinatedTask(_json_output(_valid_data_output()), wait_for=risk_done)
+    market_task = _CoordinatedTask(_json_output(_valid_market_output()), signal=market_done)
+    risk_task = _CoordinatedTask(_json_output(_valid_risk_output()), wait_for=market_done, signal=risk_done)
+    manager_task = _FakeTask(_json_output(_valid_manager_output()))
+    fake_agent = SimpleNamespace(tools=[])
+    bundle = CrewBundle(
+        crew=None,  # type: ignore[arg-type]
+        tasks=[data_task, market_task, risk_task, manager_task],  # type: ignore[arg-type]
+        agents_by_order={1: fake_agent, 2: fake_agent, 3: fake_agent, 4: fake_agent},  # type: ignore[arg-type]
+    )
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: bundle,
+    )
+
+    service = OrchestrationService(db)
+    service.result_tool = SimpleNamespace(write_final_result=lambda payload: None)
+    service.run(_payload(task.id))
+
+    analysis_completed_in_insert_order = [
+        log.display_order
+        for log in db.query(AgentRunLog).order_by(AgentRunLog.id.asc()).all()
+        if log.stage == "completed" and log.display_order in {1, 2, 3}
+    ]
+    assert analysis_completed_in_insert_order == [1, 2, 3]
+
 
 def test_orchestration_service_only_replays_missing_analysis_agents_before_running_manager(monkeypatch):
     db = build_session(PricingTask.__table__, AgentRunLog.__table__)

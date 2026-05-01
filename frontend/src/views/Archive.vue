@@ -341,9 +341,9 @@
           <section v-if="archiveEvidenceBoard" class="panel-card embedded-panel archive-evidence-board">
             <div class="section-head archive-evidence-head">
               <div class="section-title">
-                <span class="archive-evidence-kicker">Decision Evidence</span>
-                <h3>决策证据板</h3>
-                <p>{{ archiveEvidenceBoard.decisionSummary || '汇总四个席位的证据、处理状态与最终裁决。' }}</p>
+                <span class="archive-evidence-kicker">智能决策流</span>
+                <h3>意见矩阵</h3>
+                <p>{{ archiveEvidenceBoard.decisionSummary || '复盘智能定价中四个智能体的价格建议、信心、商家问题与最终裁决。' }}</p>
               </div>
             </div>
             <div class="archive-evidence-overview">
@@ -371,10 +371,10 @@
             </div>
             <div class="archive-evidence-matrix archive-matrix-grid">
               <div class="archive-evidence-matrix-head archive-matrix-grid">
-                <span>席位</span>
+                <span>智能体</span>
                 <span>建议价</span>
-                <span>置信度/风险</span>
-                <span>证据摘要</span>
+                <span>置信度</span>
+                <span>解决问题</span>
                 <span>处理状态</span>
               </div>
               <div
@@ -431,19 +431,19 @@
                 <template v-else>
                   <div class="log-content archive-agent-output-grid">
                     <section class="log-section archive-thinking-block">
-                      <h4>思考过程</h4>
+                      <h4>商家结论</h4>
                       <p>{{ card.thinking }}</p>
                     </section>
 
                     <section class="log-section">
-                      <h4>依据</h4>
+                      <h4>关键依据</h4>
                       <ul class="info-list archive-evidence-list">
                         <li v-for="(line, idx) in card.evidenceLines" :key="`e-${card.log.id}-${idx}`">{{ line }}</li>
                       </ul>
                     </section>
 
                     <section class="log-section archive-suggestion-block">
-                      <h4>建议</h4>
+                      <h4>下一步建议</h4>
                       <div v-if="card.suggestionHighlightPrice != null" class="result-strip archive-suggestion-highlight">
                         <span class="price-label">{{ card.suggestionHighlightLabel }}</span>
                         <span class="price-value">
@@ -457,7 +457,7 @@
                     </section>
 
                     <section v-if="card.reason" class="log-section archive-reason-block">
-                      <h4>建议原因</h4>
+                      <h4>为什么这样定价</h4>
                       <p>{{ card.reason }}</p>
                     </section>
                   </div>
@@ -578,8 +578,8 @@ const {
   batchQueryParams,
   batchStatusTagType,
   batchStatusText,
-  canDeleteTask,
   canRetryTask,
+  canDeleteTask,
   chartRef,
   clearTaskSelection,
   comparisonData,

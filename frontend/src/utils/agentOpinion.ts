@@ -9,10 +9,10 @@ import type {
 import { formatCurrency } from './formatters'
 
 const AGENT_NAME_BY_CODE: Record<PricingAgentCode, string> = {
-  DATA_ANALYSIS: '数据分析智能体',
-  MARKET_INTEL: '市场情报智能体',
-  RISK_CONTROL: '风险控制智能体',
-  MANAGER_COORDINATOR: '经理协调智能体'
+  DATA_ANALYSIS: '经营收益测算',
+  MARKET_INTEL: '竞品市场判断',
+  RISK_CONTROL: '利润底线校验',
+  MANAGER_COORDINATOR: '定价决策经理'
 }
 
 type AgentOpinionSource =

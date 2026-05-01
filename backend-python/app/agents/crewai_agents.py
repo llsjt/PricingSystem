@@ -7,7 +7,7 @@ CrewAI agent definitions.
 from crewai import Agent
 
 from app.core.config import get_settings
-from app.tools.crewai_tools import estimate_profit, estimate_sales_volume, evaluate_risk_rules
+from app.tools.crewai_tools import estimate_profit, estimate_sales_volume
 
 
 def build_crewai_agents(*, analysis_llm: object, manager_llm: object) -> dict[str, Agent]:
@@ -35,13 +35,13 @@ def build_crewai_agents(*, analysis_llm: object, manager_llm: object) -> dict[st
         goal=(
             "基于商品近30天经营数据评估价格弹性与利润-销量关系，"
             "给出数据驱动的建议价格和价格区间。"
-            "必须用工具计算销量和利润，不允许凭空编造数字。"
+            "必须依据 Python 预计算的销量和利润结果，不允许凭空编造数字。"
         ),
         backstory=(
             "你是一位资深电商数据分析师，擅长根据经营指标估算调价后的销量和利润。"
-            "你的结论必须可追溯到工具计算结果。"
+            "你的结论必须可追溯到预计算结果。"
         ),
-        tools=[estimate_sales_volume, estimate_profit],
+        tools=[],
         **analysis_kwargs,
     )
 
@@ -57,7 +57,7 @@ def build_crewai_agents(*, analysis_llm: object, manager_llm: object) -> dict[st
         role="风险控制专家",
         goal="对候选价格执行硬约束校验，包括成本底线、最低利润率、价格上下限和最大折扣率，判断价格是否安全可执行。",
         backstory="你是一位严格的风控专家，职责是阻止亏损、超限折扣或违反业务规则的定价。",
-        tools=[evaluate_risk_rules, estimate_profit],
+        tools=[],
         **analysis_kwargs,
     )
 

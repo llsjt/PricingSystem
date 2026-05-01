@@ -11,7 +11,7 @@ import type {
   PricingAgentCode
 } from '../api/decision'
 import { normalizeAgentOpinion } from './agentOpinion'
-import { formatCurrency, formatPercent } from './formatters.ts'
+import { formatCurrency, formatPercent, formatSignedCurrency, formatSignedPercent } from './formatters.ts'
 
 export type DecisionDisplayLine = string
 export interface ManagerArbitrationBlock {
@@ -38,10 +38,10 @@ export const AGENT_ORDER_BY_CODE: Record<PricingAgentCode, number> = {
 }
 
 export const AGENT_NAME_BY_CODE: Record<PricingAgentCode, string> = {
-  DATA_ANALYSIS: '数据分析智能体',
-  MARKET_INTEL: '市场情报智能体',
-  RISK_CONTROL: '风险控制智能体',
-  MANAGER_COORDINATOR: '经理协调智能体'
+  DATA_ANALYSIS: '经营收益测算',
+  MARKET_INTEL: '竞品市场判断',
+  RISK_CONTROL: '利润底线校验',
+  MANAGER_COORDINATOR: '定价决策经理'
 }
 
 const LEGACY_AGENT_CODE_PATTERNS: Array<[PricingAgentCode, RegExp]> = [
@@ -156,11 +156,11 @@ const formatPrimitive = (key: string, value: unknown): string => {
   const numeric = toNumber(value)
   if (numeric != null) {
     const lowered = key.toLowerCase()
-    if (lowered.includes('price') || lowered.includes('profit') || lowered.includes('amount')) {
-      return formatCurrency(numeric)
-    }
     if (lowered.includes('rate')) {
       return formatPercent(numeric)
+    }
+    if (lowered.includes('price') || lowered.includes('profit') || lowered.includes('amount')) {
+      return formatCurrency(numeric)
     }
     return String(numeric)
   }
@@ -453,10 +453,14 @@ export const getSuggestionLines = (
   if (code === 'DATA_ANALYSIS') {
     const recommendedPrice = toNumber(suggestion.recommendedPrice)
     if (recommendedPrice != null) lines.push(`建议定价：${formatCurrency(recommendedPrice)}`)
+    const priceChangeRate = toNumber(suggestion.priceChangeRate)
+    if (priceChangeRate != null) lines.push(`调价幅度：${formatSignedPercent(priceChangeRate)}`)
     const expectedSales = toNumber(suggestion.expectedSales)
     if (expectedSales != null) lines.push(`预期销量：${expectedSales}`)
     const expectedProfit = toNumber(suggestion.expectedProfit)
     if (expectedProfit != null) lines.push(`预期利润：${formatCurrency(expectedProfit)}`)
+    const profitGrowth = toNumber(suggestion.profitGrowth)
+    if (profitGrowth != null) lines.push(`利润变化：${formatSignedCurrency(profitGrowth)}`)
     const expectedProfitRate = toNumber(suggestion.expectedProfitRate)
     if (expectedProfitRate != null) lines.push(`预期利润率：${formatPercent(expectedProfitRate)}`)
   }
@@ -467,9 +471,8 @@ export const getSuggestionLines = (
     const marketScore = toNumber(suggestion.marketScore)
     if (marketScore != null) lines.push(`市场接受度评分：${marketScore.toFixed(1)}`)
     if (suggestion.dataQuality != null) lines.push(`数据质量：${formatDataQualityText(suggestion.dataQuality)}`)
-    if (suggestion.pricingPosition != null) lines.push(`当前价格位置：${toNaturalChinese(suggestion.pricingPosition)}`)
     const usedCompetitorCount = toNumber(suggestion.usedCompetitorCount)
-    if (usedCompetitorCount != null) lines.push(`纳入分析竞品：${usedCompetitorCount}`)
+    if (usedCompetitorCount != null) lines.push(`有效竞品样本：${usedCompetitorCount}`)
     if (suggestion.source != null) lines.push(`竞品来源：${toNaturalChinese(suggestion.source)}`)
     if (suggestion.sourceStatus != null) lines.push(`竞品状态：${toNaturalChinese(suggestion.sourceStatus)}`)
     if (suggestion.evidenceSummary != null) lines.push(`证据摘要：${toNaturalChinese(suggestion.evidenceSummary)}`)
@@ -487,7 +490,10 @@ export const getSuggestionLines = (
   if (code === 'RISK_CONTROL') {
     const recommendedPrice = toNumber(suggestion.recommendedPrice)
     if (recommendedPrice != null) lines.push(`风控建议价：${formatCurrency(recommendedPrice)}`)
+    const safeFloorPrice = toNumber(suggestion.safeFloorPrice)
+    if (safeFloorPrice != null) lines.push(`安全底价：${formatCurrency(safeFloorPrice)}`)
     if (typeof suggestion.pass === 'boolean') lines.push(`是否自动通过：${formatBoolean(suggestion.pass)}`)
+    if (typeof suggestion.needManualReview === 'boolean') lines.push(`是否需要人工复核：${formatBoolean(suggestion.needManualReview)}`)
     if (suggestion.riskLevel != null) lines.push(`风险等级：${toNaturalChinese(suggestion.riskLevel)}`)
     if (suggestion.action != null) lines.push(`建议动作：${toNaturalChinese(suggestion.action)}`)
   }
@@ -499,11 +505,21 @@ export const getSuggestionLines = (
     if (expectedSales != null) lines.push(`预期销量：${expectedSales}`)
     const expectedProfit = toNumber(suggestion.expectedProfit)
     if (expectedProfit != null) lines.push(`预期利润：${formatCurrency(expectedProfit)}`)
+    const profitGrowth = toNumber(suggestion.profitGrowth)
+    if (profitGrowth != null) lines.push(`利润变化：${formatSignedCurrency(profitGrowth)}`)
     if (suggestion.strategy != null) lines.push(`执行策略：${toNaturalChinese(suggestion.strategy)}`)
   }
 
+  if (suggestion.merchantPainPoint != null) {
+    if (code !== 'MARKET_INTEL') lines.push(`解决痛点：${toNaturalChinese(suggestion.merchantPainPoint)}`)
+  }
+
+  if (suggestion.merchantAction != null) {
+    lines.push(`下一步：${toNaturalChinese(suggestion.merchantAction)}`)
+  }
+
   if (suggestion.summary != null) {
-    lines.push(`建议说明：${toNaturalChinese(suggestion.summary)}`)
+    if (code !== 'MARKET_INTEL') lines.push(`建议说明：${toNaturalChinese(suggestion.summary)}`)
   }
 
   if (lines.length > 0) {
@@ -515,6 +531,8 @@ export const getSuggestionLines = (
     recommendedPrice: '建议定价',
     expectedSales: '预期销量',
     expectedProfit: '预期利润',
+    priceChangeRate: '调价幅度',
+    profitGrowth: '利润变化',
     expectedProfitRate: '预期利润率',
     confidenceScore: '置信度评分',
     marketScore: '市场接受度评分',
@@ -541,6 +559,8 @@ export const getSuggestionLines = (
     action: '建议动作',
     finalPrice: '最终建议价',
     strategy: '执行策略',
+    merchantPainPoint: '解决痛点',
+    merchantAction: '下一步',
     error: '是否异常',
     message: '异常信息'
   }

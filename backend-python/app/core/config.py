@@ -68,17 +68,17 @@ class Settings(BaseSettings):
 
     llm_retry_backoff_seconds: float = Field(default=1.2, alias="LLM_RETRY_BACKOFF_SECONDS")
 
-    crewai_llm_timeout_seconds: int = Field(default=240, alias="CREWAI_LLM_TIMEOUT_SECONDS")
+    crewai_llm_timeout_seconds: int = Field(default=60, alias="CREWAI_LLM_TIMEOUT_SECONDS")
     crewai_llm_connect_timeout_seconds: int = Field(default=10, alias="CREWAI_LLM_CONNECT_TIMEOUT_SECONDS")
-    crewai_llm_read_timeout_seconds: int = Field(default=180, alias="CREWAI_LLM_READ_TIMEOUT_SECONDS")
-    crewai_llm_max_retries: int = Field(default=1, alias="CREWAI_LLM_MAX_RETRIES")
+    crewai_llm_read_timeout_seconds: int = Field(default=45, alias="CREWAI_LLM_READ_TIMEOUT_SECONDS")
+    crewai_llm_max_retries: int = Field(default=0, alias="CREWAI_LLM_MAX_RETRIES")
 
     analysis_agent_max_iter: int = Field(
         default=4,
         validation_alias=AliasChoices("ANALYSIS_AGENT_MAX_ITER", "FAST_AGENT_MAX_ITER"),
     )
     analysis_agent_max_execution_seconds: int = Field(
-        default=300,
+        default=75,
         validation_alias=AliasChoices("ANALYSIS_AGENT_MAX_EXEC_SECONDS", "FAST_AGENT_MAX_EXEC_SECONDS"),
     )
     manager_agent_max_iter: int = Field(default=6, alias="MANAGER_AGENT_MAX_ITER")

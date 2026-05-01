@@ -7,10 +7,13 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const pricingLabSource = await readFile(join(root, 'src', 'views', 'PricingLab.vue'), 'utf8')
 const pricingLabSnapshotSource = await readFile(join(root, 'src', 'utils', 'pricingLabSnapshot.ts'), 'utf8')
 
-assert.match(pricingLabSource, /decision-overview-grid/, 'renders a dedicated top overview grid for decision progress')
+assert.doesNotMatch(pricingLabSource, /decision-overview-grid/, 'does not render the removed top overview grid')
+assert.doesNotMatch(pricingLabSource, /decision-overview-card/, 'does not render the removed top overview cards')
 assert.match(pricingLabSource, /parallel-analysis-panel/, 'splits the analysis agents into a dedicated parallel analysis area')
 assert.match(pricingLabSource, /manager-arbitration-panel/, 'renders a separate manager arbitration area')
-assert.match(pricingLabSource, /数据、市场、风控三个分析智能体会同时展示/, 'describes the analysis area as parallel visual lanes')
+assert.match(pricingLabSource, />智能决策流</, 'uses Chinese-only copy for the decision flow badge')
+assert.doesNotMatch(pricingLabSource, />AI 决策流</, 'does not expose the AI abbreviation in the decision flow badge')
+assert.match(pricingLabSource, /先并行回答收益、市场和风险三个商家最关心的问题/, 'describes the analysis area as merchant-focused parallel lanes')
 assert.doesNotMatch(pricingLabSource, /按固定顺序纵向展示/, 'does not describe the analysis area as a serial vertical sequence')
 assert.match(pricingLabSource, /\.parallel-analysis-grid\{grid-template-columns:1fr\}/, 'renders analysis agents as a vertical stack')
 assert.match(
@@ -23,67 +26,24 @@ assert.match(
   /if \(analysisAgentCodeSet\.has\(code\)\) \{[\s\S]*streamArrivedCards\.add\(code\)[\s\S]*beginReveal\(code\)[\s\S]*showCard\(code, card, stage\)[\s\S]*return[\s\S]*queueRevealCardRequest/,
   'bypasses the serial reveal queue for completed analysis cards'
 )
-assert.match(pricingLabSource, /const COMPACT_AGENT_LINE_LIMIT = 2/, 'keeps the compact agent line limit at two rows by default')
 assert.match(
   pricingLabSource,
-  /const compactLines = \([\s\S]*if \(lines\.length <= COMPACT_AGENT_LINE_LIMIT\) return lines[\s\S]*if \(isAgentSectionExpanded\(code, section\)\) return lines[\s\S]*return lines\.slice\(0, COMPACT_AGENT_LINE_LIMIT\)/,
-  'compacts evidence and suggestion sections through a shared helper'
+  /const visibleEvidenceLines = \(code: PricingAgentCode\) => \{[\s\S]*const lines = evidenceLines\(code\)[\s\S]*if \(shouldAnimate\(code\) && revealStages\[code\] === 'evidence'\) \{[\s\S]*return lines\.slice\(0, Math\.max\(ensureRevealLineCounts\(code\)\.evidence, 1\)\)[\s\S]*\}[\s\S]*return lines[\s\S]*\}/,
+  'shows all evidence lines after the reveal animation instead of compacting them'
 )
 assert.match(
   pricingLabSource,
-  /const visibleEvidenceLines = \(code: PricingAgentCode\) => \{[\s\S]*const lines = evidenceLines\(code\)[\s\S]*if \(shouldAnimate\(code\) && revealStages\[code\] === 'evidence'\) \{[\s\S]*return lines\.slice\(0, Math\.max\(ensureRevealLineCounts\(code\)\.evidence, 1\)\)[\s\S]*\}[\s\S]*if \(shouldAnimate\(code\) && revealStages\[code\] !== 'done'\) return lines[\s\S]*return compactLines\(lines, code, 'evidence'\)[\s\S]*\}/,
-  'uses compact lines for completed evidence while keeping all revealed evidence visible until animation is done'
+  /const visibleSuggestionLines = \(code: PricingAgentCode\) => \{[\s\S]*const lines = suggestionLines\(code\)[\s\S]*if \(shouldAnimate\(code\) && revealStages\[code\] !== 'done'\) \{[\s\S]*return lines\.slice\(0, Math\.max\(ensureRevealLineCounts\(code\)\.suggestion, 1\)\)[\s\S]*\}[\s\S]*return lines[\s\S]*\}/,
+  'shows all suggestion lines after the reveal animation instead of compacting them'
 )
-assert.match(
-  pricingLabSource,
-  /const visibleSuggestionLines = \(code: PricingAgentCode\) => \{[\s\S]*const lines = suggestionLines\(code\)[\s\S]*if \(shouldAnimate\(code\) && revealStages\[code\] !== 'done'\) \{[\s\S]*return lines\.slice\(0, Math\.max\(ensureRevealLineCounts\(code\)\.suggestion, 1\)\)[\s\S]*\}[\s\S]*return compactLines\(lines, code, 'suggestion'\)[\s\S]*\}/,
-  'uses compact lines for completed suggestions while preserving reveal-line truncation during animation'
-)
-assert.match(
-  pricingLabSource,
-  /const canToggleEvidenceLines = \(code: PricingAgentCode\) =>[\s\S]*evidenceLines\(code\)\.length > COMPACT_AGENT_LINE_LIMIT[\s\S]*\(!shouldAnimate\(code\) \|\| revealStages\[code\] === 'done'\)/,
-  'only shows the evidence toggle when more than two lines exist and animation is complete'
-)
-assert.match(
-  pricingLabSource,
-  /const canToggleSuggestionLines = \(code: PricingAgentCode\) =>[\s\S]*suggestionLines\(code\)\.length > COMPACT_AGENT_LINE_LIMIT[\s\S]*\(!shouldAnimate\(code\) \|\| revealStages\[code\] === 'done'\)/,
-  'only shows the suggestion toggle when more than two lines exist and animation is complete'
-)
-assert.match(
-  pricingLabSource,
-  /const getSectionToggleText = \([\s\S]*if \(isAgentSectionExpanded\(code, section\)\) return '收起'[\s\S]*return `展开 \$\{hiddenLineCount\(total\)\} 条`/,
-  'uses concise expand and collapse toggle copy'
-)
-assert.match(
-  pricingLabSource,
-  /<div v-if="canShowEvidence\(agent\.code\)" class="agent-section-head">[\s\S]*<h4>依据<\/h4>[\s\S]*<el-button[\s\S]*v-if="canToggleEvidenceLines\(agent\.code\)"[\s\S]*class="agent-section-toggle"[\s\S]*@click="toggleAgentSection\(agent\.code, 'evidence'\)"[\s\S]*getSectionToggleText\(agent\.code, 'evidence', evidenceLines\(agent\.code\)\.length\)/,
-  'renders an evidence section header row with the compact toggle button wiring'
-)
-assert.match(
-  pricingLabSource,
-  /<div v-if="canShowSuggestion\(agent\.code\)" class="agent-section-head">[\s\S]*<h4>建议<\/h4>[\s\S]*<el-button[\s\S]*v-if="canToggleSuggestionLines\(agent\.code\)"[\s\S]*class="agent-section-toggle"[\s\S]*@click="toggleAgentSection\(agent\.code, 'suggestion'\)"[\s\S]*getSectionToggleText\(agent\.code, 'suggestion', suggestionLines\(agent\.code\)\.length\)/,
-  'renders a suggestion section header row with the compact toggle button wiring'
-)
-assert.match(
-  pricingLabSource,
-  /const clearExpandedAgentSections = \(\) => \{[\s\S]*delete expandedAgentSections\[agent\.code\][\s\S]*\}/,
-  'tracks expanded agent sections with a dedicated reset helper'
-)
-assert.match(
-  pricingLabSource,
-  /const clearRevealState = \(\) => \{[\s\S]*clearExpandedAgentSections\(\)[\s\S]*\}/,
-  'clears expanded section state when reveal state resets'
-)
-assert.match(
-  pricingLabSource,
-  /const clearAgentRevealProgress = \(\) => \{[\s\S]*clearExpandedAgentSections\(\)[\s\S]*\}/,
-  'clears expanded section state when switching reveal progress between attempts'
-)
-assert.match(
-  pricingLabSource,
-  /const resetState = \(\) => \{[\s\S]*clearRevealState\(\)[\s\S]*\}/,
-  'resets task state through a reveal reset that also clears expanded sections'
-)
+assert.doesNotMatch(pricingLabSource, /COMPACT_AGENT_LINE_LIMIT/, 'removes the compact line limit')
+assert.doesNotMatch(pricingLabSource, /compactLines/, 'removes compact line slicing')
+assert.doesNotMatch(pricingLabSource, /canToggleEvidenceLines/, 'removes the evidence collapse toggle guard')
+assert.doesNotMatch(pricingLabSource, /canToggleSuggestionLines/, 'removes the suggestion collapse toggle guard')
+assert.doesNotMatch(pricingLabSource, /getSectionToggleText/, 'removes expand/collapse toggle copy')
+assert.doesNotMatch(pricingLabSource, /toggleAgentSection/, 'removes section expand/collapse click handlers')
+assert.doesNotMatch(pricingLabSource, /expandedAgentSections/, 'removes expanded section state')
+assert.doesNotMatch(pricingLabSource, /agent-section-toggle/, 'removes the visible expand/collapse buttons')
 assert.match(pricingLabSource, /opinion-matrix-panel/, 'renders a dedicated opinion matrix panel')
 assert.match(pricingLabSource, /opinion-grid/, 'uses a grid layout for the opinion matrix')
 assert.match(pricingLabSource, /opinionMatrixRows = computed/, 'derives matrix rows from reactive card state')
@@ -97,7 +57,17 @@ assert.match(pricingLabSource, /\.\.\.extractManagerArbitrationFields\(card\)/, 
 assert.match(pricingLabSnapshotSource, /\.\.\.extractManagerArbitrationFields\(log\)/, 'normalizes manager arbitration fields on snapshot logs through the shared util')
 assert.match(pricingLabSnapshotSource, /agentOpinion: log\.agentOpinion \|\| null/, 'hydrates snapshot cards with raw agentOpinion payloads')
 assert.match(pricingLabSource, /const runningCard = \(\): InternalAgentCardContent => \(\{[\s\S]*opinion: null[\s\S]*\.\.\.extractManagerArbitrationFields\(null\)/, 'initializes empty running cards with the shared arbitration shape')
-assert.match(pricingLabSource, /<div class="opinion-grid opinion-grid-head">[\s\S]*席位[\s\S]*建议价[\s\S]*置信度\/风险[\s\S]*证据摘要[\s\S]*处理状态/s, 'renders opinion matrix headers for the unified comparison view')
+assert.match(pricingLabSource, /<div class="opinion-grid opinion-grid-head">[\s\S]*智能体[\s\S]*建议价[\s\S]*置信度[\s\S]*解决问题[\s\S]*处理状态/s, 'renders opinion matrix headers for the unified comparison view')
+assert.doesNotMatch(pricingLabSource, /<span>席位<\/span>/, 'renames the opinion matrix seat column to agent')
+assert.match(pricingLabSource, /name: '数据分析智能体'/, 'uses the requested data analysis agent name')
+assert.match(pricingLabSource, /name: '市场情报智能体'/, 'uses the requested market intelligence agent name')
+assert.match(pricingLabSource, /name: '风险控制智能体'/, 'uses the requested risk control agent name')
+assert.match(pricingLabSource, /name: '经理决策智能体'/, 'uses the requested manager decision agent name')
+assert.doesNotMatch(pricingLabSource, /name: '经营收益测算'|name: '竞品市场判断'|name: '利润底线校验'|name: '定价决策经理'/, 'does not keep old problem-framed labels as agent names')
+assert.doesNotMatch(pricingLabSource, /置信度\/风险/, 'does not mix risk labels into the confidence column header')
+assert.match(pricingLabSource, /const formatMatrixConfidencePercent = \(value: number \| null\) =>/, 'formats matrix confidence through a percentage helper')
+assert.match(pricingLabSource, /const inferMatrixConfidence = \(opinion: NormalizedAgentOpinion \| null\) =>/, 'infers missing matrix confidence as a percentage value')
+assert.doesNotMatch(pricingLabSource, /confidenceText[\s\S]{0,180}toNaturalChinese\(opinion\.riskLevel\)/, 'does not render risk words in the confidence column')
 assert.match(
   pricingLabSource,
   /const opinionMatrixRows = computed\(\(\) => agents\.map\(\(agent\) => \{[\s\S]*const displayStatus = getAgentDisplayStatus\(agent\.code\)[\s\S]*priceText:[\s\S]*confidenceText,[\s\S]*evidenceText,[\s\S]*stateText,[\s\S]*stage: displayStatus\.stage[\s\S]*\}\)\)/s,

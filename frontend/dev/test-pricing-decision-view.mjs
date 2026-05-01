@@ -96,12 +96,33 @@ assert.deepEqual(
     isTimelineInconsistent: false,
     canShowManagerCompleted: true,
     analysisStatusText: '3/3 已完成',
-    managerStatusText: 'Manager 已完成',
-    primaryStatusText: 'Manager 已完成',
+    managerStatusText: '经理已完成',
+    primaryStatusText: '经理已完成',
     finalPrice: 29.9,
     finalPriceLabel: '最终建议价'
   },
   'surfaces the manager completion state and final suggested price once arbitration is done'
+)
+
+const runningManagerCards = emptyCards()
+runningManagerCards.DATA_ANALYSIS = { __stage: 'completed' }
+runningManagerCards.MARKET_INTEL = { __stage: 'completed' }
+runningManagerCards.RISK_CONTROL = { __stage: 'completed' }
+runningManagerCards.MANAGER_COORDINATOR = { __stage: 'running' }
+const runningManagerOverview = buildDecisionStatusOverview(runningManagerCards, null)
+assert.equal(runningManagerOverview.managerStatusText, '经理仲裁中', 'uses Chinese copy while manager arbitration is running')
+assert.equal(runningManagerOverview.primaryStatusText, '经理仲裁中', 'uses Chinese primary copy while manager arbitration is running')
+assert.doesNotMatch(
+  `${runningManagerOverview.managerStatusText}${runningManagerOverview.primaryStatusText}`,
+  /Manager/,
+  'does not expose English manager wording in running state'
+)
+
+const managerDoneOverview = buildDecisionStatusOverview(managerDoneCards, 29.9)
+assert.doesNotMatch(
+  `${managerDoneOverview.managerStatusText}${managerDoneOverview.primaryStatusText}`,
+  /Manager/,
+  'does not expose English manager wording in completed state'
 )
 
 const managerAheadCards = emptyCards()

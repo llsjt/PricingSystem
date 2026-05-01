@@ -174,25 +174,17 @@ class MarketAgentOutput(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     thinking: str
     summary: str
-    competitor_samples: int = Field(alias="competitorSamples")
+    valid_competitor_count: int = Field(alias="validCompetitorCount")
     competitors: list[CompetitorItem] | None = None
     confidence_score: float | None = Field(default=None, ge=0.0, le=1.0, alias="confidenceScore")
     market_score: float | None = Field(default=None, ge=0.0, alias="marketScore")
     source: str | None = None
     source_status: str | None = Field(default=None, alias="sourceStatus")
-    raw_item_count: int | None = Field(default=None, alias="rawItemCount")
-    filtered_item_count: int | None = Field(default=None, alias="filteredItemCount")
-    valid_competitor_count: int | None = Field(default=None, alias="validCompetitorCount")
     data_quality: str | None = Field(default=None, alias="dataQuality")
     quality_reasons: list[str] | None = Field(default=None, alias="qualityReasons")
-    pricing_position: str | None = Field(default=None, alias="pricingPosition")
-    used_competitor_count: int | None = Field(default=None, alias="usedCompetitorCount")
     risk_notes: str | None = Field(default=None, alias="riskNotes")
     evidence_summary: str | None = Field(default=None, alias="evidenceSummary")
     brand_breakdown: list[dict] | None = Field(default=None, alias="brandBreakdown")
-    shop_type_breakdown: list[dict] | None = Field(default=None, alias="shopTypeBreakdown")
-    sales_weighted_average: float | None = Field(default=None, alias="salesWeightedAverage")
-    sales_weighted_median: float | None = Field(default=None, alias="salesWeightedMedian")
     promotion_density: dict | None = Field(default=None, alias="promotionDensity")
     agent_opinion: AgentOpinionV1 | None = Field(default=None, alias="agentOpinion")
 

@@ -25,11 +25,11 @@ export const buildDecisionStatusOverview = (
     primaryStatusText = '结果同步中'
     managerStatusText = '等待快照对齐'
   } else if (canShowManagerCompleted) {
-    primaryStatusText = 'Manager 已完成'
-    managerStatusText = 'Manager 已完成'
+    primaryStatusText = '经理已完成'
+    managerStatusText = '经理已完成'
   } else if (managerStage === 'running') {
-    primaryStatusText = 'Manager 仲裁中'
-    managerStatusText = 'Manager 仲裁中'
+    primaryStatusText = '经理仲裁中'
+    managerStatusText = '经理仲裁中'
   } else if (analysisCompletedCount === ANALYSIS_AGENT_CODES.length) {
     primaryStatusText = '3/3 完成，等待经理仲裁'
   } else if (analysisRunningCount > 0) {

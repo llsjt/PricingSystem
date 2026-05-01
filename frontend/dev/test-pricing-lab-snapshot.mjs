@@ -18,7 +18,10 @@ await build({
   logLevel: 'silent'
 })
 
-const { buildSnapshotAgentCards } = await import(`${pathToFileURL(outfile).href}?${Date.now()}`)
+const {
+  buildSnapshotAgentCards,
+  applySnapshotCardsPreservingTerminalState
+} = await import(`${pathToFileURL(outfile).href}?${Date.now()}`)
 
 const singleCompleted = buildSnapshotAgentCards([
   {
@@ -174,5 +177,52 @@ assert.deepEqual(
   ],
   'keeps Java projected replay/fresh cards together when they share the page-effective runAttempt'
 )
+
+const preservedTerminalState = applySnapshotCardsPreservingTerminalState(
+  {
+    DATA_ANALYSIS: {
+      thinking: 'stream failed',
+      evidence: [],
+      suggestion: { error: true, message: '[DATA_ANALYSIS] 输出结构校验失败' },
+      agentOpinion: null,
+      reasonWhy: null,
+      __stage: 'failed'
+    },
+    MARKET_INTEL: {
+      thinking: 'stream success',
+      evidence: [{ label: '竞品', value: 8 }],
+      suggestion: { recommendedPrice: 290 },
+      agentOpinion: null,
+      reasonWhy: null,
+      __stage: 'completed'
+    },
+    RISK_CONTROL: null,
+    MANAGER_COORDINATOR: null
+  },
+  buildSnapshotAgentCards([
+    {
+      id: 41,
+      agentCode: 'DATA_ANALYSIS',
+      displayOrder: 1,
+      stage: 'failed',
+      thinking: '[DATA_ANALYSIS] 输出结构校验失败',
+      suggestion: { error: true, message: '[DATA_ANALYSIS] 输出结构校验失败' },
+      createdAt: '2026-05-01T00:05:00Z'
+    },
+    {
+      id: 42,
+      agentCode: 'MARKET_INTEL',
+      displayOrder: 2,
+      stage: 'running',
+      createdAt: '2026-05-01T00:05:01Z'
+    }
+  ])
+)
+
+assert.equal(preservedTerminalState.DATA_ANALYSIS?.__stage, 'failed')
+assert.equal(preservedTerminalState.MARKET_INTEL?.__stage, 'completed')
+assert.equal(preservedTerminalState.MARKET_INTEL?.suggestion.recommendedPrice, 290)
+assert.equal(preservedTerminalState.RISK_CONTROL, null)
+assert.equal(preservedTerminalState.MANAGER_COORDINATOR, null)
 
 console.log('pricing lab snapshot tests passed')

@@ -95,9 +95,9 @@
     <section v-else-if="activeStep === 1" class="panel-card decision-chat-panel">
       <div class="section-head decision-chat-head">
         <div class="decision-chat-title">
-          <span class="decision-chat-kicker">AI 决策流</span>
+          <span class="decision-chat-kicker">智能决策流</span>
           <h2>多智能体决策</h2>
-          <p>三路分析会并行呈现，经理在汇总后给出最终建议。</p>
+          <p>先看每个智能体解决的商家问题，再确认价格、收益变化和风险底线。</p>
         </div>
         <div class="toolbar decision-toolbar">
           <el-button v-if="canCancelTask" @click="cancelTask">取消任务</el-button>
@@ -107,43 +107,23 @@
           <el-button type="primary" :disabled="!canViewReport" @click="activeStep = 2">查看结果报告</el-button>
         </div>
       </div>
-      <div class="decision-overview-grid">
-        <article class="decision-overview-card">
-          <span class="decision-overview-label">当前阶段</span>
-          <strong>{{ decisionOverview.primaryStatusText }}</strong>
-        </article>
-        <article class="decision-overview-card">
-          <span class="decision-overview-label">并行分析</span>
-          <strong>{{ decisionOverview.analysisStatusText }}</strong>
-        </article>
-        <article class="decision-overview-card">
-          <span class="decision-overview-label">经理仲裁</span>
-          <strong>{{ decisionOverview.managerStatusText }}</strong>
-        </article>
-        <article class="decision-overview-card">
-          <span class="decision-overview-label">{{ decisionOverview.finalPriceLabel }}</span>
-          <strong v-if="decisionOverview.finalPrice != null"><span class="price-unit">¥</span><CountUp :value="decisionOverview.finalPrice" :duration="700" /></strong>
-          <strong v-else>-</strong>
-        </article>
-      </div>
       <section class="opinion-matrix-panel">
         <div class="opinion-matrix-head">
           <div>
             <h3>意见矩阵</h3>
-            <p>四个席位的价格判断、证据摘要与处理状态会在这里统一对齐。</p>
+            <p>汇总四个智能体的价格建议、信心与处理状态。</p>
           </div>
         </div>
         <div class="opinion-grid opinion-grid-head">
-          <span>席位</span>
+          <span>智能体</span>
           <span>建议价</span>
-          <span>置信度/风险</span>
-          <span>证据摘要</span>
+          <span>置信度</span>
+          <span>解决问题</span>
           <span>处理状态</span>
         </div>
         <div v-for="row in opinionMatrixRows" :key="row.code" class="opinion-grid opinion-grid-row" :class="`is-${row.stage}`">
           <div class="opinion-seat">
             <strong>{{ row.name }}</strong>
-            <span>{{ row.role }}</span>
           </div>
           <span class="opinion-cell opinion-price-cell">{{ row.priceText }}</span>
           <span class="opinion-cell">{{ row.confidenceText }}</span>
@@ -177,21 +157,11 @@
                   </el-tag>
                 </div>
                 <template v-if="isCardCompleted(agent.code)">
-                  <h4>分析摘要</h4>
+                  <h4>商家结论</h4>
                   <TypewriterText v-if="shouldAnimate(agent.code)" :text="state.cards[agent.code]?.thinking || '-'" :speed="typewriterSpeed" class="thinking" @done="markThinkingDone(agent.code)" />
                   <p v-else class="thinking">{{ state.cards[agent.code]?.thinking || '-' }}</p>
                   <div v-if="canShowEvidence(agent.code)" class="agent-section-head">
-                    <h4>依据</h4>
-                    <el-button
-                      v-if="canToggleEvidenceLines(agent.code)"
-                      link
-                      type="primary"
-                      size="small"
-                      class="agent-section-toggle"
-                      @click="toggleAgentSection(agent.code, 'evidence')"
-                    >
-                      {{ getSectionToggleText(agent.code, 'evidence', evidenceLines(agent.code).length) }}
-                    </el-button>
+                    <h4>关键依据</h4>
                   </div>
                   <ul v-if="canShowEvidence(agent.code)" class="evidence-list">
                     <li v-for="(line, index) in visibleEvidenceLines(agent.code)" :key="`${agent.code}-e-${index}`" :class="{ 'fade-in-item': shouldAnimate(agent.code) }" :style="{ '--i': index }">
@@ -200,17 +170,7 @@
                     </li>
                   </ul>
                   <div v-if="canShowSuggestion(agent.code)" class="agent-section-head">
-                    <h4>建议</h4>
-                    <el-button
-                      v-if="canToggleSuggestionLines(agent.code)"
-                      link
-                      type="primary"
-                      size="small"
-                      class="agent-section-toggle"
-                      @click="toggleAgentSection(agent.code, 'suggestion')"
-                    >
-                      {{ getSectionToggleText(agent.code, 'suggestion', suggestionLines(agent.code).length) }}
-                    </el-button>
+                    <h4>下一步建议</h4>
                   </div>
                   <div v-if="canShowSuggestion(agent.code) && getHighlightPrice(agent.code) != null" class="result-strip">
                     <span class="price-label">{{ getHighlightLabel(agent.code) }}</span>
@@ -223,7 +183,7 @@
                     </li>
                   </ul>
                   <template v-if="canShowReason(agent.code) && agent.code === managerAgent.code && state.cards[agent.code]?.reasonWhy">
-                    <h4>为什么给出这个建议</h4>
+                    <h4>为什么这样定价</h4>
                     <TypewriterText v-if="isActiveReason(agent.code)" :text="state.cards[agent.code]?.reasonWhy || ''" :speed="typewriterSpeed" @done="markReasonDone(agent.code)" />
                     <p v-else>{{ state.cards[agent.code]?.reasonWhy }}</p>
                   </template>
@@ -369,10 +329,10 @@ import { sanitizeErrorMessage } from '../utils/error'
 import { getFailureSummary } from '../utils/failureSummary'
 import { hasConfiguredLlmApiKey } from '../utils/llmConfigResponse'
 import { clearRevealQueue, createRevealQueueState, finishReveal, isActiveReveal, queueRevealCardRequest } from '../utils/agentRevealQueue'
-import { formatEvidenceValue, getManagerArbitrationBlock, getSuggestionLines, normalizeAgentCode, toNaturalChinese } from '../utils/decisionDisplay'
+import { formatEvidenceValue, getManagerArbitrationBlock, getSuggestionLines, normalizeAgentCode } from '../utils/decisionDisplay'
 import { createDefaultPricingConstraintForm, serializePricingConstraints, validatePricingConstraintForm } from '../utils/pricingConstraints'
 import { ANALYSIS_AGENT_CODES, buildDecisionStatusOverview, MANAGER_AGENT_CODE } from '../utils/pricingDecisionView'
-import { buildSnapshotAgentCards } from '../utils/pricingLabSnapshot'
+import { buildSnapshotAgentCards, applySnapshotCardsPreservingTerminalState } from '../utils/pricingLabSnapshot'
 import { PRICING_GOAL_OPTIONS } from '../utils/pricingTaskOptions'
 import { shouldKeepRevealEnabledAfterRefresh } from '../utils/revealRefresh'
 import TypewriterText from '../components/TypewriterText.vue'
@@ -382,18 +342,21 @@ interface ApiResponse<T> { code: number; data: T; message?: string }
 interface ProductOption { id: number; productName: string }
 type AgentStage = 'running' | 'completed' | 'failed'
 type AgentRevealStage = 'thinking' | 'evidence' | 'suggestion' | 'reason' | 'done'
-type AgentDetailSection = 'evidence' | 'suggestion'
 interface RevealLineCounts { evidence: number; suggestion: number }
 type InternalAgentCardContent = AgentCardContent & { __stage?: AgentStage; opinion?: NormalizedAgentOpinion | null }
 interface PendingRevealCard { card: AgentCardContent | null; stage: AgentStage }
 interface SnapshotLoadOptions { applyLogs?: boolean; mergeLogs?: boolean }
 
-const agents = [{ code: 'DATA_ANALYSIS', name: '数据分析智能体', order: 1 }, { code: 'MARKET_INTEL', name: '市场情报智能体', order: 2 }, { code: 'RISK_CONTROL', name: '风险控制智能体', order: 3 }, { code: 'MANAGER_COORDINATOR', name: '经理协调智能体', order: 4 }] as const
+const agents = [
+  { code: 'DATA_ANALYSIS', name: '数据分析智能体', order: 1 },
+  { code: 'MARKET_INTEL', name: '市场情报智能体', order: 2 },
+  { code: 'RISK_CONTROL', name: '风险控制智能体', order: 3 },
+  { code: 'MANAGER_COORDINATOR', name: '经理决策智能体', order: 4 }
+] as const
 const agentRevealOrder = agents.map((agent) => agent.code) as PricingAgentCode[]
 const analysisAgentCodeSet = new Set<PricingAgentCode>(ANALYSIS_AGENT_CODES as readonly PricingAgentCode[])
 const goalOptions = PRICING_GOAL_OPTIONS
 const emptyCards = () => ({ DATA_ANALYSIS: null, MARKET_INTEL: null, RISK_CONTROL: null, MANAGER_COORDINATOR: null }) as Record<PricingAgentCode, InternalAgentCardContent | null>
-const COMPACT_AGENT_LINE_LIMIT = 2
 const typewriterSpeed = 24
 
 const shopStore = useShopStore()
@@ -425,7 +388,6 @@ const revealQueue = reactive(createRevealQueueState<PricingAgentCode>())
 const pendingRevealCards = reactive({} as Partial<Record<PricingAgentCode, PendingRevealCard>>)
 const revealStages = reactive({} as Partial<Record<PricingAgentCode, AgentRevealStage>>)
 const revealLineCounts = reactive({} as Partial<Record<PricingAgentCode, RevealLineCounts>>)
-const expandedAgentSections = reactive({} as Partial<Record<PricingAgentCode, Partial<Record<AgentDetailSection, boolean>>>>)
 
 const normalizeReplayMeta = (card?: AgentCardContent | null) => ({
   replayed: card?.replayed === true ? true : undefined,
@@ -493,24 +455,47 @@ const getAgentDisplayStatus = (code: PricingAgentCode) => {
 }
 const getAgentStatusText = (code: PricingAgentCode) => getAgentDisplayStatus(code).text
 const getAgentStatusType = (code: PricingAgentCode) => getAgentDisplayStatus(code).tagType
+const matrixEvidencePreview = (card: InternalAgentCardContent | null, opinion: NormalizedAgentOpinion | null) => {
+  const painPoint = card?.suggestion && typeof card.suggestion === 'object'
+    ? String((card.suggestion as Record<string, unknown>).merchantPainPoint || '').trim()
+    : ''
+  if (painPoint) return painPoint
+  if (opinion?.summary) return opinion.summary
+  const evidence = Array.isArray(card?.evidence) ? card.evidence : []
+  return evidence.slice(0, 2)
+    .map((item, index) => {
+      const label = String(item.label || `依据${index + 1}`)
+      return `${label}：${formatEvidenceValue(label, item.value)}`
+    })
+    .join('；')
+}
+const formatMatrixConfidencePercent = (value: number | null) => {
+  if (value == null) return '-'
+  const percent = value > 1 ? value : value * 100
+  return `${Math.max(0, Math.min(100, percent)).toFixed(0)}%`
+}
+const inferMatrixConfidence = (opinion: NormalizedAgentOpinion | null) => {
+  if (opinion?.confidence != null) return opinion.confidence
+  if (opinion?.arbitration?.consensusScore != null) return opinion.arbitration.consensusScore
+  const riskLevel = String(opinion?.riskLevel || '').trim().toUpperCase()
+  if (riskLevel === 'LOW' || riskLevel === '低') return 0.85
+  if (riskLevel === 'MEDIUM' || riskLevel === '中') return 0.65
+  if (riskLevel === 'HIGH' || riskLevel === '高') return 0.45
+  return null
+}
 const opinionMatrixRows = computed(() => agents.map((agent) => {
   const card = state.cards[agent.code]
   const opinion = card?.opinion || null
   const displayStatus = getAgentDisplayStatus(agent.code)
   const isManagerTimelineInconsistent = agent.code === MANAGER_AGENT_CODE && decisionOverview.value.isTimelineInconsistent
   const price = opinion?.recommendedPrice
-  const confidenceText = opinion?.confidence != null
-    ? `${(opinion.confidence * 100).toFixed(0)}%`
-    : opinion?.riskLevel
-      ? toNaturalChinese(opinion.riskLevel)
-      : '-'
-  const evidenceText = opinion?.evidenceLines?.length
-    ? opinion.evidenceLines.slice(0, 2).join('；')
-    : isCardRunning(agent.code)
+  const confidenceText = formatMatrixConfidencePercent(inferMatrixConfidence(opinion))
+  const evidenceText = matrixEvidencePreview(card, opinion)
+    || (isCardRunning(agent.code)
       ? '分析中'
       : isCardFailed(agent.code)
         ? getAgentFailureSummary(agent.code)
-        : '暂无证据'
+        : '暂无结论')
   const stateText = isManagerTimelineInconsistent
     ? displayStatus.text
     : opinion?.status
@@ -539,14 +524,9 @@ const isArchivedTaskStatus = (status: PricingTaskStatus) => ['COMPLETED', 'MANUA
 const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
 const stopRealtime = () => { if (aborter) { aborter.abort(); aborter = null } stopPolling() }
 const hasRevealInProgress = () => Boolean(revealQueue.active || revealQueue.queue.length)
-const clearExpandedAgentSections = () => {
-  agents.forEach((agent) => {
-    delete expandedAgentSections[agent.code]
-  })
-}
 // 流式动画状态与卡片内容解耦：停止动画时只清理展示队列，不影响后续用快照重建卡片。
-const clearRevealState = () => { liveRevealEnabled.value = false; streamArrivedCards.clear(); clearRevealQueue(revealQueue); agents.forEach((agent) => { delete revealStages[agent.code]; delete revealLineCounts[agent.code]; delete pendingRevealCards[agent.code] }); clearExpandedAgentSections() }
-const clearAgentRevealProgress = () => { streamArrivedCards.clear(); clearRevealQueue(revealQueue); agents.forEach((agent) => { delete revealStages[agent.code]; delete revealLineCounts[agent.code]; delete pendingRevealCards[agent.code] }); clearExpandedAgentSections() }
+const clearRevealState = () => { liveRevealEnabled.value = false; streamArrivedCards.clear(); clearRevealQueue(revealQueue); agents.forEach((agent) => { delete revealStages[agent.code]; delete revealLineCounts[agent.code]; delete pendingRevealCards[agent.code] }) }
+const clearAgentRevealProgress = () => { streamArrivedCards.clear(); clearRevealQueue(revealQueue); agents.forEach((agent) => { delete revealStages[agent.code]; delete revealLineCounts[agent.code]; delete pendingRevealCards[agent.code] }) }
 const toRunAttempt = (value: unknown): number | null => { const n = Number(value); return Number.isFinite(n) && n >= 0 ? n : null }
 const syncStreamRunAttempt = (value: unknown) => {
   const attempt = toRunAttempt(value)
@@ -632,48 +612,21 @@ const suggestionLines = (code: PricingAgentCode) => {
   const extra: string[] = []
   if (sourceStatus && sourceStatus !== 'OK') extra.push('提示：未获取到可靠竞品，市场建议已降级')
   else if (dataQuality === 'LOW') extra.push('提示：本次竞品数据不足，仅供参考')
-  if (suggestion.pricingPosition) extra.push(`价格位置：${toNaturalChinese(suggestion.pricingPosition)}`)
   return [...lines, ...extra]
-}
-const isAgentSectionExpanded = (code: PricingAgentCode, section: AgentDetailSection) =>
-  Boolean(expandedAgentSections[code]?.[section])
-const setAgentSectionExpanded = (code: PricingAgentCode, section: AgentDetailSection, expanded: boolean) => {
-  expandedAgentSections[code] = {
-    ...(expandedAgentSections[code] || {}),
-    [section]: expanded
-  }
-}
-const toggleAgentSection = (code: PricingAgentCode, section: AgentDetailSection) => {
-  setAgentSectionExpanded(code, section, !isAgentSectionExpanded(code, section))
-}
-const compactLines = (lines: string[], code: PricingAgentCode, section: AgentDetailSection) => {
-  if (lines.length <= COMPACT_AGENT_LINE_LIMIT) return lines
-  if (isAgentSectionExpanded(code, section)) return lines
-  return lines.slice(0, COMPACT_AGENT_LINE_LIMIT)
 }
 const visibleEvidenceLines = (code: PricingAgentCode) => {
   const lines = evidenceLines(code)
   if (shouldAnimate(code) && revealStages[code] === 'evidence') {
     return lines.slice(0, Math.max(ensureRevealLineCounts(code).evidence, 1))
   }
-  if (shouldAnimate(code) && revealStages[code] !== 'done') return lines
-  return compactLines(lines, code, 'evidence')
+  return lines
 }
 const visibleSuggestionLines = (code: PricingAgentCode) => {
   const lines = suggestionLines(code)
   if (shouldAnimate(code) && revealStages[code] !== 'done') {
     return lines.slice(0, Math.max(ensureRevealLineCounts(code).suggestion, 1))
   }
-  return compactLines(lines, code, 'suggestion')
-}
-const canToggleEvidenceLines = (code: PricingAgentCode) =>
-  evidenceLines(code).length > COMPACT_AGENT_LINE_LIMIT && (!shouldAnimate(code) || revealStages[code] === 'done')
-const canToggleSuggestionLines = (code: PricingAgentCode) =>
-  suggestionLines(code).length > COMPACT_AGENT_LINE_LIMIT && (!shouldAnimate(code) || revealStages[code] === 'done')
-const hiddenLineCount = (total: number) => Math.max(0, total - COMPACT_AGENT_LINE_LIMIT)
-const getSectionToggleText = (code: PricingAgentCode, section: AgentDetailSection, total: number) => {
-  if (isAgentSectionExpanded(code, section)) return '收起'
-  return `展开 ${hiddenLineCount(total)} 条`
+  return lines
 }
 const isActiveEvidenceLine = (code: PricingAgentCode, index: number) => shouldAnimate(code) && revealStages[code] === 'evidence' && index === visibleEvidenceLines(code).length - 1
 const isActiveSuggestionLine = (code: PricingAgentCode, index: number) => shouldAnimate(code) && revealStages[code] === 'suggestion' && index === visibleSuggestionLines(code).length - 1
@@ -700,14 +653,19 @@ const markSuggestionLineDone = (code: PricingAgentCode) => {
   }
   completeReveal(code)
 }
-const agentRoleLabel: Record<PricingAgentCode, string> = { DATA_ANALYSIS: '数据判断', MARKET_INTEL: '市场判断', RISK_CONTROL: '风险校验', MANAGER_COORDINATOR: '最终协调' }
+const agentRoleLabel: Record<PricingAgentCode, string> = {
+  DATA_ANALYSIS: '数据分析',
+  MARKET_INTEL: '市场情报',
+  RISK_CONTROL: '风险控制',
+  MANAGER_COORDINATOR: '经理决策'
+}
 const analysisAgents = agents.filter((agent) => analysisAgentCodeSet.has(agent.code))
 const managerAgent = agents.find((agent) => agent.code === MANAGER_AGENT_CODE) || agents[agents.length - 1]
 const decisionSections = computed(() => [
   {
     key: 'analysis',
     title: '并行分析区',
-    description: '数据、市场、风控三个分析智能体会同时展示，完成后各自更新状态。',
+    description: '先并行回答收益、市场和风险三个商家最关心的问题。',
     panelClass: 'parallel-analysis-panel',
     gridClass: 'parallel-analysis-grid',
     agents: analysisAgents
@@ -715,7 +673,7 @@ const decisionSections = computed(() => [
   {
     key: 'manager',
     title: '经理仲裁区',
-    description: '经理在三路分析完成后汇总分歧、给出裁决并输出最终建议价。',
+    description: '汇总分歧后给出最终建议价、预期收益和人工复核动作。',
     panelClass: 'manager-arbitration-panel',
     gridClass: 'manager-arbitration-grid',
     agents: [managerAgent]
@@ -821,13 +779,16 @@ const applySnapshotLogs = (logs: DecisionLogItem[]) => {
   clearRevealState()
   const cards = emptyCards()
   const snapshot = buildSnapshotAgentCards(logs)
+  const preservedCards = applySnapshotCardsPreservingTerminalState(state.cards, snapshot)
   currentRunAttempt.value = snapshot.runAttempt
-  snapshot.cards.forEach(({ code, stage, card }) => {
-    if (stage === 'running') {
-      if (!cards[code]) cards[code] = runningCard()
-      return
-    }
-    cards[code] = stage === 'failed' ? failedCard(card) : normalizeCard(card)
+  agentRevealOrder.forEach((code) => {
+    const card = preservedCards[code]
+    if (!card) return
+    cards[code] = card.__stage === 'failed' ? failedCard(card) : normalizeCard(card, card.__stage || 'completed')
+  })
+  snapshot.cards.forEach(({ code, stage }) => {
+    if (cards[code]) return
+    if (stage === 'running') cards[code] = runningCard()
   })
   state.cards = cards
 }
@@ -1101,10 +1062,6 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 .decision-chat-kicker{width:fit-content;font-size:13px;font-weight:700;color:#1f6feb;background:rgba(31,111,235,.09);border:1px solid rgba(31,111,235,.12);border-radius:8px;padding:3px 8px}
 .decision-toolbar{align-items:center}
 
-.decision-overview-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
-.decision-overview-card{padding:14px 16px;border:1px solid #dbe5f0;border-radius:12px;background:linear-gradient(180deg,#fff,rgba(248,250,252,.92));display:grid;gap:8px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
-.decision-overview-label{font-size:13px;font-weight:700;color:#64748b;letter-spacing:.02em}
-.decision-overview-card strong{font-size:22px;color:#0f172a;line-height:1.2;font-variant-numeric:tabular-nums}
 .opinion-matrix-panel{display:grid;gap:10px;margin-bottom:14px;padding:14px;border:1px solid #dbe5f0;border-radius:12px;background:#fff}
 .opinion-matrix-head h3{margin:0 0 4px;font-size:17px;color:#0f172a}
 .opinion-matrix-head p{margin:0;color:#64748b;font-size:13px;line-height:1.6}
@@ -1115,7 +1072,6 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 .opinion-grid-row.is-failed{border-color:#fecaca;background:#fff5f5}
 .opinion-seat{display:grid;gap:4px;min-width:0}
 .opinion-seat strong{font-size:14px;color:#0f172a;line-height:1.4}
-.opinion-seat span{font-size:12px;color:#64748b;line-height:1.5}
 .opinion-cell{display:block;font-size:13px;color:#334155;line-height:1.6;overflow-wrap:anywhere}
 .opinion-price-cell{font-weight:700;color:#1d4ed8;font-variant-numeric:tabular-nums}
 .opinion-evidence-cell{color:#475569}
@@ -1144,7 +1100,6 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 .agent-box h4{margin:14px 0 8px;font-size:14px;font-weight:700;color:#334155;letter-spacing:0}
 .agent-section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0 8px}
 .agent-section-head h4{margin:0}
-.agent-section-toggle{flex-shrink:0;font-weight:600}
 .thinking{white-space:pre-wrap;line-height:1.8;color:#475569;font-size:15px;margin:0}
 
 .evidence-list,.suggestion-list{margin:0;padding:0;list-style:none;display:grid;gap:8px}
@@ -1230,7 +1185,7 @@ onBeforeUnmount(() => { stopRealtime(); clearRevealState() })
 .report-table :deep(.el-tag){border-radius:999px;padding-inline:10px;font-size:14px;font-weight:700}
 .report-table :deep(.el-button.is-link){font-size:15px;font-weight:700}
 .report-table :deep(.cell){line-height:1.5}
-@media (max-width:1100px){.config-grid,.metric-grid,.constraint-grid,.decision-overview-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.opinion-grid{grid-template-columns:minmax(120px,1fr) minmax(80px,.7fr) minmax(100px,.8fr) minmax(180px,1.5fr) minmax(88px,.7fr)}}
-@media (max-width:760px){.config-grid,.metric-grid,.constraint-grid,.decision-overview-grid,.parallel-analysis-grid,.arbitration-summary-grid,.arbitration-detail-grid,.arbitration-decision-strip{grid-template-columns:1fr}.opinion-grid,.opinion-grid-head{grid-template-columns:1fr}.opinion-grid-head{display:none}.constraint-intro,.section-head,.agent-head,.arbitration-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}.workflow-copy p,.report-copy{max-width:none}.agent-box{grid-template-columns:30px minmax(0,1fr);gap:10px}.agent-avatar{width:30px;height:30px}.result-strip{flex-direction:column;align-items:flex-start;gap:4px}.consensus-meter{width:100%;min-width:0}.opinion-grid-row{gap:8px}.matrix-state-chip{width:fit-content}}
+@media (max-width:1100px){.config-grid,.metric-grid,.constraint-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.opinion-grid{grid-template-columns:minmax(120px,1fr) minmax(80px,.7fr) minmax(100px,.8fr) minmax(180px,1.5fr) minmax(88px,.7fr)}}
+@media (max-width:760px){.config-grid,.metric-grid,.constraint-grid,.parallel-analysis-grid,.arbitration-summary-grid,.arbitration-detail-grid,.arbitration-decision-strip{grid-template-columns:1fr}.opinion-grid,.opinion-grid-head{grid-template-columns:1fr}.opinion-grid-head{display:none}.constraint-intro,.section-head,.agent-head,.arbitration-head{flex-direction:column;align-items:flex-start}.toolbar{justify-content:flex-start}.workflow-copy p,.report-copy{max-width:none}.agent-box{grid-template-columns:30px minmax(0,1fr);gap:10px}.agent-avatar{width:30px;height:30px}.result-strip{flex-direction:column;align-items:flex-start;gap:4px}.consensus-meter{width:100%;min-width:0}.opinion-grid-row{gap:8px}.matrix-state-chip{width:fit-content}}
 @media (prefers-reduced-motion:reduce){.agent-box,.metric-card,.fade-in-item,.pulse-dot,.agent-stream-pulse span{animation:none!important;transition:none!important}.metric-card:hover{transform:none}}
 </style>

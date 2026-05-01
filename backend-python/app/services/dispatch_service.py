@@ -184,9 +184,7 @@ class DispatchService:
 
         # Agent 粒度断点续跑：只清理本轮 retry_count 下的 running/failed 占位，
         # 保留上一轮 completed 的卡片（ResumeService 用它们判断可跳过的前缀集）。
-        self.log_repo.delete_running_and_failed_by_run_attempt(
-            task.id, int(task.retry_count or 0)
-        )
+        run_attempt_to_clear = int(task.retry_count or 0)
         if execution_id:
             updated = self.task_repo.mark_retrying_if_owner(
                 task.id,
@@ -204,6 +202,9 @@ class DispatchService:
                 )
         else:
             self.task_repo.mark_retrying(task, trace_id=req.trace_id, failure_reason=reason)
+        self.log_repo.delete_running_and_failed_by_run_attempt(
+            task.id, run_attempt_to_clear
+        )
         return DispatchTaskResponse(
             accepted=True,
             taskId=req.task_id,

@@ -137,10 +137,118 @@ def test_build_market_card_uses_competitor_samples():
     thinking, evidence, suggestion = OrchestrationService._build_market_card(parsed)
 
     assert thinking == "market-thinking"
-    assert evidence[0]["value"] == 7
+    labels = [item["label"] for item in evidence]
+    assert "有效样本数" in labels
+    assert "竞品来源" in labels
+    assert "数据质量" in labels
+    assert "原始样本数" not in labels
+    assert "过滤后样本数" not in labels
+    assert "竞品样本数" not in labels
     assert suggestion["recommendedPrice"] == 29.9
     assert suggestion["dataQuality"] == "HIGH"
-    assert suggestion["pricingPosition"] == "接近市场主流带"
+    assert suggestion["pricingPosition"] is None
+    assert suggestion["usedCompetitorCount"] == 7
+    assert suggestion["merchantPainPoint"] == "判断竞品价格能否支撑调价，避免卖贵丢单或卖便宜少赚"
+    assert suggestion["merchantAction"] == "竞品数据可信，可结合价格带判断是否跟随、卡位或避开低价竞争"
+
+
+def test_agent_cards_surface_merchant_pain_points_and_next_actions():
+    payload = SimpleNamespace(
+        task_id=123,
+        strategy_goal="profit",
+        baseline_sales=100,
+        baseline_profit=Decimal("500.00"),
+        product=SimpleNamespace(
+            current_price=Decimal("20.00"),
+            cost_price=Decimal("12.00"),
+        ),
+        constraints={
+            "min_profit_rate": Decimal("0.20"),
+            "min_price": Decimal("18.00"),
+            "max_price": Decimal("30.00"),
+            "max_discount_rate": Decimal("0.10"),
+        },
+    )
+
+    _, _, data_suggestion = OrchestrationService._build_data_card(
+        payload,
+        {
+            "suggestedPrice": "22.00",
+            "suggestedMinPrice": "21.00",
+            "suggestedMaxPrice": "23.00",
+            "expectedSales": 96,
+            "expectedProfit": "620.00",
+            "summary": "提价后利润预计提升",
+        },
+    )
+    assert data_suggestion["merchantPainPoint"] == "判断调价后销量和利润是否划算，避免只看价格不看收益"
+    assert data_suggestion["merchantAction"] == "优先查看利润变化，再结合市场与风控确认是否采用"
+    assert data_suggestion["priceChangeRate"] == 0.1
+    assert data_suggestion["profitGrowth"] == 120.0
+
+    _, _, risk_suggestion = OrchestrationService._build_risk_card(
+        payload,
+        {
+            "isPass": False,
+            "safeFloorPrice": "18.50",
+            "suggestedPrice": "18.50",
+            "riskLevel": "HIGH",
+            "needManualReview": True,
+            "summary": "低于安全底线需复核",
+        },
+    )
+    assert risk_suggestion["merchantPainPoint"] == "确认是否会亏损、低毛利或突破商家设置的价格红线"
+    assert risk_suggestion["merchantAction"] == "按安全底价或约束修正后再提交人工审核"
+    assert risk_suggestion["safeFloorPrice"] == 18.5
+    assert risk_suggestion["needManualReview"] is True
+
+    _, _, manager_suggestion, reason = OrchestrationService._build_manager_card(
+        {
+            "finalPrice": "21.50",
+            "expectedSales": 98,
+            "expectedProfit": "650.00",
+            "profitGrowth": "150.00",
+            "resultSummary": "采用折中价格，兼顾利润与市场接受度",
+        },
+        {"suggestedPrice": "22.00"},
+        {"suggestedPrice": "21.00"},
+        {"suggestedPrice": "18.50", "isPass": False},
+    )
+    assert manager_suggestion["merchantPainPoint"] == "给出商家可落地的最终价格、预期收益和复核动作"
+    assert manager_suggestion["merchantAction"] == "进入人工审核，核对库存、活动节奏后再应用建议价"
+    assert manager_suggestion["profitGrowth"] == 150.0
+    assert reason == "采用折中价格，兼顾利润与市场接受度"
+
+
+def test_normalized_risk_and_manager_opinions_expose_percentage_confidence_sources():
+    risk_opinion = OrchestrationService._normalize_agent_opinion(
+        task_id=123,
+        run_attempt=0,
+        agent_code="RISK_CONTROL",
+        agent_name="利润底线校验",
+        parsed={
+            "isPass": False,
+            "riskLevel": "HIGH",
+            "needManualReview": True,
+            "suggestedPrice": "18.50",
+            "safeFloorPrice": "18.50",
+            "summary": "低于安全底线需复核",
+        },
+    )
+    assert risk_opinion["confidence"] == 1.0
+
+    manager_opinion = OrchestrationService._normalize_agent_opinion(
+        task_id=123,
+        run_attempt=0,
+        agent_code="MANAGER_COORDINATOR",
+        agent_name="定价决策经理",
+        parsed={
+            "finalPrice": "21.50",
+            "consensusScore": 0.72,
+            "resultSummary": "采用折中价格，兼顾利润与市场接受度",
+        },
+    )
+    assert manager_opinion["confidence"] == 0.72
 
 
 def test_agent_opinion_v1_accepts_complete_payload_with_camel_case_aliases():
@@ -180,7 +288,7 @@ def test_agent_output_models_accept_agent_opinion_and_keep_legacy_optional():
             "confidence": 0.88,
             "thinking": "market-thinking",
             "summary": "market-summary",
-            "competitorSamples": 3,
+            "validCompetitorCount": 3,
             "agentOpinion": _agent_opinion_payload(
                 agent_code="MARKET_INTEL",
                 agent_name="市场情报Agent",
@@ -270,6 +378,56 @@ def test_build_market_card_does_not_fake_missing_sales_weighted_fields_as_zero()
     assert "销量加权均价" not in labels
     assert "销量加权中位价" not in labels
     assert suggestion["salesWeightedAverage"] is None
+
+
+def test_build_market_card_removes_redundant_market_fields_from_default_display():
+    parsed = {
+        "thinking": "market-thinking",
+        "source": "TMALL_CSV",
+        "sourceStatus": "OK",
+        "validCompetitorCount": 8,
+        "dataQuality": "HIGH",
+        "qualityReasons": ["有效竞品数不少于5个"],
+        "competitorSamples": 8,
+        "rawItemCount": 10,
+        "filteredItemCount": 9,
+        "usedCompetitorCount": 8,
+        "marketFloor": 199.0,
+        "marketMedian": 273.1,
+        "marketCeiling": 449.4,
+        "marketAverage": 296.34,
+        "salesWeightedAverage": 312.09,
+        "salesWeightedMedian": 277.2,
+        "brandBreakdown": [{"brand": "Ubras", "sampleCount": 2, "averagePrice": 234.0, "minPrice": 199.0, "maxPrice": 269.0}],
+        "shopTypeBreakdown": [{"shopType": "旗舰店", "share": 1.0, "sampleCount": 8, "averagePrice": 296.34}],
+        "promotionDensity": {"promotionRate": 0.875, "averageDiscount": 0.55, "promotedSampleCount": 7},
+        "pricingPosition": "当前价格低于市场地板价，处于低价带",
+        "evidenceSummary": "市场地板价199元，中位价273.10元，均价296.34元，当前定价处于低价区间。",
+        "riskNotes": "若继续低于地板价，需要确认利润空间。",
+        "suggestedPrice": 169.0,
+        "confidence": 0.85,
+        "summary": "市场竞争激烈，建议低价卡位。",
+    }
+
+    _, evidence, suggestion = OrchestrationService._build_market_card(parsed)
+
+    labels = [item["label"] for item in evidence]
+    assert "有效样本数" in labels
+    assert "市场最低价" in labels
+    assert "市场中位价" in labels
+    assert "市场均价" in labels
+    assert "品牌价格带" in labels
+    assert "促销密度" in labels
+    assert "证据摘要" in labels
+    assert "原始样本数" not in labels
+    assert "过滤后样本数" not in labels
+    assert "竞品样本数" not in labels
+    assert "销量加权均价" not in labels
+    assert "销量加权中位价" not in labels
+    assert "店铺类型分布" not in labels
+    assert suggestion["pricingPosition"] is None
+    assert suggestion["salesWeightedAverage"] is None
+    assert suggestion["summary"] == "市场竞争激烈，建议低价卡位。"
 
 
 def test_precompute_competitor_summary_includes_failure_metadata(monkeypatch):
@@ -503,7 +661,7 @@ def test_precompute_competitor_summary_adds_low_quality_guardrail(monkeypatch):
     assert "不得输出激进的市场结论" in summary
 
 
-def test_build_pricing_crew_market_task_requires_sales_weighted_fields(monkeypatch):
+def test_build_pricing_crew_market_task_uses_slimmer_json_contract(monkeypatch):
     payload = SimpleNamespace(
         product=SimpleNamespace(
             product_id=1001,
@@ -569,13 +727,92 @@ def test_build_pricing_crew_market_task_requires_sales_weighted_fields(monkeypat
     crew_factory.build_pricing_crew(payload, analysis_llm=object(), manager_llm=object())
 
     market_task = next(task for task in _FakeTask.instances if task.kwargs["agent"] == "market-agent")
-    assert '"salesWeightedAverage"' in market_task.kwargs["expected_output"]
-    assert '"salesWeightedMedian"' in market_task.kwargs["expected_output"]
-    assert "没有数据时填 null，不要写 0 占位" in market_task.kwargs["description"]
+    expected_output = market_task.kwargs["expected_output"]
+    description = market_task.kwargs["description"]
 
+    assert '"validCompetitorCount"' in expected_output
+    assert '"evidenceSummary"' in expected_output
+    assert '"promotionDensity"' in expected_output
+    assert '"rawItemCount"' not in expected_output
+    assert '"filteredItemCount"' not in expected_output
+    assert '"competitorSamples"' not in expected_output
+    assert '"usedCompetitorCount"' not in expected_output
+    assert '"pricingPosition"' not in expected_output
+    assert '"salesWeightedAverage"' not in expected_output
+    assert '"salesWeightedMedian"' not in expected_output
+    assert '"shopTypeBreakdown"' not in expected_output
+    assert "没有数据时填 null，不要写 0 占位" not in description
+def test_build_pricing_crew_market_task_tightens_natural_language_dedup_rules(monkeypatch):
+    payload = SimpleNamespace(
+        product=SimpleNamespace(
+            product_id=1001,
+            product_name="coffee",
+            category_name="beverage",
+            current_price=Decimal("29.90"),
+            cost_price=Decimal("16.80"),
+        ),
+        strategy_goal="profit",
+        baseline_sales=120,
+        baseline_profit=Decimal("1200.00"),
+        constraints={},
+        metrics=[],
+        traffic=[],
+    )
 
+    class _FakeService:
+        def get_competitor_result(self, **kwargs):  # noqa: ANN003
+            return {
+                "sourceStatus": "OK",
+                "source": "TMALL_CSV",
+                "message": "ok",
+                "rawItemCount": 1,
+                "filteredItemCount": 1,
+                "validCompetitorCount": 1,
+                "marketFloor": 29.9,
+                "marketMedian": 29.9,
+                "marketCeiling": 29.9,
+                "marketAverage": 29.9,
+                "competitors": [{"competitorName": "A", "price": 29.9, "sourcePlatform": "tmall"}],
+            }
 
-def test_market_agent_output_accepts_competitor_samples_alias():
+    class _FakeTask:
+        instances = []
+
+        def __init__(self, **kwargs):  # noqa: ANN003
+            self.kwargs = kwargs
+            _FakeTask.instances.append(self)
+
+    class _FakeCrew:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(crew_factory, "CompetitorService", _FakeService)
+    monkeypatch.setattr(crew_factory, "_precompute_data_summary", lambda _payload: "data-summary")
+    monkeypatch.setattr(crew_factory, "_build_metrics_summary", lambda _payload: "metrics-summary")
+    monkeypatch.setattr(crew_factory, "_build_constraints_text", lambda _constraints: "constraints-summary")
+    monkeypatch.setattr(
+        crew_factory,
+        "build_crewai_agents",
+        lambda **kwargs: {
+            "DATA_ANALYSIS": "data-agent",
+            "MARKET_INTEL": "market-agent",
+            "RISK_CONTROL": "risk-agent",
+            "MANAGER_COORDINATOR": "manager-agent",
+        },
+    )
+    monkeypatch.setattr(crew_factory, "Task", _FakeTask)
+    monkeypatch.setattr(crew_factory, "Crew", _FakeCrew)
+
+    crew_factory.build_pricing_crew(payload, analysis_llm=object(), manager_llm=object())
+
+    market_task = next(task for task in _FakeTask.instances if task.kwargs["agent"] == "market-agent")
+    market_description = market_task.kwargs["description"]
+
+    assert "riskNotes、evidenceSummary、qualityReasons" in market_description
+    assert "同一事实不得在 summary、evidenceSummary、riskNotes 中重复表述" in market_description
+    assert "validCompetitorCount 是唯一必须输出的样本量字段，不要输出 rawItemCount、filteredItemCount、competitorSamples、usedCompetitorCount" in market_description
+    assert "不要输出 pricingPosition、salesWeightedAverage、salesWeightedMedian、shopTypeBreakdown" in market_description
+def test_market_agent_output_accepts_valid_competitor_count_alias():
     parsed = MarketAgentOutput.model_validate(
         {
             "suggestedPrice": "29.90",
@@ -586,13 +823,13 @@ def test_market_agent_output_accepts_competitor_samples_alias():
             "confidence": 0.88,
             "thinking": "market-thinking",
             "summary": "ok",
-            "competitorSamples": 5,
+            "validCompetitorCount": 5,
         }
     )
 
-    assert parsed.competitor_samples == 5
+    assert parsed.valid_competitor_count == 5
 
-    old_alias = "simulated" + "Samples"
+    old_alias = "competitor" + "Samples"
     with pytest.raises(ValidationError):
         MarketAgentOutput.model_validate(
             {
@@ -636,7 +873,7 @@ def test_agent_output_models_preserve_runtime_fields_by_alias():
             "marketScore": 75.0,
             "thinking": "market-thinking",
             "summary": "market-summary",
-            "competitorSamples": 3,
+            "validCompetitorCount": 3,
             "competitors": [
                 {"competitorName": "A", "price": "29.90", "sourcePlatform": "taobao"},
             ],
@@ -804,7 +1041,7 @@ def test_build_pricing_crew_manager_task_uses_normalized_arbitration_fields(monk
     assert "arbitrationSummary" not in expected_output
 
 
-def test_build_pricing_crew_expected_output_requires_agent_opinion_contract(monkeypatch):
+def test_build_pricing_crew_expected_output_keeps_agent_opinion_contract_only_for_manager(monkeypatch):
     payload = SimpleNamespace(
         product=SimpleNamespace(
             product_id=1001,
@@ -852,9 +1089,9 @@ def test_build_pricing_crew_expected_output_requires_agent_opinion_contract(monk
     crew_factory.build_pricing_crew(payload, analysis_llm=object(), manager_llm=object())
 
     task_by_agent = {task.kwargs["agent"]: task.kwargs for task in _FakeTask.instances}
-    assert '"agentOpinion"' in task_by_agent["data-agent"]["expected_output"]
-    assert '"agentOpinion"' in task_by_agent["market-agent"]["expected_output"]
-    assert '"agentOpinion"' in task_by_agent["risk-agent"]["expected_output"]
+    assert '"agentOpinion"' not in task_by_agent["data-agent"]["expected_output"]
+    assert '"agentOpinion"' not in task_by_agent["market-agent"]["expected_output"]
+    assert '"agentOpinion"' not in task_by_agent["risk-agent"]["expected_output"]
     assert '"agentOpinion"' in task_by_agent["manager-agent"]["expected_output"]
     assert '"dependsOnOpinionIds"' in task_by_agent["manager-agent"]["expected_output"]
     assert '"decisionType"' in task_by_agent["manager-agent"]["expected_output"]

@@ -21,7 +21,9 @@ from app.agents.crewai_agents import build_crewai_agents
 from app.core.config import get_settings
 from app.crew.protocols import CrewRunPayload
 from app.services.competitor_service import CompetitorService
+from app.tools.elasticity_profit_tool import ElasticityProfitTool
 from app.tools.product_data_tool import ProductDataTool
+from app.tools.risk_rule_tool import RiskRuleTool
 from app.utils.math_utils import money
 from app.utils.text_utils import MANUAL_REVIEW_STRATEGY, to_strategy_goal_cn
 
@@ -98,6 +100,115 @@ def _precompute_data_summary(payload: CrewRunPayload) -> str:
         f"当前售价: {result.get('current_price', 0)}元",
         f"成本价: {result.get('cost_price', 0)}元",
         f"库存: {result.get('stock', 0)}件",
+    ]
+    return "\n".join(lines)
+
+
+def _decimal_or_zero(value: Any) -> Decimal:
+    try:
+        return Decimal(str(value if value is not None else "0"))
+    except Exception:
+        return Decimal("0")
+
+
+def _bounded_profit_rate(constraints: dict) -> Decimal:
+    raw = _decimal_or_zero(constraints.get("min_profit_rate", "0.15"))
+    if raw < 0:
+        return Decimal("0")
+    if raw >= Decimal("0.95"):
+        return Decimal("0.95")
+    return raw
+
+
+def _strategy_candidate_price(payload: CrewRunPayload) -> Decimal:
+    """按策略先给一个确定性候选价，避免 Agent 通过工具循环反复试价。"""
+    current = money(payload.product.current_price)
+    cost = money(payload.product.cost_price)
+    strategy = str(payload.strategy_goal or "").upper()
+    if strategy == "CLEARANCE":
+        multiplier = Decimal("0.95")
+    elif strategy == "MARKET_SHARE":
+        multiplier = Decimal("0.97")
+    else:
+        multiplier = Decimal("1.03")
+
+    candidate = money(current * multiplier)
+    min_profit_rate = _bounded_profit_rate(payload.constraints or {})
+    profit_floor = cost / (Decimal("1.0") - min_profit_rate) if min_profit_rate < 1 else cost
+    candidate = max(candidate, money(cost * Decimal("1.08")), money(profit_floor))
+
+    min_price = (payload.constraints or {}).get("min_price")
+    if min_price is not None:
+        candidate = max(candidate, money(min_price))
+    max_price = (payload.constraints or {}).get("max_price")
+    if max_price is not None:
+        candidate = min(candidate, money(max_price))
+    return money(candidate)
+
+
+def _precompute_data_projection(payload: CrewRunPayload) -> str:
+    """预计算销量和利润，让数据分析 Agent 一轮生成解释，不再进入工具调用循环。"""
+    tool = ElasticityProfitTool()
+    current = money(payload.product.current_price)
+    cost = money(payload.product.cost_price)
+    candidate = _strategy_candidate_price(payload)
+    expected_sales = tool.estimate_sales(
+        baseline_sales=int(payload.baseline_sales or 0),
+        current_price=current,
+        target_price=candidate,
+        strategy_goal=str(payload.strategy_goal or ""),
+    )
+    expected_profit = tool.estimate_profit(
+        price=candidate,
+        cost_price=cost,
+        expected_sales=expected_sales,
+    )
+
+    min_price = money(max(cost * Decimal("1.08"), candidate * Decimal("0.97")))
+    max_price = money(max(min_price, candidate * Decimal("1.03")))
+    constraints = payload.constraints or {}
+    if constraints.get("min_price") is not None:
+        min_price = max(min_price, money(constraints["min_price"]))
+    if constraints.get("max_price") is not None:
+        max_price = min(max_price, money(constraints["max_price"]))
+    if max_price < min_price:
+        max_price = min_price
+
+    lines = [
+        "预计算销量/利润测算结果:",
+        f"- 候选建议价: {candidate}元",
+        f"- 建议价格区间: {min_price}元 - {max_price}元",
+        f"- 预期月销量 expectedSales: {expected_sales}",
+        f"- 预期月利润 expectedProfit: {expected_profit}元",
+        "- 以上数值已由 Python 确定性测算完成，请直接用于 JSON 输出并解释原因。",
+    ]
+    return "\n".join(lines)
+
+
+def _precompute_risk_projection(payload: CrewRunPayload) -> str:
+    """预计算硬约束风控结果，让风控 Agent 不再通过工具循环校验。"""
+    current = money(payload.product.current_price)
+    cost = money(payload.product.cost_price)
+    candidate = _strategy_candidate_price(payload)
+    constraints = dict(payload.constraints or {})
+    constraints.setdefault("min_profit_rate", 0.15)
+    constraints.setdefault("max_discount_rate", 0.5)
+    result = RiskRuleTool().evaluate(
+        current_price=current,
+        cost_price=cost,
+        candidate_price=candidate,
+        constraints=constraints,
+    )
+    lines = [
+        "预计算风控校验结果:",
+        f"- 候选价: {candidate}元",
+        f"- 安全底价 safeFloorPrice: {result.get('safe_floor_price')}元",
+        f"- 风控建议价 suggestedPrice: {result.get('suggested_price')}元",
+        f"- 是否通过 isPass: {result.get('is_pass')}",
+        f"- 风险等级 riskLevel: {result.get('risk_level')}",
+        f"- 是否需要人工审核 needManualReview: {result.get('need_manual_review')}",
+        f"- 预估毛利率 margin: {result.get('margin')}",
+        "- 以上结果已由 Python 硬约束规则计算完成，请直接用于 JSON 输出并解释原因。",
     ]
     return "\n".join(lines)
 
@@ -268,10 +379,12 @@ def build_pricing_crew(
     metrics_summary = _build_metrics_summary(payload)
     constraints_text = _build_constraints_text(payload.constraints)
     data_summary = _precompute_data_summary(payload)
+    data_projection = _precompute_data_projection(payload)
     competitor_summary = _precompute_competitor_summary(payload)
+    risk_projection = _precompute_risk_projection(payload)
 
     # ── Task 1: 数据分析任务 ──────────────────────────────
-    # 数据已预计算，Agent 只需分析摘要 + 调用销量/利润预估工具
+    # 数据与测算结果已预计算，Agent 只需解释和结构化输出。
     data_task = Task(
         description=(
             f"你正在为商品「{product.product_name}」制定定价策略。\n"
@@ -280,18 +393,16 @@ def build_pricing_crew(
             "以下是商品经营数据汇总（已预计算）：\n"
             f"{data_summary}\n"
             f"{metrics_summary}\n\n"
+            "以下是预计算销量/利润测算结果（Python 已执行确定性测算）：\n"
+            f"{data_projection}\n\n"
             "请基于以上数据分析：\n"
             "1. 评估销售趋势（上升/下降/平稳）\n"
             "2. 根据策略目标确定建议价格：\n"
             "   - 利润优先：适当提价（+1%~4%）\n"
             "   - 清仓促销：适当降价（-5%左右）\n"
             "   - 市场份额优先：小幅降价（-3%左右）\n"
-            "3. 使用 estimate_sales_volume 工具计算预期销量\n"
-            f'   参数: {{"baseline_sales": {payload.baseline_sales}, "current_price": "{money(product.current_price)}", '
-            f'"target_price": "你的建议价格", "strategy_goal": "{payload.strategy_goal}"}}\n'
-            "4. 使用 estimate_profit 工具计算预期利润\n"
-            f'   参数: {{"price": "你的建议价格", "cost_price": "{money(product.cost_price)}", "expected_sales": 预估销量}}\n'
-            "5. 确定建议价格区间（最低价不低于成本价×1.08）\n\n"
+            "3. 直接采用预计算的候选建议价、expectedSales、expectedProfit 和建议价格区间\n"
+            "4. 解释这些数值与策略目标、成本和基线利润之间的关系\n\n"
             "最终输出必须是严格的JSON格式，包含以下字段："
         ),
         expected_output=(
@@ -304,7 +415,6 @@ def build_pricing_crew(
             '"confidence": 置信度(0-1之间的小数), '
             '"thinking": "你的分析思路(中文)", '
             '"summary": "分析摘要(中文字符串)"}'
-            '\nMust also include "agentOpinion" with version, opinionId, taskId, runAttempt, agentCode, agentName, kind, status, summary, pricing, impact, evidence, rationale, and relations.'
         ),
         agent=agents["DATA_ANALYSIS"],
         callback=on_task_done,
@@ -329,9 +439,10 @@ def build_pricing_crew(
             "- sourceStatus != OK 时，不得编造市场价格带，建议价必须保守并在summary中说明原因。\n"
             "- validCompetitorCount < 3 时，不得输出强建议价；只能输出风险提示和弱建议。\n"
             "- dataQuality = LOW 时，confidence 不得高于 0.6。\n"
-            "- 所有面向用户的自然语言字段必须使用中文，包括 thinking、summary、pricingPosition、riskNotes、evidenceSummary、qualityReasons。\n"
-            "- 如果已给出 salesWeightedAverage / salesWeightedMedian，必须原样回填；没有数据时填 null，不要写 0 占位。\n"
-            "- 所有结论必须引用给定统计值，不允许重新虚构样本。\n\n"
+            "- 所有面向用户的自然语言字段必须使用中文，包括 thinking、summary、riskNotes、evidenceSummary、qualityReasons。\n"
+            "- 同一事实不得在 summary、evidenceSummary、riskNotes 中重复表述；结论、证据、风险、动作各说一次即可。\n"
+            "- validCompetitorCount 是唯一必须输出的样本量字段，不要输出 rawItemCount、filteredItemCount、competitorSamples、usedCompetitorCount。\n"
+            "- 不要输出 pricingPosition、salesWeightedAverage、salesWeightedMedian、shopTypeBreakdown，这些字段不再作为默认展示契约的一部分。\n"
             "最终输出必须是严格的JSON格式："
         ),
         expected_output=(
@@ -344,63 +455,33 @@ def build_pricing_crew(
             '"confidence": 置信度(0-1之间的小数), '
             '"thinking": "你的分析思路(中文)", '
             '"summary": "市场分析摘要(中文字符串)", '
-            '"competitorSamples": 竞品样本数(整数), '
-            '"rawItemCount": 原始样本数(整数), '
-            '"filteredItemCount": 过滤后样本数(整数), '
             '"validCompetitorCount": 有效竞品数(整数), '
             '"dataQuality": "HIGH/MEDIUM/LOW", '
             '"qualityReasons": ["质量原因"], '
-            '"pricingPosition": "当前价格相对市场位置说明", '
-            '"usedCompetitorCount": 纳入分析的有效竞品数(整数), '
             '"riskNotes": "风险提示(中文，可空)", '
             '"evidenceSummary": "证据摘要(中文，可空)", '
-            '"salesWeightedAverage": 销量加权均价(数字, 无数据时填 null), '
-            '"salesWeightedMedian": 销量加权中位价(数字, 无数据时填 null), '
             '"brandBreakdown": [{"brand": "品牌", "sampleCount": 样本数, "averagePrice": 均价, "medianPrice": 中位价, "minPrice": 最低价, "maxPrice": 最高价}], '
-            '"shopTypeBreakdown": [{"shopType": "店铺类型", "sampleCount": 样本数, "share": 占比, "averagePrice": 均价}], '
             '"promotionDensity": {"promotionRate": 促销占比, "averageDiscount": 平均折扣率, "promotedSampleCount": 在促样本数}, '
             '"source": "竞品来源", '
             '"sourceStatus": "竞品状态"}'
-            '\nMust also include "agentOpinion" with version, opinionId, taskId, runAttempt, agentCode, agentName, kind, status, summary, pricing, market, evidence, rationale, and relations.'
         ),
         agent=agents["MARKET_INTEL"],
         callback=on_task_done,
     )
 
     # ── Task 3: 风险控制任务（独立执行，不依赖其他 Agent） ──
-    # 构建风控工具参数提示
-    risk_tool_params = (
-        f'"current_price": {float(money(product.current_price))}, '
-        f'"cost_price": {float(money(product.cost_price))}, '
-        '"candidate_price": 你确定的候选价格'
-    )
-    min_pr = float(payload.constraints.get("min_profit_rate", 0.15))
-    risk_tool_params += f', "min_profit_rate": {min_pr}'
-    max_dr = payload.constraints.get("max_discount_rate")
-    if max_dr is not None:
-        risk_tool_params += f', "max_discount_rate": {float(max_dr)}'
-    min_p = payload.constraints.get("min_price")
-    if min_p is not None:
-        risk_tool_params += f', "min_price": {float(min_p)}'
-    max_p = payload.constraints.get("max_price")
-    if max_p is not None:
-        risk_tool_params += f', "max_price": {float(max_p)}'
-
     risk_task = Task(
         description=(
             f"你正在为商品「{product.product_name}」的定价方案进行风险评估。\n"
             f"当前售价: {money(product.current_price)}元，成本价: {money(product.cost_price)}元\n"
             f"策略目标: {strategy_cn}\n"
             f"约束条件: {constraints_text}\n\n"
+            "以下是预计算风控校验结果（Python 已执行硬约束规则）：\n"
+            f"{risk_projection}\n\n"
             "请按以下步骤操作：\n"
-            "1. 根据策略目标确定一个候选价格：\n"
-            "   - 利润优先：当前售价上浮2%左右\n"
-            "   - 清仓促销：当前售价下调5%左右\n"
-            "   - 市场份额优先：当前售价下调3%左右\n"
-            "2. 使用 evaluate_risk_rules 工具校验候选价格，参数如下：\n"
-            f"   {{{risk_tool_params}}}\n"
-            "3. 根据工具返回结果，判断候选价格是否安全\n"
-            "4. 如果候选价格不通过，使用工具返回的suggested_price作为风控建议价\n\n"
+            "1. 核对预计算的候选价、成本底线、最低利润率和上下限约束\n"
+            "2. 直接采用预计算的 safeFloorPrice、风控建议价、isPass、riskLevel 和 needManualReview\n"
+            "3. 用中文解释为什么该价格通过或不通过风控\n\n"
             "最终输出必须是严格的JSON格式："
         ),
         expected_output=(
@@ -412,7 +493,6 @@ def build_pricing_crew(
             '"needManualReview": 是否需人工复核(true/false), '
             '"thinking": "你的分析思路(中文)", '
             '"summary": "风控评估摘要(中文字符串)"}'
-            '\nMust also include "agentOpinion" with version, opinionId, taskId, runAttempt, agentCode, agentName, kind, status, summary, pricing, risk, evidence, rationale, and relations.'
         ),
         agent=agents["RISK_CONTROL"],
         callback=on_task_done,

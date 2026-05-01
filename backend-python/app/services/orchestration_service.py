@@ -8,7 +8,7 @@
   2. 构建 CrewBundle（4 Agent + 4 Task）
   3. 通过 ResumeService 计算续跑断点（上一轮已完成的 Agent 会被跳过）
   4. 并行执行缺失的三个分析 Agent；已完成 Agent 从 agent_run_log.raw_output_json 复用
-  5. 分析 Agent 成功后立即写入 agent_run_log（带 raw_output_json）供下次重试复用
+  5. 三个分析 Agent 全部结束后统一写入成功 agent_run_log（带 raw_output_json）供下次重试复用
   6. 经理 Agent 完成后 → 解析最终决策 → 强制硬约束校验 → 写入 pricing_result
 """
 # 编排服务，负责驱动三个分析智能体并行执行，再由经理智能体完成最终定价决策。
@@ -80,6 +80,24 @@ def _safe_positive_float(val: Any) -> float | None:
 def _safe_optional_float(val: Any) -> float | None:
     try:
         return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_rate_change(new_value: Any, old_value: Any) -> float | None:
+    try:
+        new_numeric = float(new_value)
+        old_numeric = float(old_value)
+    except (TypeError, ValueError):
+        return None
+    if old_numeric <= 0:
+        return None
+    return round((new_numeric - old_numeric) / old_numeric, 4)
+
+
+def _safe_money_delta(new_value: Any, old_value: Any) -> float | None:
+    try:
+        return round(float(new_value) - float(old_value), 2)
     except (TypeError, ValueError):
         return None
 
@@ -335,7 +353,7 @@ class OrchestrationService:
             self._publish_agent_running(payload, order)
 
         future_by_order: dict[Any, int] = {}
-        raw_outputs: dict[int, str] = {}
+        parsed_by_order: dict[int, dict[str, Any]] = {}
         first_error: Exception | None = None
         with ThreadPoolExecutor(max_workers=max(len(orders_to_run), 1)) as executor:
             for order in orders_to_run:
@@ -356,7 +374,7 @@ class OrchestrationService:
                 order = future_by_order[future]
                 meta = self._get_agent_meta(order)
                 try:
-                    raw_outputs[order] = future.result()
+                    raw = future.result()
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Agent [%s] 执行失败: %s", meta["name"], exc, exc_info=True)
                     self._write_agent_failed_card(
@@ -366,27 +384,29 @@ class OrchestrationService:
                     )
                     if first_error is None:
                         first_error = exc
+                    continue
+
+                try:
+                    parsed = self._parse_and_validate_output(order=order, raw=raw)
+                except AgentOutputValidationError as exc:
+                    logger.warning("Agent [%s] 输出结构校验失败: %s", meta["name"], exc, exc_info=True)
+                    self._write_agent_failed_card(payload=payload, order=order, summary=str(exc))
+                    if first_error is None:
+                        first_error = exc
+                    continue
+
+                parsed = self._normalize_output_with_agent_opinion(
+                    payload=payload,
+                    order=order,
+                    parsed=parsed,
+                    prior_outputs=prior_outputs,
+                )
+                parsed_by_order[order] = parsed
 
         for order in orders_to_run:
-            raw = raw_outputs.get(order)
-            if raw is None:
+            parsed = parsed_by_order.get(order)
+            if parsed is None:
                 continue
-            meta = self._get_agent_meta(order)
-            try:
-                parsed = self._parse_and_validate_output(order=order, raw=raw)
-            except AgentOutputValidationError as exc:
-                logger.warning("Agent [%s] 输出结构校验失败: %s", meta["name"], exc, exc_info=True)
-                self._write_agent_failed_card(payload=payload, order=order, summary=str(exc))
-                if first_error is None:
-                    first_error = exc
-                continue
-
-            parsed = self._normalize_output_with_agent_opinion(
-                payload=payload,
-                order=order,
-                parsed=parsed,
-                prior_outputs=prior_outputs,
-            )
             prior_outputs[order] = parsed
             self._write_agent_success_card(
                 payload=payload,
@@ -428,6 +448,60 @@ class OrchestrationService:
     @staticmethod
     def _build_opinion_id(task_id: int, agent_code: str, run_attempt: int = 0) -> str:
         return f"task:{task_id}:agent:{agent_code}:attempt:{run_attempt}"
+
+    @staticmethod
+    def _find_prior_opinion_id(prior_outputs: dict[int, dict[str, Any]], agent_code: str) -> str | None:
+        for output in prior_outputs.values():
+            if not isinstance(output, dict):
+                continue
+            opinion = output.get("agentOpinion")
+            if not isinstance(opinion, dict):
+                continue
+            if str(opinion.get("agentCode") or "") != agent_code:
+                continue
+            opinion_id = opinion.get("opinionId")
+            if opinion_id:
+                return str(opinion_id)
+        return None
+
+    @staticmethod
+    def _extract_upstream_agent_code_from_opinion_ref(value: Any) -> str | None:
+        text = str(value or "").strip()
+        for agent_code in ("DATA_ANALYSIS", "MARKET_INTEL", "RISK_CONTROL"):
+            if text == agent_code or f":agent:{agent_code}:" in text:
+                return agent_code
+        return None
+
+    @staticmethod
+    def _normalize_manager_relation_ids(
+        relations: Any,
+        prior_outputs: dict[int, dict[str, Any]],
+    ) -> Any:
+        if not isinstance(relations, dict):
+            return relations
+        normalized = dict(relations)
+        for field_name in (
+            "dependsOnOpinionIds",
+            "acceptedOpinionIds",
+            "rejectedOpinionIds",
+            "conflictOpinionIds",
+            "selectedOpinionIds",
+        ):
+            values = normalized.get(field_name)
+            if not isinstance(values, list):
+                continue
+            remapped_values: list[str] = []
+            for value in values:
+                text = str(value)
+                agent_code = OrchestrationService._extract_upstream_agent_code_from_opinion_ref(text)
+                prior_opinion_id = (
+                    OrchestrationService._find_prior_opinion_id(prior_outputs, agent_code)
+                    if agent_code
+                    else None
+                )
+                remapped_values.append(prior_opinion_id or text)
+            normalized[field_name] = remapped_values
+        return normalized
 
     @staticmethod
     def _infer_task_id_from_prior_outputs(prior_outputs: dict[int, dict[str, Any]]) -> int:
@@ -514,11 +588,13 @@ class OrchestrationService:
         }
         decision: dict[str, Any] | None = None
         status = "BLOCKED" if agent_code == "RISK_CONTROL" and not bool(parsed.get("isPass", False)) else "PROPOSED"
+        confidence = parsed.get("confidence")
 
         if agent_code == "MANAGER_COORDINATOR":
             selected_agent = _normalize_selected_agent(_first_present(parsed, "selectedAgent", "selectedOption"))
             selected_opinion_id = (
-                OrchestrationService._build_opinion_id(task_id, selected_agent, run_attempt)
+                OrchestrationService._find_prior_opinion_id(prior_outputs, selected_agent)
+                or OrchestrationService._build_opinion_id(task_id, selected_agent, run_attempt)
                 if selected_agent
                 else None
             )
@@ -534,6 +610,9 @@ class OrchestrationService:
                 "arbitrationReason": _first_present(parsed, "arbitrationReason", "decisionReason"),
             }
             status = "ACCEPTED" if decision_type == "FOLLOW" else "MERGED"
+            confidence = confidence if confidence is not None else parsed.get("consensusScore")
+        elif agent_code == "RISK_CONTROL":
+            confidence = confidence if confidence is not None else 1.0
 
         base_opinion = {
             "version": "v1",
@@ -545,7 +624,7 @@ class OrchestrationService:
             "kind": _AGENT_KIND_BY_CODE[agent_code],
             "status": status,
             "summary": str(parsed.get("summary") or parsed.get("resultSummary") or f"{agent_name} opinion"),
-            "confidence": parsed.get("confidence"),
+            "confidence": confidence,
             "pricing": pricing,
             "impact": impact,
             "market": market,
@@ -573,6 +652,11 @@ class OrchestrationService:
             if isinstance(provided_opinion, dict)
             else base_opinion
         )
+        if agent_code == "MANAGER_COORDINATOR":
+            merged_opinion["relations"] = OrchestrationService._normalize_manager_relation_ids(
+                merged_opinion.get("relations"),
+                prior_outputs,
+            )
         opinion = AgentOpinionV1.model_validate(merged_opinion)
         return opinion.model_dump(by_alias=True, exclude_none=True, mode="json")
 
@@ -690,15 +774,21 @@ class OrchestrationService:
         max_price = _safe_float(parsed.get("suggestedMaxPrice"))
         expected_sales = _safe_int(parsed.get("expectedSales"))
         expected_profit = _safe_float(parsed.get("expectedProfit"))
+        price_change_rate = _safe_rate_change(suggested_price, payload.product.current_price)
+        profit_growth = _safe_money_delta(expected_profit, payload.baseline_profit)
 
         suggestion = {
             "priceRange": {"min": min_price, "max": max_price},
             "recommendedPrice": suggested_price,
             "expectedSales": expected_sales,
             "expectedProfit": expected_profit,
+            "priceChangeRate": price_change_rate,
+            "profitGrowth": profit_growth,
             "expectedProfitRate": round(
                 expected_profit / max(suggested_price * max(expected_sales, 1), 0.01), 4
             ),
+            "merchantPainPoint": "判断调价后销量和利润是否划算，避免只看价格不看收益",
+            "merchantAction": "优先查看利润变化，再结合市场与风控确认是否采用",
             "summary": parsed.get("summary", "数据分析完成"),
         }
 
@@ -734,11 +824,14 @@ class OrchestrationService:
         degraded = source_status.upper() != "OK" or data_quality.upper() == "LOW" or valid_count < 3
         if not risk_notes and degraded:
             risk_notes = "本次竞品数据不足，仅供参考"
+        if source_status.upper() != "OK":
+            merchant_action = "先补充竞品数据或手动复核，不建议按市场价大幅调价"
+        elif data_quality.upper() == "LOW" or valid_count < 3:
+            merchant_action = "竞品样本偏少，建议小幅试探并保留人工复核"
+        else:
+            merchant_action = "竞品数据可信，可结合价格带判断是否跟随、卡位或避开低价竞争"
 
         evidence = [
-            {"label": "原始样本数", "value": raw_count},
-            {"label": "过滤后样本数", "value": filtered_count},
-            {"label": "竞品样本数", "value": sample_count},
             {"label": "有效样本数", "value": valid_count},
             {"label": "市场最低价", "value": market_floor},
             {"label": "市场中位价", "value": market_median},
@@ -754,20 +847,9 @@ class OrchestrationService:
             ]
         )
 
-        sales_weighted_avg = _safe_positive_float(parsed.get("salesWeightedAverage"))
-        sales_weighted_median = _safe_positive_float(parsed.get("salesWeightedMedian"))
-        if sales_weighted_avg is not None:
-            evidence.append({"label": "销量加权均价", "value": sales_weighted_avg})
-        if sales_weighted_median is not None:
-            evidence.append({"label": "销量加权中位价", "value": sales_weighted_median})
-
         brand_breakdown = parsed.get("brandBreakdown") or []
         if isinstance(brand_breakdown, list) and brand_breakdown:
             evidence.append({"label": "品牌价格带", "value": brand_breakdown[:5]})
-
-        shop_type_breakdown = parsed.get("shopTypeBreakdown") or []
-        if isinstance(shop_type_breakdown, list) and shop_type_breakdown:
-            evidence.append({"label": "店铺类型分布", "value": shop_type_breakdown[:5]})
 
         promotion_density = parsed.get("promotionDensity") or {}
         if isinstance(promotion_density, dict) and promotion_density:
@@ -785,11 +867,13 @@ class OrchestrationService:
             "source": source,
             "sourceStatus": source_status,
             "dataQuality": data_quality,
-            "pricingPosition": pricing_position,
+            "pricingPosition": None,
             "usedCompetitorCount": valid_count,
             "riskNotes": risk_notes,
             "evidenceSummary": evidence_summary or None,
-            "salesWeightedAverage": sales_weighted_avg,
+            "salesWeightedAverage": None,
+            "merchantPainPoint": "判断竞品价格能否支撑调价，避免卖贵丢单或卖便宜少赚",
+            "merchantAction": merchant_action,
             "summary": parsed.get("summary", "市场情报分析完成"),
         }
 
@@ -820,9 +904,13 @@ class OrchestrationService:
 
         suggestion = {
             "recommendedPrice": suggested,
+            "safeFloorPrice": safe_floor,
             "pass": is_pass,
             "riskLevel": to_risk_level_cn(risk_level),
+            "needManualReview": bool(parsed.get("needManualReview", not is_pass)),
             "action": "自动执行" if is_pass else "人工审核",
+            "merchantPainPoint": "确认是否会亏损、低毛利或突破商家设置的价格红线",
+            "merchantAction": "已满足价格红线，可进入人工审核确认活动节奏" if is_pass else "按安全底价或约束修正后再提交人工审核",
             "summary": parsed.get("summary", "风控评估完成"),
         }
 
@@ -859,6 +947,7 @@ class OrchestrationService:
             "finalPrice": _safe_float(parsed.get("finalPrice")),
             "expectedSales": _safe_int(parsed.get("expectedSales")),
             "expectedProfit": _safe_float(parsed.get("expectedProfit")),
+            "profitGrowth": _safe_optional_float(parsed.get("profitGrowth")),
             "strategy": MANUAL_REVIEW_STRATEGY,
             "consensusScore": _safe_float_in_range(parsed.get("consensusScore"), 0.0, 1.0),
             "disagreementSummary": _normalize_optional_text(parsed.get("disagreementSummary")),
@@ -876,6 +965,8 @@ class OrchestrationService:
             ),
             "selectedPrice": _safe_optional_float(parsed.get("selectedPrice")),
             "selectedStrategy": _normalize_optional_text(parsed.get("selectedStrategy")),
+            "merchantPainPoint": "给出商家可落地的最终价格、预期收益和复核动作",
+            "merchantAction": "进入人工审核，核对库存、活动节奏后再应用建议价",
             "summary": parsed.get("resultSummary", "综合决策完成"),
         }
 
