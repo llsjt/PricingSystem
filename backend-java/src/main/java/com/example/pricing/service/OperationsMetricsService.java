@@ -64,9 +64,10 @@ public class OperationsMetricsService {
                 }
             }
 
-            if (("RUNNING".equals(status) || "RETRYING".equals(status))
-                    && task.getStartedAt() != null
-                    && !task.getStartedAt().isAfter(staleThreshold)) {
+            LocalDateTime leaseTime = task.getLastHeartbeatAt() == null ? task.getStartedAt() : task.getLastHeartbeatAt();
+            if ("RUNNING".equals(status)
+                    && leaseTime != null
+                    && !leaseTime.isAfter(staleThreshold)) {
                 staleRunningTasks++;
             }
 

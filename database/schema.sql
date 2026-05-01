@@ -174,6 +174,9 @@ CREATE TABLE pricing_task (
     retry_count INT NOT NULL DEFAULT 0 COMMENT '重试次数',
     consumer_retry_count INT NOT NULL DEFAULT 0 COMMENT 'RabbitMQ 消费层重试次数',
     current_execution_id VARCHAR(64) DEFAULT NULL COMMENT '当前占用执行 id，用于 execution fencing',
+    last_heartbeat_at DATETIME DEFAULT NULL COMMENT '当前执行租约心跳时间',
+    recovery_count INT NOT NULL DEFAULT 0 COMMENT '自动恢复次数',
+    last_recovered_at DATETIME DEFAULT NULL COMMENT '最近自动恢复时间',
     failure_reason VARCHAR(255) DEFAULT NULL COMMENT '失败原因',
     started_at DATETIME DEFAULT NULL COMMENT '开始时间',
     completed_at DATETIME DEFAULT NULL COMMENT '完成时间',
@@ -185,6 +188,7 @@ CREATE TABLE pricing_task (
     KEY idx_pricing_task_idempotency_key (idempotency_key),
     KEY idx_pricing_task_requested_user (requested_by_user_id),
     KEY idx_pricing_task_execution (current_execution_id),
+    KEY idx_pricing_task_status_heartbeat (task_status, last_heartbeat_at),
     KEY idx_pricing_task_status_created (task_status, created_at),
     CONSTRAINT fk_pricing_task_shop FOREIGN KEY (shop_id) REFERENCES shop(id),
     CONSTRAINT fk_pricing_task_product FOREIGN KEY (product_id) REFERENCES product(id),
@@ -319,6 +323,7 @@ INSERT INTO schema_migration_history (version, checksum, description, applied_at
     ('migration_20260419_agent_raw_output', REPEAT('0', 64), 'baseline schema includes per-Agent raw output JSON for partial retry', CURRENT_TIMESTAMP),
     ('migration_20260420_pricing_batch', REPEAT('0', 64), 'baseline schema includes batch pricing tables', CURRENT_TIMESTAMP),
     ('migration_20260421_rabbitmq_async', REPEAT('0', 64), 'baseline schema includes RabbitMQ async task columns', CURRENT_TIMESTAMP),
-    ('migration_20260423_pricing_batch_comment_cn', REPEAT('0', 64), 'baseline schema includes localized batch pricing comments', CURRENT_TIMESTAMP);
+    ('migration_20260423_pricing_batch_comment_cn', REPEAT('0', 64), 'baseline schema includes localized batch pricing comments', CURRENT_TIMESTAMP),
+    ('migration_20260501_task_recovery_lease', REPEAT('0', 64), 'baseline schema includes task recovery lease fields', CURRENT_TIMESTAMP);
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.trace_context import bind_trace_context
 from app.core.security import verify_internal_token
 from app.db.session import get_db
@@ -17,6 +18,7 @@ from app.schemas.task import (
 )
 from app.services.dispatch_service import DispatchService
 from app.services.dispatch_publisher_service import get_dispatch_publisher_service
+from app.services.task_recovery_service import TaskRecoveryService
 
 router = APIRouter(
     prefix="/tasks",
@@ -51,6 +53,25 @@ def task_logs(
 
     service = DispatchService(db)
     return service.get_logs(task_id, limit=limit)
+
+
+@router.post("/recover-stale")
+async def recover_stale_tasks(db: Session = Depends(get_db)) -> dict:
+    settings = get_settings()
+    result = await TaskRecoveryService(db).recover_once_async(
+        lease_timeout_seconds=settings.running_lease_timeout_seconds,
+        max_retries=settings.agent_max_retries,
+        batch_size=settings.recovery_batch_size,
+        dispatch_republish_seconds=settings.dispatch_republish_seconds,
+    )
+    return {
+        "scanned": result.scanned,
+        "requeued": result.requeued,
+        "failed": result.failed,
+        "republished": result.republished,
+        "skipped": result.skipped,
+        "publishFailed": result.publish_failed,
+    }
 
 
 @router.post("/{task_id}/retry", response_model=DispatchTaskResponse)

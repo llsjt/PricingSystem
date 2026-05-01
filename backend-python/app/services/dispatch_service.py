@@ -146,7 +146,13 @@ class DispatchService:
             message=f"retry accepted, queue size {queue_service.queue_size()}",
         )
 
-    def handle_worker_failure(self, req: DispatchTaskRequest, reason: str, max_retries: int) -> DispatchTaskResponse:
+    def handle_worker_failure(
+        self,
+        req: DispatchTaskRequest,
+        reason: str,
+        max_retries: int,
+        execution_id: str | None = None,
+    ) -> DispatchTaskResponse:
         """处理 Worker 执行失败后的重试状态流转，并保留可用于断点续跑的成功卡片。"""
         task = self.task_repo.get_by_id(req.task_id)
         if task is None:
@@ -157,7 +163,18 @@ class DispatchService:
             return DispatchTaskResponse(accepted=False, taskId=req.task_id, status="CANCELLED", message="task cancelled")
 
         if int(task.retry_count or 0) >= max(max_retries, 0):
-            self.task_repo.update_status(task, "FAILED", failure_reason=reason)
+            if execution_id:
+                updated = self.task_repo.mark_failed_if_owner(task.id, execution_id, reason)
+                if updated == 0:
+                    current = self.task_repo.get_by_id(task.id)
+                    return DispatchTaskResponse(
+                        accepted=False,
+                        taskId=req.task_id,
+                        status=str(getattr(current, "task_status", status) or status),
+                        message="execution owner changed",
+                    )
+            else:
+                self.task_repo.update_status(task, "FAILED", failure_reason=reason)
             return DispatchTaskResponse(
                 accepted=False,
                 taskId=req.task_id,
@@ -170,7 +187,23 @@ class DispatchService:
         self.log_repo.delete_running_and_failed_by_run_attempt(
             task.id, int(task.retry_count or 0)
         )
-        self.task_repo.mark_retrying(task, trace_id=req.trace_id, failure_reason=reason)
+        if execution_id:
+            updated = self.task_repo.mark_retrying_if_owner(
+                task.id,
+                execution_id,
+                trace_id=req.trace_id,
+                failure_reason=reason,
+            )
+            if updated == 0:
+                current = self.task_repo.get_by_id(task.id)
+                return DispatchTaskResponse(
+                    accepted=False,
+                    taskId=req.task_id,
+                    status=str(getattr(current, "task_status", status) or status),
+                    message="execution owner changed",
+                )
+        else:
+            self.task_repo.mark_retrying(task, trace_id=req.trace_id, failure_reason=reason)
         return DispatchTaskResponse(
             accepted=True,
             taskId=req.task_id,

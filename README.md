@@ -208,7 +208,8 @@ docker compose --env-file .env.public-beta -f docker-compose.public-beta.yml log
 - 前端通过 `Bearer Token` 访问受保护接口
 - 会话续期使用 Refresh Token Cookie
 - Java 与 Python 间内部调用使用 `X-Internal-Token`
-- 主任务派发走 RabbitMQ；Python 内部 HTTP 当前主要用于健康检查、任务状态/详情/日志查询和重试
+- 主任务派发走 RabbitMQ；Python 内部 HTTP 当前主要用于健康检查、任务状态/详情/日志查询、重试和 stale RUNNING 恢复
+- Python Worker 通过 `current_execution_id` + `last_heartbeat_at` 维护执行租约，自动恢复心跳过期的孤儿任务
 - 实时任务更新通过 SSE：`GET /api/pricing/tasks/{taskId}/events`
 - 生产部署时需要显式配置数据库密钥、JWT 密钥、内部令牌和跨域白名单
 

@@ -52,6 +52,10 @@ class FakeRepo:
         self.calls.append(("mark_failed_force", task_id, reason))
         return 1
 
+    def touch_execution_heartbeat(self, task_id: int, execution_id: str) -> int:
+        self.calls.append(("touch_execution_heartbeat", task_id, execution_id))
+        return 1
+
 
 class FakeDispatchService:
     def __init__(self, side_effect=None, failure_response=None):
@@ -65,8 +69,8 @@ class FakeDispatchService:
         if self.side_effect:
             raise self.side_effect
 
-    def handle_task_failure(self, task_id: int, reason: str, max_retries: int):
-        self.failure_calls.append((task_id, reason, max_retries))
+    def handle_task_failure(self, task_id: int, execution_id: str, reason: str, max_retries: int):
+        self.failure_calls.append((task_id, execution_id, reason, max_retries))
         return self.failure_response
 
 
@@ -149,6 +153,7 @@ def _build_settings(*, concurrency: int = 1, prefetch: int = 1, agent_max_retrie
         worker_max_retry=3,
         worker_retry_backoff_max_seconds=30,
         agent_max_retries=agent_max_retries,
+        execution_heartbeat_interval_seconds=30,
     )
 
 
@@ -217,7 +222,9 @@ def test_on_message_requeues_orchestration_failure_through_agent_retry_budget():
 
     assert message.acked == 0
     assert message.nacked == [True]
-    assert dispatch.failure_calls == [(22, "Agent execution timed out", 2)]
+    assert len(dispatch.failure_calls) == 1
+    assert dispatch.failure_calls[0][0] == 22
+    assert dispatch.failure_calls[0][2:] == ("Agent execution timed out", 2)
     assert all(call[0] != "mark_failed_if_owner" for call in repo.calls)
     assert all(call[0] != "TASK_FAILED" for call in progress.calls)
 
@@ -242,7 +249,9 @@ def test_on_message_publishes_failed_when_agent_retry_budget_is_exhausted():
 
     assert message.acked == 1
     assert message.nacked == []
-    assert dispatch.failure_calls == [(23, "bad output", 1)]
+    assert len(dispatch.failure_calls) == 1
+    assert dispatch.failure_calls[0][0] == 23
+    assert dispatch.failure_calls[0][2:] == ("bad output", 1)
     assert all(call[0] != "mark_failed_if_owner" for call in repo.calls)
     assert any(call[0] == "TASK_FAILED" for call in progress.calls)
 

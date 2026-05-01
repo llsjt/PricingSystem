@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.pricing_task import PricingTask
@@ -51,6 +51,7 @@ class TaskRepo:
                         PricingTask.task_status: "RUNNING",
                         PricingTask.started_at: now,
                         PricingTask.completed_at: None,
+                        PricingTask.last_heartbeat_at: now,
                     },
                     synchronize_session=False,
                 )
@@ -83,6 +84,7 @@ class TaskRepo:
                     PricingTask.task_status: "RUNNING",
                     PricingTask.started_at: now,
                     PricingTask.completed_at: None,
+                    PricingTask.last_heartbeat_at: now,
                     PricingTask.failure_reason: None,
                     PricingTask.consumer_retry_count: case(
                         (PricingTask.current_execution_id.is_(None), PricingTask.consumer_retry_count),
@@ -94,6 +96,110 @@ class TaskRepo:
         )
         self.db.commit()
         return updated == 1
+
+    def touch_execution_heartbeat(self, task_id: int, execution_id: str) -> int:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        updated = (
+            self.db.query(PricingTask)
+            .filter(
+                PricingTask.id == int(task_id),
+                PricingTask.current_execution_id == execution_id,
+                PricingTask.task_status == "RUNNING",
+            )
+            .update({PricingTask.last_heartbeat_at: now}, synchronize_session=False)
+        )
+        self.db.commit()
+        return int(updated or 0)
+
+    def list_stale_running(self, stale_before: datetime, limit: int = 50) -> list[PricingTask]:
+        stmt = (
+            select(PricingTask)
+            .where(
+                PricingTask.task_status == "RUNNING",
+                PricingTask.completed_at.is_(None),
+                PricingTask.current_execution_id.is_not(None),
+                self._stale_lease_filter(stale_before),
+            )
+            .order_by(PricingTask.last_heartbeat_at.asc(), PricingTask.started_at.asc(), PricingTask.id.asc())
+            .limit(max(int(limit or 1), 1))
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def list_stale_dispatchable(self, stale_before: datetime, limit: int = 50) -> list[PricingTask]:
+        stmt = (
+            select(PricingTask)
+            .where(
+                PricingTask.task_status.in_(("QUEUED", "RETRYING")),
+                PricingTask.current_execution_id.is_(None),
+                PricingTask.updated_at <= stale_before,
+            )
+            .order_by(PricingTask.updated_at.asc(), PricingTask.id.asc())
+            .limit(max(int(limit or 1), 1))
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def recover_stale_running(
+        self,
+        task_id: int,
+        execution_id: str,
+        *,
+        stale_before: datetime,
+        max_retries: int,
+        reason: str | None,
+    ) -> str | None:
+        filters = [
+            PricingTask.id == int(task_id),
+            PricingTask.current_execution_id == execution_id,
+            PricingTask.task_status == "RUNNING",
+            PricingTask.completed_at.is_(None),
+            self._stale_lease_filter(stale_before),
+        ]
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        safe_reason = (reason or "worker heartbeat expired")[:255]
+
+        failed = (
+            self.db.query(PricingTask)
+            .filter(*filters, PricingTask.retry_count >= max(int(max_retries), 0))
+            .update(
+                {
+                    PricingTask.task_status: "FAILED",
+                    PricingTask.current_execution_id: None,
+                    PricingTask.failure_reason: safe_reason,
+                    PricingTask.llm_api_key_enc: None,
+                    PricingTask.llm_base_url: None,
+                    PricingTask.llm_model: None,
+                    PricingTask.completed_at: now,
+                    PricingTask.recovery_count: PricingTask.recovery_count + 1,
+                    PricingTask.last_recovered_at: now,
+                },
+                synchronize_session=False,
+            )
+        )
+        if failed:
+            self.db.commit()
+            return "FAILED"
+
+        requeued = (
+            self.db.query(PricingTask)
+            .filter(*filters, PricingTask.retry_count < max(int(max_retries), 0))
+            .update(
+                {
+                    PricingTask.task_status: "RETRYING",
+                    PricingTask.retry_count: PricingTask.retry_count + 1,
+                    PricingTask.current_execution_id: None,
+                    PricingTask.failure_reason: safe_reason,
+                    PricingTask.started_at: None,
+                    PricingTask.completed_at: None,
+                    PricingTask.recovery_count: PricingTask.recovery_count + 1,
+                    PricingTask.last_recovered_at: now,
+                },
+                synchronize_session=False,
+            )
+        )
+        self.db.commit()
+        if requeued:
+            return "RETRYING"
+        return None
 
     def increment_consumer_retry_and_release(self, task_id: int, execution_id: str, reason: str | None) -> int:
         updated = (
@@ -130,6 +236,7 @@ class TaskRepo:
             .update(
                 {
                     PricingTask.task_status: "FAILED",
+                    PricingTask.current_execution_id: None,
                     PricingTask.failure_reason: (reason or "")[:255] if reason else None,
                     PricingTask.llm_api_key_enc: None,
                     PricingTask.llm_base_url: None,
@@ -153,6 +260,7 @@ class TaskRepo:
             .update(
                 {
                     PricingTask.task_status: "FAILED",
+                    PricingTask.current_execution_id: None,
                     PricingTask.failure_reason: (reason or "")[:255] if reason else None,
                     PricingTask.llm_api_key_enc: None,
                     PricingTask.llm_base_url: None,
@@ -186,6 +294,7 @@ class TaskRepo:
         if status in {"RUNNING"}:
             task.started_at = now
             task.completed_at = None
+            task.last_heartbeat_at = now
         elif status in {"FAILED", "CANCELLED", "COMPLETED", "MANUAL_REVIEW"}:
             task.completed_at = now
 
@@ -227,6 +336,36 @@ class TaskRepo:
         self.db.commit()
         self.db.refresh(task)
         return task
+
+    def mark_retrying_if_owner(
+        self,
+        task_id: int,
+        execution_id: str,
+        *,
+        trace_id: str | None = None,
+        failure_reason: str | None = None,
+    ) -> int:
+        updated_values = {
+            PricingTask.task_status: "RETRYING",
+            PricingTask.retry_count: PricingTask.retry_count + 1,
+            PricingTask.current_execution_id: None,
+            PricingTask.failure_reason: failure_reason[:255] if failure_reason else None,
+            PricingTask.started_at: None,
+            PricingTask.completed_at: None,
+        }
+        if trace_id:
+            updated_values[PricingTask.trace_id] = trace_id
+        updated = (
+            self.db.query(PricingTask)
+            .filter(
+                PricingTask.id == int(task_id),
+                PricingTask.current_execution_id == execution_id,
+                PricingTask.task_status.notin_(("COMPLETED", "FAILED", "CANCELLED", "MANUAL_REVIEW")),
+            )
+            .update(updated_values, synchronize_session=False)
+        )
+        self.db.commit()
+        return int(updated or 0)
 
     def mark_manual_review(self, task: PricingTask, failure_reason: str | None = None) -> PricingTask:
         return self.update_status(task, "MANUAL_REVIEW", failure_reason=failure_reason)
@@ -287,7 +426,8 @@ class TaskRepo:
             elif status == "CANCELLED":
                 cancelled += 1
 
-            if status in {"RUNNING", "RETRYING"} and task.started_at and task.started_at <= stale_threshold:
+            lease_time = task.last_heartbeat_at or task.started_at
+            if status == "RUNNING" and lease_time and lease_time <= stale_threshold:
                 stale_running += 1
 
             if status in {"COMPLETED", "MANUAL_REVIEW", "FAILED", "CANCELLED"} and task.started_at and task.completed_at:
@@ -312,3 +452,10 @@ class TaskRepo:
             "maxDurationSeconds": round(duration_max, 2),
             "latestTaskCreatedAt": latest_created_at.isoformat() if latest_created_at else None,
         }
+
+    @staticmethod
+    def _stale_lease_filter(stale_before: datetime):
+        return or_(
+            PricingTask.last_heartbeat_at <= stale_before,
+            and_(PricingTask.last_heartbeat_at.is_(None), PricingTask.started_at <= stale_before),
+        )

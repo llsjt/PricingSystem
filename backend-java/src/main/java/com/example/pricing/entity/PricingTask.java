@@ -70,6 +70,15 @@ public class PricingTask {
     @TableField("current_execution_id")
     private String currentExecutionId;
 
+    @TableField("last_heartbeat_at")
+    private LocalDateTime lastHeartbeatAt;
+
+    @TableField("recovery_count")
+    private Integer recoveryCount;
+
+    @TableField("last_recovered_at")
+    private LocalDateTime lastRecoveredAt;
+
     @TableField("failure_reason")
     private String failureReason;
 

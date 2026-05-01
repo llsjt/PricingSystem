@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     worker_max_retry: int = Field(default=3, alias="WORKER_MAX_RETRY")
     worker_retry_backoff_max_seconds: int = Field(default=30, alias="WORKER_RETRY_BACKOFF_MAX_SECONDS")
     progress_publish_enabled: bool = Field(default=False, alias="PROGRESS_PUBLISH_ENABLED")
+    recovery_enabled: bool = Field(default=True, alias="RECOVERY_ENABLED")
+    recovery_scan_interval_seconds: int = Field(default=60, alias="RECOVERY_SCAN_INTERVAL_SECONDS")
+    recovery_batch_size: int = Field(default=50, alias="RECOVERY_BATCH_SIZE")
+    running_lease_timeout_seconds: int = Field(default=300, alias="RUNNING_LEASE_TIMEOUT_SECONDS")
+    dispatch_republish_seconds: int = Field(default=120, alias="DISPATCH_REPUBLISH_SECONDS")
+    execution_heartbeat_interval_seconds: int = Field(default=30, alias="EXECUTION_HEARTBEAT_INTERVAL_SECONDS")
 
     competitor_data_source: Literal["tmall_csv"] = Field(default="tmall_csv", alias="COMPETITOR_DATA_SOURCE")
     market_competitor_min_valid_count: int = Field(default=3, alias="MARKET_COMPETITOR_MIN_VALID_COUNT")

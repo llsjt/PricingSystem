@@ -140,6 +140,34 @@ def test_handle_worker_failure_requeues_until_retry_budget_then_marks_failed():
     assert refreshed.failure_reason == "second boom"
 
 
+def test_handle_worker_failure_does_not_override_new_execution_owner():
+    db = build_session()
+    task = create_task(db, task_id=203, status="RUNNING", retry_count=0)
+    task.current_execution_id = "exec-new"
+    db.add(task)
+    db.commit()
+    request = DispatchTaskRequest(
+        taskId=task.id,
+        productId=task.product_id,
+        productIds=[task.product_id],
+        strategyGoal=task.strategy_goal,
+        constraints=task.constraint_text,
+        traceId=task.trace_id,
+    )
+    service = DispatchService(db)
+
+    response = service.handle_worker_failure(request, "old execution failed", max_retries=2, execution_id="exec-old")
+
+    refreshed = db.get(PricingTask, task.id)
+    assert response.accepted is False
+    assert response.status == "RUNNING"
+    assert refreshed is not None
+    assert refreshed.task_status == "RUNNING"
+    assert refreshed.retry_count == 0
+    assert refreshed.current_execution_id == "exec-new"
+    assert refreshed.failure_reason is None
+
+
 def test_handle_worker_failure_preserves_completed_analysis_cards_for_manager_only_retry():
     db = build_session()
     task = create_task(

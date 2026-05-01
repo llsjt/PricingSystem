@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import create_engine
@@ -15,7 +15,15 @@ def build_session() -> Session:
     return sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)()
 
 
-def create_task(db: Session, *, task_id: int, status: str, execution_id: str | None = None, consumer_retry_count: int = 0) -> PricingTask:
+def create_task(
+    db: Session,
+    *,
+    task_id: int,
+    status: str,
+    execution_id: str | None = None,
+    consumer_retry_count: int = 0,
+    retry_count: int = 0,
+) -> PricingTask:
     task = PricingTask(
         id=task_id,
         task_code=f"TASK-{task_id}",
@@ -27,7 +35,7 @@ def create_task(db: Session, *, task_id: int, status: str, execution_id: str | N
         strategy_goal="MAX_PROFIT",
         constraint_text="",
         trace_id=f"trace-{task_id}",
-        retry_count=0,
+        retry_count=retry_count,
         consumer_retry_count=consumer_retry_count,
         current_execution_id=execution_id,
         created_at=datetime.now(timezone.utc).replace(tzinfo=None),
@@ -51,6 +59,90 @@ def test_acquire_execution_claims_unowned_task():
     assert refreshed.current_execution_id == "exec-1"
     assert refreshed.task_status == "RUNNING"
     assert refreshed.consumer_retry_count == 0
+    assert refreshed.last_heartbeat_at is not None
+
+
+def test_touch_execution_heartbeat_only_updates_current_owner():
+    db = build_session()
+    create_task(db, task_id=8, status="RUNNING", execution_id="exec-8")
+    repo = TaskRepo(db)
+
+    assert repo.touch_execution_heartbeat(8, "wrong-exec") == 0
+    before = db.get(PricingTask, 8).last_heartbeat_at
+
+    assert repo.touch_execution_heartbeat(8, "exec-8") == 1
+
+    refreshed = db.get(PricingTask, 8)
+    assert refreshed is not None
+    assert refreshed.current_execution_id == "exec-8"
+    assert refreshed.task_status == "RUNNING"
+    assert refreshed.last_heartbeat_at is not None
+    assert refreshed.last_heartbeat_at != before
+
+
+def test_recover_stale_running_retries_with_owner_fence():
+    db = build_session()
+    task = create_task(db, task_id=9, status="RUNNING", execution_id="exec-old", retry_count=0)
+    stale_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=20)
+    task.started_at = stale_time
+    task.last_heartbeat_at = stale_time
+    db.add(task)
+    db.commit()
+    repo = TaskRepo(db)
+
+    assert repo.recover_stale_running(
+        task.id,
+        "wrong-exec",
+        stale_before=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=5),
+        max_retries=2,
+        reason="worker heartbeat expired",
+    ) is None
+
+    result = repo.recover_stale_running(
+        task.id,
+        "exec-old",
+        stale_before=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=5),
+        max_retries=2,
+        reason="worker heartbeat expired",
+    )
+
+    refreshed = db.get(PricingTask, 9)
+    assert result == "RETRYING"
+    assert refreshed is not None
+    assert refreshed.task_status == "RETRYING"
+    assert refreshed.retry_count == 1
+    assert refreshed.recovery_count == 1
+    assert refreshed.current_execution_id is None
+    assert refreshed.last_recovered_at is not None
+    assert refreshed.failure_reason == "worker heartbeat expired"
+
+
+def test_recover_stale_running_marks_failed_after_retry_budget():
+    db = build_session()
+    task = create_task(db, task_id=10, status="RUNNING", execution_id="exec-old", retry_count=2)
+    stale_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=20)
+    task.started_at = stale_time
+    task.last_heartbeat_at = stale_time
+    db.add(task)
+    db.commit()
+    repo = TaskRepo(db)
+
+    result = repo.recover_stale_running(
+        task.id,
+        "exec-old",
+        stale_before=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=5),
+        max_retries=2,
+        reason="worker heartbeat expired",
+    )
+
+    refreshed = db.get(PricingTask, 10)
+    assert result == "FAILED"
+    assert refreshed is not None
+    assert refreshed.task_status == "FAILED"
+    assert refreshed.retry_count == 2
+    assert refreshed.current_execution_id is None
+    assert refreshed.completed_at is not None
+    assert refreshed.failure_reason == "worker heartbeat expired"
 
 
 def test_acquire_execution_reclaims_redelivered_task_and_increments_retry_count():

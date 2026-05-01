@@ -12,8 +12,9 @@ from app.api.internal_tasks import router as internal_tasks_router
 from app.core.config import get_settings
 from app.core.logger import configure_logging
 from app.core.trace_context import bind_trace_context
-from app.db.migrations import ensure_agent_run_log_schema
+from app.db.migrations import ensure_agent_run_log_schema, ensure_pricing_task_recovery_schema
 from app.services.rabbitmq_worker_service import get_rabbitmq_worker_service
+from app.services.task_recovery_service import get_task_recovery_loop
 
 # Windows + Python 3.13 下，统一使用 Selector 事件循环提升连接稳定性。
 if sys.platform.startswith("win"):
@@ -52,12 +53,15 @@ async def startup_migrations() -> None:
     """启动时先校验生产安全配置，再补齐数据库字段并拉起 RabbitMQ Worker。"""
     settings.validate_production_safety()
     ensure_agent_run_log_schema(settings.mysql_db)
+    ensure_pricing_task_recovery_schema(settings.mysql_db)
     await get_rabbitmq_worker_service().start()
+    await get_task_recovery_loop().start()
 
 
 @app.on_event("shutdown")
 async def shutdown_queue() -> None:
     """服务关闭时主动停止 Worker，避免连接与消费协程残留。"""
+    await get_task_recovery_loop().stop()
     await get_rabbitmq_worker_service().stop()
 
 

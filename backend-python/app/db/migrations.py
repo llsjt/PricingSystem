@@ -144,3 +144,28 @@ def ensure_agent_run_log_schema(schema_name: str) -> None:
                 """
             )
         )
+
+
+def ensure_pricing_task_recovery_schema(schema_name: str) -> None:
+    """Ensure task recovery lease columns and indexes exist."""
+    table_name = "pricing_task"
+    existing = _list_columns(table_name, schema_name)
+
+    statements: list[str] = []
+    if "last_heartbeat_at" not in existing:
+        statements.append("ADD COLUMN last_heartbeat_at DATETIME NULL COMMENT '当前执行租约心跳时间'")
+    if "recovery_count" not in existing:
+        statements.append("ADD COLUMN recovery_count INT NOT NULL DEFAULT 0 COMMENT '自动恢复次数'")
+    if "last_recovered_at" not in existing:
+        statements.append("ADD COLUMN last_recovered_at DATETIME NULL COMMENT '最近自动恢复时间'")
+
+    if statements:
+        ddl = "ALTER TABLE pricing_task " + ", ".join(statements)
+        with engine.begin() as conn:
+            conn.execute(text(ddl))
+        logger.info("Applied startup migration for pricing_task recovery columns: %s", ", ".join(statements))
+
+    if not _has_index(table_name, schema_name, "idx_pricing_task_status_heartbeat"):
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE pricing_task ADD INDEX idx_pricing_task_status_heartbeat (task_status, last_heartbeat_at)"))
+        logger.info("Applied startup migration index idx_pricing_task_status_heartbeat")

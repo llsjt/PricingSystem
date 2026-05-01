@@ -43,7 +43,7 @@ class _DispatchRunner:
         finally:
             db.close()
 
-    def handle_task_failure(self, task_id: int, reason: str, max_retries: int) -> DispatchTaskResponse:
+    def handle_task_failure(self, task_id: int, execution_id: str, reason: str, max_retries: int) -> DispatchTaskResponse:
         db = SessionLocal()
         try:
             service = DispatchService(db)
@@ -56,7 +56,7 @@ class _DispatchRunner:
                     message="task not found",
                 )
             request = service.build_dispatch_request(task)
-            return service.handle_worker_failure(request, reason, max_retries=max_retries)
+            return service.handle_worker_failure(request, reason, max_retries=max_retries, execution_id=execution_id)
         finally:
             db.close()
 
@@ -156,6 +156,35 @@ class RabbitMqWorkerService:
         for _ in range(self._configured_concurrency):
             await self._setup_consumer(self._connection)
 
+    def _start_heartbeat(self, task_id: int, execution_id: str) -> asyncio.Task | None:
+        interval = int(getattr(self.settings, "execution_heartbeat_interval_seconds", 30) or 0)
+        if interval <= 0:
+            return None
+        return asyncio.create_task(self._heartbeat_loop(task_id, execution_id, interval))
+
+    async def _stop_heartbeat(self, heartbeat_task: asyncio.Task | None) -> None:
+        if heartbeat_task is None:
+            return
+        heartbeat_task.cancel()
+        await asyncio.gather(heartbeat_task, return_exceptions=True)
+
+    async def _heartbeat_loop(self, task_id: int, execution_id: str, interval: int) -> None:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await asyncio.to_thread(self._touch_heartbeat, task_id, execution_id)
+            except Exception:
+                logger.warning("Failed to refresh task execution heartbeat, taskId=%s", task_id, exc_info=True)
+
+    def _touch_heartbeat(self, task_id: int, execution_id: str) -> int:
+        if self.repo is not None:
+            return int(self.repo.touch_execution_heartbeat(task_id, execution_id) or 0)
+        db = SessionLocal()
+        try:
+            return TaskRepo(db).touch_execution_heartbeat(task_id, execution_id)
+        finally:
+            db.close()
+
     async def _run(self) -> None:
         if self.repo is not None:
             return
@@ -226,6 +255,7 @@ class RabbitMqWorkerService:
                 await message.ack()
                 return
 
+            heartbeat_task = self._start_heartbeat(task_id, execution_id)
             try:
                 await self.progress_service.publish("TASK_STARTED", task_id, execution_id, {})
                 await self.dispatch_service.run_task(task_id, execution_id)
@@ -248,6 +278,7 @@ class RabbitMqWorkerService:
                     response = await asyncio.to_thread(
                         self.dispatch_service.handle_task_failure,
                         task_id,
+                        execution_id,
                         reason,
                         int(getattr(self.settings, "agent_max_retries", 0)),
                     )
@@ -264,6 +295,8 @@ class RabbitMqWorkerService:
 
                 await self.progress_service.publish("TASK_FAILED", task_id, execution_id, {"reason": reason})
                 await message.ack()
+            finally:
+                await self._stop_heartbeat(heartbeat_task)
         finally:
             if owns_repo_session:
                 repo.db.close()
