@@ -89,7 +89,7 @@
           </div>
         </el-form-item>
       </el-form>
-      <div class="toolbar"><el-button type="primary" :loading="starting" :disabled="!hasLlmConfig" @click="startTask">启动任务</el-button></div>
+      <div class="toolbar"><el-button type="primary" :loading="starting" :disabled="starting || !hasLlmConfig" @click="startTask">启动任务</el-button></div>
     </section>
 
     <section v-else-if="activeStep === 1" class="panel-card decision-chat-panel">
@@ -966,6 +966,7 @@ const startStream = async (id: number) => {
 
 // 启动任务时先做本地约束校验，再创建任务、加载首个快照，并同时拉起 SSE 与轮询两条同步链路。
 const startTask = async () => {
+  if (starting.value) return
   if (!taskConfig.platform) return ElMessage.warning('请选择平台')
   if (!taskConfig.shopId) return ElMessage.warning('请选择店铺')
   if (!taskConfig.productId) return ElMessage.warning('请选择一个商品')

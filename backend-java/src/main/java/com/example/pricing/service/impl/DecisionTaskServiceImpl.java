@@ -37,6 +37,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -156,10 +157,21 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         task.setLlmBaseUrl(llmConfig.getLlmBaseUrl());
         task.setLlmModel(llmConfig.getLlmModel());
 
-        Long taskId = transactionTemplate.execute(status -> {
-            taskMapper.insert(task);
-            return task.getId();
-        });
+        Long taskId;
+        try {
+            taskId = transactionTemplate.execute(status -> {
+                taskMapper.insert(task);
+                return task.getId();
+            });
+        } catch (DuplicateKeyException e) {
+            PricingTask concurrentTask = pricingTaskReuseSupport.findReusableTask(idempotencyKey, product.getShopId());
+            if (concurrentTask != null) {
+                log.info("reuse concurrent pricing task after active idempotency conflict, taskId={}, productId={}",
+                        concurrentTask.getId(), product.getId());
+                return concurrentTask.getId();
+            }
+            throw e;
+        }
         if (taskId == null) {
             throw new IllegalStateException("任务创建失败");
         }

@@ -21,6 +21,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
@@ -166,6 +167,41 @@ class DecisionTaskServiceImplTest {
         assertEquals(114L, taskId);
         verify(taskMapper, never()).insert(any(PricingTask.class));
         verify(taskDispatchPublisher, never()).publishAndConfirm(any());
+    }
+
+    @Test
+    void startTaskReturnsExistingTaskWhenConcurrentInsertHitsActiveIdempotencyKey() {
+        Product product = new Product();
+        product.setId(221L);
+        product.setShopId(2L);
+        product.setCurrentPrice(new BigDecimal("250.06"));
+
+        UserLlmConfig llmConfig = new UserLlmConfig();
+        llmConfig.setUserId(1L);
+        llmConfig.setLlmApiKeyEnc("cipher-current");
+        llmConfig.setLlmBaseUrl("https://dashscope.aliyuncs.com/compatible-mode/v1");
+        llmConfig.setLlmModel("qwen3.5-122b-a10b");
+
+        PricingTask existing = new PricingTask();
+        existing.setId(116L);
+        existing.setShopId(2L);
+        existing.setProductId(221L);
+        existing.setTaskStatus("PENDING");
+        existing.setTraceId("trace-pending");
+
+        when(shopService.getShopIdsByUser(1L)).thenReturn(List.of(2L));
+        when(productMapper.selectById(221L)).thenReturn(product);
+        when(userLlmConfigMapper.selectOne(any())).thenReturn(llmConfig);
+        when(pricingTaskReuseSupport.buildIdempotencyKey(List.of(221L), "MARKET_SHARE", "", 1L)).thenReturn("idem-221");
+        when(pricingTaskReuseSupport.findReusableTask("idem-221", 2L)).thenReturn(null, existing);
+        doThrow(new DuplicateKeyException("Duplicate entry for uk_pricing_task_active_idem"))
+                .when(taskMapper).insert(any(PricingTask.class));
+
+        Long taskId = service.startTask(List.of(221L), "MARKET_SHARE", "", 1L);
+
+        assertEquals(116L, taskId);
+        verify(taskDispatchPublisher, never()).publishAndConfirm(any());
+        verify(taskMapper, never()).updateStatusIfPending(any(), any());
     }
 
     @Test

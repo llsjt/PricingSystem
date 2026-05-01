@@ -27,6 +27,7 @@ import com.example.pricing.vo.PricingBatchDetailVO;
 import com.example.pricing.vo.PricingBatchItemVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
 import java.math.RoundingMode;
@@ -47,6 +48,7 @@ import java.util.UUID;
 public class PricingBatchServiceImpl implements PricingBatchService {
 
     private static final String MANUAL_REVIEW_STRATEGY = "人工审核";
+    private static final List<String> ACTIVE_BATCH_STATUSES = List.of("PENDING", "RUNNING", "RETRYING");
     private static final List<String> RUNNING_TASK_STATUSES = List.of("PENDING", "QUEUED", "RUNNING", "RETRYING");
     private static final List<String> CANCELLABLE_TASK_STATUSES = List.of("PENDING", "QUEUED", "RUNNING", "RETRYING");
 
@@ -66,19 +68,42 @@ public class PricingBatchServiceImpl implements PricingBatchService {
         String strategyGoal = normalizeRequiredStrategyGoal(request == null ? null : request.getStrategyGoal());
         String constraints = normalizeConstraints(request == null ? null : request.getConstraints());
         validateBatchProducts(productIds, userId);
+        String idempotencyKey = pricingTaskReuseSupport.buildIdempotencyKey(
+                productIds.stream().sorted().toList(),
+                strategyGoal,
+                constraints,
+                userId
+        );
+
+        PricingBatch existingBatch = findActiveBatch(idempotencyKey, userId);
+        if (existingBatch != null) {
+            log.info("reuse active pricing batch, batchId={}, userId={}", existingBatch.getId(), userId);
+            return buildCreateResponse(existingBatch, userId);
+        }
 
         PricingBatch batch = new PricingBatch();
         batch.setBatchCode(generateBatchCode());
         batch.setRequestedByUserId(userId);
         batch.setStrategyGoal(strategyGoal);
         batch.setConstraintText(constraints);
+        batch.setIdempotencyKey(idempotencyKey);
         batch.setTotalCount(productIds.size());
         batch.setCompletedCount(0);
         batch.setManualReviewCount(0);
         batch.setFailedCount(0);
         batch.setCancelledCount(0);
         batch.setBatchStatus("RUNNING");
-        pricingBatchMapper.insert(batch);
+        try {
+            pricingBatchMapper.insert(batch);
+        } catch (DuplicateKeyException e) {
+            PricingBatch concurrentBatch = findActiveBatch(idempotencyKey, userId);
+            if (concurrentBatch != null) {
+                log.info("reuse concurrent pricing batch after active idempotency conflict, batchId={}, userId={}",
+                        concurrentBatch.getId(), userId);
+                return buildCreateResponse(concurrentBatch, userId);
+            }
+            throw e;
+        }
 
         List<Long> linkedTaskIds = new ArrayList<>();
         int createFailedCount = 0;
@@ -115,13 +140,11 @@ public class PricingBatchServiceImpl implements PricingBatchService {
         BatchAggregate aggregate = aggregate(context);
         syncBatchSummary(context.batch(), aggregate);
 
-        PricingBatchCreateVO vo = new PricingBatchCreateVO();
-        vo.setBatchId(batch.getId());
-        vo.setBatchCode(batch.getBatchCode());
-        vo.setTotalCount(productIds.size());
-        vo.setLinkedTaskIds(linkedTaskIds);
-        vo.setCreateFailedCount(createFailedCount);
-        return vo;
+        PricingBatchCreateVO response = toCreateResponse(context);
+        response.setTotalCount(productIds.size());
+        response.setLinkedTaskIds(linkedTaskIds);
+        response.setCreateFailedCount(createFailedCount);
+        return response;
     }
 
     @Override
@@ -274,6 +297,41 @@ public class PricingBatchServiceImpl implements PricingBatchService {
         }
         String idempotencyKey = pricingTaskReuseSupport.buildIdempotencyKey(List.of(productId), strategyGoal, constraints, userId);
         return pricingTaskReuseSupport.findRecoverableTaskAfterCreateFailure(idempotencyKey, product.getShopId());
+    }
+
+    private PricingBatch findActiveBatch(String idempotencyKey, Long userId) {
+        if (idempotencyKey == null || idempotencyKey.isBlank() || userId == null) {
+            return null;
+        }
+        LambdaQueryWrapper<PricingBatch> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(PricingBatch::getRequestedByUserId, userId)
+                .eq(PricingBatch::getIdempotencyKey, idempotencyKey)
+                .in(PricingBatch::getBatchStatus, ACTIVE_BATCH_STATUSES)
+                .orderByDesc(PricingBatch::getId)
+                .last("LIMIT 1");
+        return pricingBatchMapper.selectOne(wrapper);
+    }
+
+    private PricingBatchCreateVO buildCreateResponse(PricingBatch batch, Long userId) {
+        BatchContext context = loadBatchContext(batch, userId);
+        BatchAggregate aggregate = aggregate(context);
+        syncBatchSummary(context.batch(), aggregate);
+        return toCreateResponse(context);
+    }
+
+    private PricingBatchCreateVO toCreateResponse(BatchContext context) {
+        PricingBatchCreateVO vo = new PricingBatchCreateVO();
+        vo.setBatchId(context.batch().getId());
+        vo.setBatchCode(context.batch().getBatchCode());
+        vo.setTotalCount(context.items().isEmpty() ? valueOrZero(context.batch().getTotalCount()) : context.items().size());
+        vo.setLinkedTaskIds(context.items().stream()
+                .map(PricingBatchItem::getTaskId)
+                .filter(Objects::nonNull)
+                .toList());
+        vo.setCreateFailedCount((int) context.items().stream()
+                .filter(item -> "CREATE_FAILED".equals(resolveCreationStatus(item)))
+                .count());
+        return vo;
     }
 
     private void validateBatchProducts(List<Long> productIds, Long userId) {

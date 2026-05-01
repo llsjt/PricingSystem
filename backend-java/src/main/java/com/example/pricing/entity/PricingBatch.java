@@ -30,6 +30,9 @@ public class PricingBatch {
     @TableField("constraint_text")
     private String constraintText;
 
+    @TableField("idempotency_key")
+    private String idempotencyKey;
+
     @TableField("total_count")
     private Integer totalCount;
 

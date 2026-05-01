@@ -313,7 +313,7 @@
       </div>
       <template #footer>
         <el-button @click="batchPricingVisible = false">取消</el-button>
-        <el-button type="primary" :loading="batchStarting" @click="submitBatchPricing">启动批量定价</el-button>
+        <el-button type="primary" :loading="batchStarting" :disabled="batchStarting" @click="submitBatchPricing">启动批量定价</el-button>
       </template>
     </el-dialog>
 
@@ -853,6 +853,7 @@ const openBatchPricingDialog = () => {
 }
 
 const submitBatchPricing = async () => {
+  if (batchStarting.value) return
   if (selectedIds.value.length === 0) {
     ElMessage.warning('请先选择要定价的商品')
     return
@@ -869,9 +870,10 @@ const submitBatchPricing = async () => {
 
   batchStarting.value = true
   try {
+    const productIds = [...new Set(selectedIds.value)]
     const constraints = serializePricingConstraints(batchConstraintForm)
     const res: any = await createPricingBatch({
-      productIds: selectedIds.value,
+      productIds,
       strategyGoal: batchPricingForm.strategyGoal,
       constraints
     })

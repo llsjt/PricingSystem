@@ -171,6 +171,13 @@ CREATE TABLE pricing_task (
     requested_by_user_id BIGINT DEFAULT NULL COMMENT '发起用户ID',
     trace_id VARCHAR(64) DEFAULT NULL COMMENT '链路追踪ID',
     idempotency_key VARCHAR(128) DEFAULT NULL COMMENT '幂等键',
+    active_idempotency_key VARCHAR(128)
+        GENERATED ALWAYS AS (
+            CASE
+                WHEN task_status IN ('PENDING','QUEUED','RUNNING','RETRYING') THEN idempotency_key
+                ELSE NULL
+            END
+        ) STORED COMMENT 'Active task idempotency key',
     retry_count INT NOT NULL DEFAULT 0 COMMENT '重试次数',
     consumer_retry_count INT NOT NULL DEFAULT 0 COMMENT 'RabbitMQ 消费层重试次数',
     current_execution_id VARCHAR(64) DEFAULT NULL COMMENT '当前占用执行 id，用于 execution fencing',
@@ -186,6 +193,7 @@ CREATE TABLE pricing_task (
     KEY idx_pricing_task_shop_product (shop_id, product_id),
     KEY idx_pricing_task_trace_id (trace_id),
     KEY idx_pricing_task_idempotency_key (idempotency_key),
+    UNIQUE KEY uk_pricing_task_active_idem (shop_id, active_idempotency_key),
     KEY idx_pricing_task_requested_user (requested_by_user_id),
     KEY idx_pricing_task_execution (current_execution_id),
     KEY idx_pricing_task_status_heartbeat (task_status, last_heartbeat_at),
@@ -245,6 +253,14 @@ CREATE TABLE pricing_batch (
     requested_by_user_id BIGINT NOT NULL COMMENT '发起用户ID',
     strategy_goal VARCHAR(50) NOT NULL COMMENT '定价策略目标',
     constraint_text VARCHAR(1000) DEFAULT NULL COMMENT '定价约束条件文本',
+    idempotency_key VARCHAR(128) DEFAULT NULL COMMENT 'Batch idempotency key',
+    active_idempotency_key VARCHAR(128)
+        GENERATED ALWAYS AS (
+            CASE
+                WHEN batch_status IN ('PENDING','RUNNING','RETRYING') THEN idempotency_key
+                ELSE NULL
+            END
+        ) STORED COMMENT 'Active batch idempotency key',
     total_count INT NOT NULL DEFAULT 0 COMMENT '批次商品总数',
     completed_count INT NOT NULL DEFAULT 0 COMMENT '已完成任务数',
     manual_review_count INT NOT NULL DEFAULT 0 COMMENT '待人工审核任务数',
@@ -255,6 +271,8 @@ CREATE TABLE pricing_batch (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     UNIQUE KEY uk_pricing_batch_code (batch_code),
+    UNIQUE KEY uk_pricing_batch_active_idem (requested_by_user_id, active_idempotency_key),
+    KEY idx_pricing_batch_idempotency_key (idempotency_key),
     KEY idx_pricing_batch_user_created (requested_by_user_id, created_at),
     KEY idx_pricing_batch_status (batch_status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='批量定价汇总表';
@@ -324,6 +342,8 @@ INSERT INTO schema_migration_history (version, checksum, description, applied_at
     ('migration_20260420_pricing_batch', REPEAT('0', 64), 'baseline schema includes batch pricing tables', CURRENT_TIMESTAMP),
     ('migration_20260421_rabbitmq_async', REPEAT('0', 64), 'baseline schema includes RabbitMQ async task columns', CURRENT_TIMESTAMP),
     ('migration_20260423_pricing_batch_comment_cn', REPEAT('0', 64), 'baseline schema includes localized batch pricing comments', CURRENT_TIMESTAMP),
-    ('migration_20260501_task_recovery_lease', REPEAT('0', 64), 'baseline schema includes task recovery lease fields', CURRENT_TIMESTAMP);
+    ('migration_20260501_task_recovery_lease', REPEAT('0', 64), 'baseline schema includes task recovery lease fields', CURRENT_TIMESTAMP),
+    ('migration_20260501_pricing_task_active_dedup', REPEAT('0', 64), 'baseline schema includes active task idempotency guard', CURRENT_TIMESTAMP),
+    ('migration_20260501_pricing_batch_active_dedup', REPEAT('0', 64), 'baseline schema includes active batch idempotency guard', CURRENT_TIMESTAMP);
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -23,6 +23,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -136,6 +137,53 @@ class PricingBatchServiceImplTest {
         assertEquals("RUNNING", batchCaptor.getValue().getBatchStatus());
         assertEquals(0, batchCaptor.getValue().getFailedCount());
         assertEquals(2, batchCaptor.getValue().getTotalCount());
+    }
+
+    @Test
+    void createBatchReturnsExistingActiveBatchWhenConcurrentInsertHitsIdempotencyKey() {
+        PricingBatchCreateDTO request = new PricingBatchCreateDTO();
+        request.setProductIds(List.of(102L, 101L));
+        request.setStrategyGoal("MAX_PROFIT");
+        request.setConstraints("{\"a\":1}");
+
+        Product product101 = product(101L, 9L, "A", new BigDecimal("80.00"));
+        Product product102 = product(102L, 9L, "B", new BigDecimal("90.00"));
+        PricingBatch existingBatch = batch(88L, 7L, "RUNNING");
+        existingBatch.setBatchCode("BATCH-EXISTING");
+        existingBatch.setTotalCount(2);
+        existingBatch.setCompletedCount(0);
+        existingBatch.setManualReviewCount(0);
+        existingBatch.setFailedCount(0);
+        existingBatch.setCancelledCount(0);
+        PricingBatchItem firstItem = batchItem(1L, 88L, 101L, 1, 701L, "TASK_LINKED");
+        PricingBatchItem secondItem = batchItem(2L, 88L, 102L, 2, 702L, "TASK_LINKED");
+        PricingTask firstTask = task(701L, 9L, 101L, "QUEUED", new BigDecimal("80.00"));
+        PricingTask secondTask = task(702L, 9L, 102L, "RUNNING", new BigDecimal("90.00"));
+
+        when(shopService.getShopIdsByUser(7L)).thenReturn(List.of(9L));
+        when(productMapper.selectBatchIds(any())).thenReturn(List.of(product101, product102));
+        when(pricingTaskReuseSupport.buildIdempotencyKey(List.of(101L, 102L), "MAX_PROFIT", "{\"a\":1}", 7L))
+                .thenReturn("batch-idem");
+        when(pricingBatchMapper.selectOne(any())).thenReturn(null).thenReturn(existingBatch);
+        doAnswer(invocation -> {
+            throw new DuplicateKeyException("Duplicate entry");
+        }).when(pricingBatchMapper).insert(any(PricingBatch.class));
+        when(pricingBatchItemMapper.selectList(any())).thenReturn(List.of(firstItem, secondItem));
+        when(pricingTaskMapper.selectList(any())).thenReturn(List.of(firstTask, secondTask));
+        when(pricingResultMapper.selectList(any())).thenReturn(List.of());
+
+        PricingBatchCreateVO response = service.createBatch(request, 7L);
+
+        assertEquals(88L, response.getBatchId());
+        assertEquals("BATCH-EXISTING", response.getBatchCode());
+        assertEquals(2, response.getTotalCount());
+        assertEquals(List.of(701L, 702L), response.getLinkedTaskIds());
+        assertEquals(0, response.getCreateFailedCount());
+        verify(decisionTaskService, never()).createPricingTask(any(), any(), any(), any());
+
+        ArgumentCaptor<PricingBatch> attemptedBatchCaptor = ArgumentCaptor.forClass(PricingBatch.class);
+        verify(pricingBatchMapper).insert(attemptedBatchCaptor.capture());
+        assertEquals("batch-idem", attemptedBatchCaptor.getValue().getIdempotencyKey());
     }
 
     @Test

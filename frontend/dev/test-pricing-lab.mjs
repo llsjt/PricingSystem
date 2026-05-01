@@ -117,6 +117,12 @@ assert.match(pricingLabSource, /matrix-state-chip/, 'renders matrix state chips 
 assert.doesNotMatch(pricingLabSource, /const coerceManagerArbitrationRecord =/, 'does not keep local arbitration record coercion helpers')
 assert.doesNotMatch(pricingLabSource, /const readManagerArbitrationField =/, 'does not keep local arbitration field readers')
 assert.doesNotMatch(pricingLabSource, /const extractManagerArbitrationFields =/, 'does not keep inline arbitration extraction logic')
+assert.match(pricingLabSource, /:disabled="starting \|\| !hasLlmConfig"/, 'disables the start button while a task request is already in flight')
+assert.match(
+  pricingLabSource,
+  /const startTask = async \(\) => \{[\s\S]*if \(starting\.value\) return/,
+  'guards startTask against duplicate clicks before async state changes settle'
+)
 assert.match(pricingLabSource, /watch\(\s*\(\) => \[\s*route\.path[\s\S]*route\.query\.productId[\s\S]*route\.query\.shopId[\s\S]*route\.query\.platform[\s\S]*route\.query\.productName[\s\S]*\][\s\S]*syncRoutePrefill/s, 're-applies product prefill when the cached lab route receives new query parameters')
 assert.match(pricingLabSource, /onActivated\(\(\) => \{[\s\S]*syncRoutePrefill\(\)/, 're-applies product prefill when returning to an already-open smart pricing tab')
 assert.match(
