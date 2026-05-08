@@ -375,6 +375,7 @@ export const useArchivePage = () => {
         log,
         opinion,
         agentCode,
+        displayOrder: resolveLogOrder(log),
         agentMark: agentCode ? ARCHIVE_AGENT_MARK[agentCode] : '智',
         roleLabel: agentCode ? ARCHIVE_AGENT_ROLE_LABEL[agentCode] : '协同记录',
         agentName: agentCode ? ARCHIVE_AGENT_NAME[agentCode] : getLogAgentName(log),
@@ -393,11 +394,9 @@ export const useArchivePage = () => {
     })
   )
 
-  const archiveEvidenceBoard = computed(() => {
+  const archiveOpinionMatrixRows = computed(() => {
     const cards = orderedLogCards.value
-    if (!cards.length) return null
-
-    const matrixRows = cards.map((card) => {
+    return cards.map((card) => {
       const evidenceCount = card.evidenceLines.filter((line) => trimText(line) && line !== '暂无依据内容').length
       const confidenceText = formatMatrixConfidencePercent(inferMatrixConfidence(card.opinion))
       const stateText = card.arbitration?.decisionSummary
@@ -407,6 +406,7 @@ export const useArchivePage = () => {
           : card.opinion?.status
             ? (OPINION_STATUS_LABEL_MAP[card.opinion.status] || card.opinion.status)
             : card.runStatusText
+      const stage = isFailedLog(card.log) ? 'failed' : 'completed'
 
       return {
         key: `${card.agentCode || 'archive'}-${card.log.id}`,
@@ -418,48 +418,33 @@ export const useArchivePage = () => {
         evidenceCount,
         evidenceText: matrixEvidencePreview(card.suggestion, card.evidenceLines, card.opinion, card.reason || null),
         stateText,
-        stateType: card.arbitration?.decisionSummary ? 'success' : card.runStatusType
+        stage
       }
     })
+  })
 
-    const latestCard = [...cards].reverse().find((card) => !isFailedLog(card.log)) || cards[0]
-    const managerCard = cards.find((card) => card.agentCode === 'MANAGER_COORDINATOR' && !isFailedLog(card.log)) || latestCard
-    const totalEvidenceCount = matrixRows.reduce((sum, row) => sum + row.evidenceCount, 0)
-    const failedCount = cards.filter((card) => isFailedLog(card.log)).length
-    const overviewItems = [
+  const archiveDecisionSections = computed(() => {
+    const analysisCards = orderedLogCards.value.filter((card) => card.agentCode !== 'MANAGER_COORDINATOR')
+    const managerCards = orderedLogCards.value.filter((card) => card.agentCode === 'MANAGER_COORDINATOR')
+
+    return [
       {
-        label: '最终采纳价',
-        value: managerCard?.arbitration?.selectedPrice
-          || (managerCard?.suggestionHighlightPrice != null ? formatCurrency(managerCard.suggestionHighlightPrice) : '-')
+        key: 'analysis',
+        title: '并行分析区',
+        description: '先并行回答收益、市场和风险三个商家最关心的问题。',
+        panelClass: 'parallel-analysis-panel',
+        gridClass: 'parallel-analysis-grid',
+        cards: analysisCards
       },
       {
-        label: '主导智能体',
-        value: managerCard?.arbitration?.selectedAgent || managerCard?.agentName || '-'
-      },
-      {
-        label: '证据条目',
-        value: `${totalEvidenceCount} 条`
-      },
-      {
-        label: '异常席位',
-        value: `${failedCount} 个`
+        key: 'manager',
+        title: '经理仲裁区',
+        description: '汇总分歧后给出最终建议价、预期收益和人工复核动作。',
+        panelClass: 'manager-arbitration-panel',
+        gridClass: 'manager-arbitration-grid',
+        cards: managerCards
       }
-    ]
-
-    if (managerCard?.arbitration?.consensusScoreText) {
-      overviewItems.splice(2, 0, {
-        label: '共识度',
-        value: managerCard.arbitration.consensusScoreText
-      })
-    }
-
-    return {
-      overviewItems,
-      decisionSummary: managerCard?.arbitration?.decisionSummary || managerCard?.opinion?.summary || null,
-      decisionReason: managerCard?.arbitration?.decisionReason || managerCard?.reason || null,
-      selectedStrategy: managerCard?.arbitration?.selectedStrategy || null,
-      matrixRows
-    }
+    ].filter((section) => section.cards.length > 0)
   })
 
   const fetchStats = async () => {
@@ -960,8 +945,9 @@ export const useArchivePage = () => {
   return {
     activeTab,
     agentLogs,
+    archiveDecisionSections,
+    archiveOpinionMatrixRows,
     applyingResultIds,
-    archiveEvidenceBoard,
     batchGoalLabel,
     batchLoading,
     batchProgressText,
@@ -1010,7 +996,6 @@ export const useArchivePage = () => {
     isTaskRetrying,
     loading,
     openBatchDetail,
-    orderedLogs,
     orderedLogCards,
     queryParams,
     recentBatches,
