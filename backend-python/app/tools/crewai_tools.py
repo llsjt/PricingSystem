@@ -7,9 +7,12 @@ from typing import Any
 from crewai.tools import tool
 
 from app.tools.elasticity_profit_tool import ElasticityProfitTool
+from app.tools.product_data_tool import ProductDataTool
 from app.tools.risk_rule_tool import RiskRuleTool
+from app.tools.tool_context import active_tool_context
 
 _elasticity_tool = ElasticityProfitTool()
+_product_data_tool = ProductDataTool()
 _risk_rule_tool = RiskRuleTool()
 
 
@@ -17,6 +20,75 @@ def _default_serializer(obj: Any) -> Any:
     if isinstance(obj, Decimal):
         return str(obj)
     return str(obj)
+
+
+def _tool_success(data: Any) -> str:
+    return json.dumps(
+        {
+            "ok": True,
+            "data": data,
+            "errorType": None,
+            "errorMessage": None,
+        },
+        ensure_ascii=False,
+        default=_default_serializer,
+    )
+
+
+def _tool_error(error_type: str, error_message: str) -> str:
+    return json.dumps(
+        {
+            "ok": False,
+            "data": None,
+            "errorType": error_type,
+            "errorMessage": error_message,
+        },
+        ensure_ascii=False,
+    )
+
+
+def _product_snapshot_data(summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "productId": summary.get("product_id"),
+        "currentPrice": summary.get("current_price"),
+        "costPrice": summary.get("cost_price"),
+        "stock": summary.get("stock"),
+        "monthlySales": summary.get("monthly_sales"),
+        "monthlyTurnover": summary.get("monthly_turnover"),
+        "averageConversionRate": summary.get("average_conversion_rate"),
+        "totalVisitors": summary.get("total_visitors"),
+        "trafficCtr": summary.get("traffic_ctr"),
+    }
+
+
+@tool("summarize_product_data")
+def summarize_product_data() -> str:
+    """返回当前商品经营快照，不生成建议价，不做销量或利润测算。"""
+    ctx = active_tool_context.get()
+    if ctx is None:
+        return _tool_error("TOOL_CONTEXT_MISSING", "summarize_product_data requires active ToolContext")
+
+    summary = _product_data_tool.summarize(
+        product=ctx.payload.product,
+        metrics=ctx.payload.metrics,
+        traffic=ctx.payload.traffic,
+    )
+    return _tool_success(_product_snapshot_data(summary))
+
+
+@tool("query_competitor_summary")
+def query_competitor_summary() -> str:
+    """返回当前商品的预计算竞品摘要，不实时查询外部数据源。"""
+    ctx = active_tool_context.get()
+    if ctx is None:
+        return _tool_error("TOOL_CONTEXT_MISSING", "query_competitor_summary requires active ToolContext")
+    if not ctx.precomputed_competitor_summary:
+        return _tool_error(
+            "COMPETITOR_SUMMARY_MISSING",
+            "query_competitor_summary requires precomputed competitor summary",
+        )
+
+    return _tool_success({"summary": ctx.precomputed_competitor_summary})
 
 
 @tool("estimate_sales_volume")

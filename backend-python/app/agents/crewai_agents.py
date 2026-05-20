@@ -7,7 +7,7 @@ CrewAI agent definitions.
 from crewai import Agent
 
 from app.core.config import get_settings
-from app.tools.crewai_tools import estimate_profit, estimate_sales_volume
+from app.tools.tool_registry import get_tools_for_agent
 
 
 def build_crewai_agents(*, analysis_llm: object, manager_llm: object) -> dict[str, Agent]:
@@ -41,7 +41,7 @@ def build_crewai_agents(*, analysis_llm: object, manager_llm: object) -> dict[st
             "你是一位资深电商数据分析师，擅长根据经营指标估算调价后的销量和利润。"
             "你的结论必须可追溯到预计算结果。"
         ),
-        tools=[],
+        tools=get_tools_for_agent("DATA_ANALYSIS"),
         **analysis_kwargs,
     )
 
@@ -49,7 +49,7 @@ def build_crewai_agents(*, analysis_llm: object, manager_llm: object) -> dict[st
         role="市场情报分析师",
         goal="基于预先整理好的竞品摘要识别市场价格带和竞争态势，给出市场可接受的建议价格。",
         backstory="你是一位市场情报分析师，擅长从竞品分布、促销力度和平台差异中判断市场价格带。",
-        tools=[],
+        tools=get_tools_for_agent("MARKET_INTEL"),
         **analysis_kwargs,
     )
 
@@ -57,7 +57,7 @@ def build_crewai_agents(*, analysis_llm: object, manager_llm: object) -> dict[st
         role="风险控制专家",
         goal="对候选价格执行硬约束校验，包括成本底线、最低利润率、价格上下限和最大折扣率，判断价格是否安全可执行。",
         backstory="你是一位严格的风控专家，职责是阻止亏损、超限折扣或违反业务规则的定价。",
-        tools=[],
+        tools=get_tools_for_agent("RISK_CONTROL"),
         **analysis_kwargs,
     )
 
@@ -71,7 +71,7 @@ def build_crewai_agents(*, analysis_llm: object, manager_llm: object) -> dict[st
             "你是定价决策的最终负责人，需要在利润、竞争力和风险之间找到平衡，"
             "并清晰说明采纳或否决各专家建议的原因。"
         ),
-        tools=[estimate_sales_volume, estimate_profit],
+        tools=get_tools_for_agent("MANAGER_COORDINATOR"),
         **manager_kwargs,
     )
 

@@ -1,7 +1,12 @@
 import json
+import sys
 import threading
+import types
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from decimal import Decimal
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -289,6 +294,41 @@ def _fake_bundle(outputs: list) -> CrewBundle:
         tasks=tasks,  # type: ignore[arg-type]
         agents_by_order={1: fake_agent, 2: fake_agent, 3: fake_agent, 4: fake_agent},  # type: ignore[arg-type]
     )
+
+
+@dataclass
+class _FakeToolContext:
+    payload: Any
+    task_id: int
+    execution_id: str | None
+    agent_code: str
+    precomputed_competitor_summary: str | None = None
+    tool_audit_logs: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _install_fake_tool_context(monkeypatch):
+    module = types.ModuleType("app.tools.tool_context")
+    active_tool_context = ContextVar("active_tool_context", default=None)
+    module.ToolContext = _FakeToolContext
+    module.active_tool_context = active_tool_context
+    monkeypatch.setitem(sys.modules, "app.tools.tool_context", module)
+    return active_tool_context
+
+
+class _AuditCapturingTask:
+    def __init__(self, raw_json: str, active_tool_context):
+        self._raw_json = raw_json
+        self._active_tool_context = active_tool_context
+        self.captured_context = None
+        self.captured_summary = None
+
+    def execute_sync(self, agent=None, context=None, tools=None):
+        ctx = self._active_tool_context.get()
+        assert ctx is not None
+        self.captured_context = ctx
+        self.captured_summary = ctx.precomputed_competitor_summary
+        ctx.tool_audit_logs.append({"toolName": "query_competitor_summary", "status": "success"})
+        return _FakeTaskOutput(self._raw_json)
 
 
 def test_log_repo_writes_completed_and_running_stage():
@@ -643,6 +683,50 @@ def test_format_opinions_for_manager_context_prefers_agent_opinion_and_backfills
     assert "历史输出 JSON" not in context
 
 
+def test_format_opinions_for_manager_context_does_not_include_tool_audit():
+    task_id = 520
+    data = _attach_agent_opinion(
+        task_id,
+        _valid_data_output(),
+        "DATA_ANALYSIS",
+        "Data Agent",
+        kind="PRICE_PROPOSAL",
+        status="PROPOSED",
+    )
+    data["toolAudit"] = [{"toolName": "estimate_profit", "status": "success"}]
+    data["agentOpinion"]["toolAudit"] = [{"toolName": "estimate_profit", "status": "success"}]
+
+    context = OrchestrationService._format_opinions_for_manager_context({1: data})
+
+    assert context is not None
+    assert "toolAudit" not in context
+    assert "estimate_profit" not in context
+
+
+def test_run_task_sync_returns_agent_run_output_and_preserves_tool_audit(monkeypatch):
+    active_tool_context = _install_fake_tool_context(monkeypatch)
+    task = _AuditCapturingTask(_json_output(_valid_market_output()), active_tool_context)
+    service = OrchestrationService(build_session(), execution_id="exec-1")
+
+    result = service._run_task_sync(
+        payload=_payload(task_id=71),
+        order=2,
+        task=task,
+        agent=SimpleNamespace(tools=[]),
+        context_text=None,
+        tools=[],
+        precomputed_competitor_summary="precomputed market summary",
+    )
+
+    output_cls = getattr(orchestration_module, "AgentRunOutput")
+    assert isinstance(result, output_cls)
+    assert result.raw == _json_output(_valid_market_output())
+    assert result.tool_audit == [{"toolName": "query_competitor_summary", "status": "success"}]
+    assert task.captured_context.agent_code == "MARKET_INTEL"
+    assert task.captured_summary == "precomputed market summary"
+    assert active_tool_context.get() is None
+
+
 def test_manager_agent_invalid_opinion_reference_raises_validation_error(monkeypatch):
     db = build_session(PricingTask.__table__, AgentRunLog.__table__)
     task = create_running_task(db, task_id=53)
@@ -840,6 +924,164 @@ def test_orchestration_service_runs_only_manager_without_writing_replay_complete
     ]
     assert current_attempt_completed == [4]
     assert current_attempt_analysis_logs == []
+
+
+def test_orchestration_success_card_appends_tool_audit_after_validation(monkeypatch):
+    active_tool_context = _install_fake_tool_context(monkeypatch)
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=551)
+    data_task = _AuditCapturingTask(_json_output(_valid_data_output()), active_tool_context)
+    fake_agent = SimpleNamespace(tools=[])
+    bundle = CrewBundle(
+        crew=None,  # type: ignore[arg-type]
+        tasks=[
+            data_task,  # type: ignore[list-item]
+            _FakeTask(_json_output(_valid_market_output())),
+            _FakeTask(_json_output(_valid_risk_output())),
+            _FakeTask(_json_output(_valid_manager_output())),
+        ],
+        agents_by_order={1: fake_agent, 2: fake_agent, 3: fake_agent, 4: fake_agent},  # type: ignore[arg-type]
+        precomputed_competitor_summary="precomputed market summary",
+    )
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: bundle,
+    )
+
+    service = OrchestrationService(db)
+    service.result_tool = SimpleNamespace(write_final_result=lambda payload: None)
+    service.run(_payload(task.id))
+
+    data_log = next(log for log in LogRepo(db).list_by_task_id(task.id) if log.display_order == 1 and log.stage == "completed")
+    assert data_log.raw_output_json["toolAudit"] == [
+        {"toolName": "query_competitor_summary", "status": "success"}
+    ]
+
+
+def test_validation_failure_writes_failed_card_with_tool_audit(monkeypatch):
+    active_tool_context = _install_fake_tool_context(monkeypatch)
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=552)
+    invalid_data = _valid_data_output()
+    invalid_data.pop("suggestedPrice")
+    fake_agent = SimpleNamespace(tools=[])
+    bundle = CrewBundle(
+        crew=None,  # type: ignore[arg-type]
+        tasks=[
+            _AuditCapturingTask(_json_output(invalid_data), active_tool_context),  # type: ignore[list-item]
+            _FakeTask(_json_output(_valid_market_output())),
+            _FakeTask(_json_output(_valid_risk_output())),
+            _FakeTask(_json_output(_valid_manager_output())),
+        ],
+        agents_by_order={1: fake_agent, 2: fake_agent, 3: fake_agent, 4: fake_agent},  # type: ignore[arg-type]
+    )
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: bundle,
+    )
+
+    with pytest.raises(_agent_validation_error_cls()):
+        OrchestrationService(db).run(_payload(task.id))
+
+    failed_log = next(log for log in LogRepo(db).list_by_task_id(task.id) if log.display_order == 1 and log.stage == "failed")
+    assert failed_log.raw_output_json == {
+        "toolAudit": [{"toolName": "query_competitor_summary", "status": "success"}]
+    }
+
+
+def test_resume_plan_all_done_does_not_build_new_crew(monkeypatch):
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=553)
+    repo = LogRepo(db)
+    for order, raw_output in (
+        (1, _valid_data_output()),
+        (2, _valid_market_output()),
+        (3, _valid_risk_output()),
+        (4, _valid_manager_output()),
+    ):
+        repo.append_card(
+            task_id=task.id,
+            agent_name=f"Agent-{order}",
+            display_order=order,
+            thinking_summary="done",
+            evidence=[],
+            suggestion={"summary": "done"},
+            raw_output=raw_output,
+        )
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("crew should not be rebuilt for all_done replay")),
+    )
+
+    service = OrchestrationService(db)
+    captured_results: list = []
+    service.result_tool = SimpleNamespace(write_final_result=captured_results.append)
+
+    result = service.run(_payload(task.id))
+
+    assert result.final_price == Decimal("30.00")
+    assert len(captured_results) == 1
+
+
+def test_market_replay_disables_competitor_precompute_when_only_manager_runs(monkeypatch):
+    db = build_session(PricingTask.__table__, AgentRunLog.__table__)
+    task = create_running_task(db, task_id=554)
+    for order, raw_output in (
+        (1, _valid_data_output()),
+        (2, _valid_market_output()),
+        (3, _valid_risk_output()),
+    ):
+        LogRepo(db).append_card(
+            task_id=task.id,
+            agent_name=f"Agent-{order}",
+            display_order=order,
+            thinking_summary="done",
+            evidence=[],
+            suggestion={"summary": "done"},
+            raw_output=raw_output,
+        )
+    bundle = _fake_bundle([
+        _valid_data_output(),
+        _valid_market_output(),
+        _valid_risk_output(),
+        _valid_manager_output(),
+    ])
+    captured_kwargs: dict[str, Any] = {}
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_crewai_llm",
+        lambda **kwargs: SimpleNamespace(model="fake-model"),
+    )
+
+    def _fake_build_pricing_crew(**kwargs):
+        captured_kwargs.update(kwargs)
+        return bundle
+
+    monkeypatch.setattr(
+        "app.services.orchestration_service.build_pricing_crew",
+        _fake_build_pricing_crew,
+    )
+
+    service = OrchestrationService(db)
+    service.result_tool = SimpleNamespace(write_final_result=lambda payload: None)
+    service.run(_payload(task.id))
+
+    assert captured_kwargs["include_competitor_summary"] is False
 
 
 def test_manager_retry_accepts_replayed_upstream_opinion_id(monkeypatch):

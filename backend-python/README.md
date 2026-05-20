@@ -65,6 +65,14 @@ python run_server.py
 - `AGENT_POLL_INTERVAL_MS`
 - `AGENT_MAX_RETRIES`
 
+CrewAI function calling 相关参数：
+
+- `CREWAI_TOOL_CALLING_ENABLED`：是否启用工具调用，默认 `true`
+- `CREWAI_TOOL_AUDIT_ENABLED`：是否把工具调用摘要写入 Agent 原始日志，默认 `true`
+- `CREWAI_TOOL_CALL_MAX_ROUNDS`：单个 Agent 最多工具调用轮次，默认 `2`
+- `CREWAI_TOOL_CALL_MAX_PER_ROUND`：每轮最多执行的工具数，默认 `2`
+- `CREWAI_TOOL_TIMEOUT_SECONDS`：单个工具调用超时秒数，默认 `5`
+
 ## API
 
 内部任务接口前缀：
@@ -98,6 +106,8 @@ python run_server.py
 3. Python Worker 消费消息并把任务推进到 `QUEUED/RUNNING`
 4. 执行完成后写入 `agent_run_log` / `pricing_result`
 5. Java 读取数据库和异步进度，并通过 SSE 推给前端
+
+CrewAI 执行时会先注入 Python 预计算结果作为稳定基线；启用 function calling 后，数据、市场、风控和经理 Agent 只能调用工具注册层授权的职责范围内工具进行复核或补充证据。工具调用摘要写入现有 `agent_run_log.raw_output_json`，不新增数据库表，也不改变 Java API、前端类型或 SSE 事件契约。
 
 ## 可观测性
 

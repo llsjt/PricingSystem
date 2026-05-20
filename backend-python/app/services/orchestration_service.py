@@ -17,6 +17,7 @@
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
@@ -189,6 +190,34 @@ class AgentOutputValidationError(RuntimeError):
         return f"[{self.agent_code}] {self.message}"
 
 
+@dataclass(frozen=True)
+class AgentRunOutput:
+    raw: str
+    tool_audit: list[dict[str, Any]]
+
+
+def _with_tool_audit(raw_output: dict[str, Any], tool_audit: list[dict[str, Any]]) -> dict[str, Any]:
+    if not tool_audit:
+        return raw_output
+    enriched = dict(raw_output)
+    enriched["toolAudit"] = list(tool_audit)
+    return enriched
+
+
+def _audit_raw_output(tool_audit: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not tool_audit:
+        return None
+    return {"toolAudit": list(tool_audit)}
+
+
+def _strip_tool_audit(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _strip_tool_audit(item) for key, item in value.items() if key != "toolAudit"}
+    if isinstance(value, list):
+        return [_strip_tool_audit(item) for item in value]
+    return value
+
+
 class OrchestrationService:
     """4-Agent CrewAI 编排服务：通过 LLM 驱动的多Agent协作完成定价决策。"""
 
@@ -271,24 +300,52 @@ class OrchestrationService:
         agent: Any,
         context_text: str | None,
         tools: list[Any] | None,
-    ) -> str:
+        precomputed_competitor_summary: str | None = None,
+    ) -> AgentRunOutput:
         meta = self._get_agent_meta(order)
         logger.info("Agent [%s] 开始执行 (order=%d)", meta["name"], order)
         debug_log(
             f"[CrewAI] execute_sync agent={meta['code']} order={order} "
             f"context_injected={bool(context_text)} task_id={payload.task_id}"
         )
-        task_output = task.execute_sync(
-            agent=agent,
-            context=context_text,
-            tools=tools,
-        )
+        ctx = None
+        token = None
+        active_context = None
+        try:
+            from app.tools.tool_context import ToolContext, active_tool_context
+        except ImportError:
+            ToolContext = None  # type: ignore[assignment]
+        else:
+            active_context = active_tool_context
+            ctx = ToolContext(
+                payload=payload,
+                task_id=payload.task_id,
+                execution_id=self.execution_id,
+                agent_code=meta["code"],
+                precomputed_competitor_summary=precomputed_competitor_summary if order == 2 else None,
+            )
+            token = active_context.set(ctx)
+
+        try:
+            task_output = task.execute_sync(
+                agent=agent,
+                context=context_text,
+                tools=tools,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if ctx is not None:
+                setattr(exc, "tool_audit", list(getattr(ctx, "tool_audit_logs", []) or []))
+            raise
+        finally:
+            if active_context is not None and token is not None:
+                active_context.reset(token)
         raw = str(task_output.raw) if hasattr(task_output, "raw") else str(task_output)
+        tool_audit = list(getattr(ctx, "tool_audit_logs", []) or []) if ctx is not None else []
         debug_log(
             f"[CrewAI] execute_sync done agent={meta['code']} "
             f"raw_len={len(raw)} raw_preview={raw[:200]}"
         )
-        return raw
+        return AgentRunOutput(raw=raw, tool_audit=tool_audit)
 
     def _parse_and_validate_output(self, *, order: int, raw: str) -> dict[str, Any]:
         meta = self._get_agent_meta(order)
@@ -367,6 +424,7 @@ class OrchestrationService:
                     agent=agent,
                     context_text=None,
                     tools=self._safe_parallel_tools(agent),
+                    precomputed_competitor_summary=bundle.precomputed_competitor_summary,
                 )
                 future_by_order[future] = order
 
@@ -374,23 +432,32 @@ class OrchestrationService:
                 order = future_by_order[future]
                 meta = self._get_agent_meta(order)
                 try:
-                    raw = future.result()
+                    run_output = future.result()
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Agent [%s] 执行失败: %s", meta["name"], exc, exc_info=True)
+                    tool_audit = list(getattr(exc, "tool_audit", []) or [])
                     self._write_agent_failed_card(
                         payload=payload,
                         order=order,
                         summary=self._summarize_failure_message(exc),
+                        raw_output=_audit_raw_output(tool_audit),
                     )
                     if first_error is None:
                         first_error = exc
                     continue
 
+                raw = run_output.raw
+                tool_audit = run_output.tool_audit
                 try:
                     parsed = self._parse_and_validate_output(order=order, raw=raw)
                 except AgentOutputValidationError as exc:
                     logger.warning("Agent [%s] 输出结构校验失败: %s", meta["name"], exc, exc_info=True)
-                    self._write_agent_failed_card(payload=payload, order=order, summary=str(exc))
+                    self._write_agent_failed_card(
+                        payload=payload,
+                        order=order,
+                        summary=str(exc),
+                        raw_output=_audit_raw_output(tool_audit),
+                    )
                     if first_error is None:
                         first_error = exc
                     continue
@@ -401,6 +468,7 @@ class OrchestrationService:
                     parsed=parsed,
                     prior_outputs=prior_outputs,
                 )
+                parsed = _with_tool_audit(parsed, tool_audit)
                 parsed_by_order[order] = parsed
 
         for order in orders_to_run:
@@ -716,6 +784,8 @@ class OrchestrationService:
                     parsed=parsed,
                     prior_outputs=prior_outputs,
                 )
+            else:
+                opinion = _strip_tool_audit(opinion)
             opinions.append(opinion)
         if not opinions:
             return None
@@ -1000,7 +1070,7 @@ class OrchestrationService:
             if order >= target_order:
                 continue
             name = name_by_order.get(order, f"Agent#{order}")
-            payload_text = json.dumps(prior_outputs[order], ensure_ascii=False, default=str)
+            payload_text = json.dumps(_strip_tool_audit(prior_outputs[order]), ensure_ascii=False, default=str)
             sections.append(f"[{name} 的历史输出 JSON]\n{payload_text}")
         return "\n\n".join(sections) if sections else None
 
@@ -1052,6 +1122,7 @@ class OrchestrationService:
         payload: CrewRunPayload,
         order: int,
         summary: str,
+        raw_output: dict[str, Any] | None = None,
     ) -> None:
         """为失败 Agent 写入 failed 卡片。"""
         meta = _AGENT_META[order - 1]
@@ -1064,6 +1135,7 @@ class OrchestrationService:
             evidence=evidence,
             suggestion=suggestion,
             stage="failed",
+            raw_output=raw_output,
         )
         self.progress_service.publish_sync(
             "AGENT_CARD_COMPLETED",
@@ -1074,6 +1146,13 @@ class OrchestrationService:
 
     # ── 主执行方法 ────────────────────────────────────────────
     def run(self, payload: CrewRunPayload) -> TaskFinalResult:
+        resume_plan = ResumeService(self.db).compute_resume_plan(payload.task_id)
+        prior_outputs = dict(resume_plan.prior_outputs)
+
+        if resume_plan.all_done:
+            logger.info("Task %d has complete agent outputs; replaying result", payload.task_id)
+            return self._finalize_result(payload, prior_outputs.get(_MANAGER_ORDER, {}))
+
         analysis_llm = build_crewai_llm(
             api_key=payload.llm_api_key,
             base_url=payload.llm_base_url,
@@ -1102,6 +1181,7 @@ class OrchestrationService:
             analysis_llm=analysis_llm,
             manager_llm=manager_llm,
             on_task_done=None,
+            include_competitor_summary=2 in resume_plan.analysis_orders_to_run,
         )
 
         resume_plan = ResumeService(self.db).compute_resume_plan(payload.task_id)
@@ -1138,18 +1218,26 @@ class OrchestrationService:
                 run_attempt=self._resolve_run_attempt(payload.task_id, prior_outputs),
             )
             try:
-                raw = self._run_task_sync(
+                run_output = self._run_task_sync(
                     payload=payload,
                     order=manager_order,
                     task=bundle.tasks[manager_order - 1],
                     agent=bundle.agents_by_order[manager_order],
                     context_text=manager_context,
                     tools=list(getattr(bundle.agents_by_order[manager_order], "tools", []) or []),
+                    precomputed_competitor_summary=bundle.precomputed_competitor_summary,
                 )
+                raw = run_output.raw
+                tool_audit = run_output.tool_audit
                 parsed = self._parse_and_validate_output(order=manager_order, raw=raw)
             except AgentOutputValidationError as exc:
                 logger.warning("Agent [%s] 输出结构校验失败: %s", meta["name"], exc, exc_info=True)
-                self._write_agent_failed_card(payload=payload, order=manager_order, summary=str(exc))
+                self._write_agent_failed_card(
+                    payload=payload,
+                    order=manager_order,
+                    summary=str(exc),
+                    raw_output=_audit_raw_output(locals().get("tool_audit", [])),
+                )
                 raise
             except Exception as exc:  # noqa: BLE001
                 logger.error("Agent [%s] 执行失败: %s", meta["name"], exc, exc_info=True)
@@ -1157,6 +1245,7 @@ class OrchestrationService:
                     payload=payload,
                     order=manager_order,
                     summary=self._summarize_failure_message(exc),
+                    raw_output=_audit_raw_output(list(getattr(exc, "tool_audit", []) or [])),
                 )
                 raise
 
@@ -1166,6 +1255,7 @@ class OrchestrationService:
                 parsed=parsed,
                 prior_outputs=prior_outputs,
             )
+            parsed = _with_tool_audit(parsed, tool_audit)
             prior_outputs[manager_order] = parsed
             self._write_agent_success_card(
                 payload=payload,

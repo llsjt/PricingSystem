@@ -1,10 +1,10 @@
-﻿"""应用配置模块，负责从环境变量读取 Python 协作端的运行参数。"""
+"""应用配置模块，负责从环境变量读取 Python 协作端的运行参数。"""
 
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -86,6 +86,26 @@ class Settings(BaseSettings):
     crewai_agent_max_retry_limit: int = Field(default=1, alias="CREWAI_AGENT_MAX_RETRY_LIMIT")
     crewai_session_timeout_seconds: int = Field(default=600, alias="CREWAI_SESSION_TIMEOUT_SECONDS")
     crewai_debug_logs: bool = Field(default=False, alias="CREWAI_DEBUG_LOGS")
+    crewai_tool_calling_enabled: bool = Field(default=True, alias="CREWAI_TOOL_CALLING_ENABLED")
+    crewai_tool_audit_enabled: bool = Field(default=True, alias="CREWAI_TOOL_AUDIT_ENABLED")
+    crewai_tool_call_max_rounds: int = Field(default=2, alias="CREWAI_TOOL_CALL_MAX_ROUNDS")
+    crewai_tool_call_max_per_round: int = Field(default=2, alias="CREWAI_TOOL_CALL_MAX_PER_ROUND")
+    crewai_tool_timeout_seconds: int = Field(default=5, alias="CREWAI_TOOL_TIMEOUT_SECONDS")
+
+    @field_validator("crewai_tool_call_max_rounds")
+    @classmethod
+    def _clamp_tool_call_max_rounds(cls, value: int) -> int:
+        return min(max(int(value), 1), 5)
+
+    @field_validator("crewai_tool_call_max_per_round")
+    @classmethod
+    def _clamp_tool_call_max_per_round(cls, value: int) -> int:
+        return min(max(int(value), 1), 5)
+
+    @field_validator("crewai_tool_timeout_seconds")
+    @classmethod
+    def _clamp_tool_timeout_seconds(cls, value: int) -> int:
+        return min(max(int(value), 1), 30)
 
     @property
     def sqlalchemy_database_uri(self) -> str:

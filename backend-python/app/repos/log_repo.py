@@ -9,6 +9,10 @@ from app.models.agent_run_log import AgentRunLog
 from app.models.pricing_task import PricingTask
 
 
+def _strip_tool_audit(raw: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in raw.items() if key != "toolAudit"}
+
+
 class LogRepo:
     """Agent 日志仓储：写入 running 占位卡片和 completed 完整卡片。"""
 
@@ -198,7 +202,10 @@ class LogRepo:
             raw = row.raw_output_json
             if not isinstance(raw, dict) or not raw:
                 continue
-            result[order] = raw
+            replay_raw = _strip_tool_audit(raw)
+            if not replay_raw:
+                continue
+            result[order] = replay_raw
         return result
 
     def list_latest_by_task_id(self, task_id: int, limit: int = 200) -> list[AgentRunLog]:

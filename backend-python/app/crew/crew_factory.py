@@ -40,6 +40,7 @@ class CrewBundle:
     crew: Crew
     tasks: list[Task]
     agents_by_order: dict[int, Agent]
+    precomputed_competitor_summary: str | None = None
 
 
 def _build_metrics_summary(payload: CrewRunPayload) -> str:
@@ -360,6 +361,7 @@ def build_pricing_crew(
     analysis_llm: object,
     manager_llm: object,
     on_task_done: Callable | None = None,
+    include_competitor_summary: bool = True,
 ) -> CrewBundle:
     """
     构建定价决策 Crew。
@@ -380,7 +382,11 @@ def build_pricing_crew(
     constraints_text = _build_constraints_text(payload.constraints)
     data_summary = _precompute_data_summary(payload)
     data_projection = _precompute_data_projection(payload)
-    competitor_summary = _precompute_competitor_summary(payload)
+    competitor_summary = (
+        _precompute_competitor_summary(payload)
+        if include_competitor_summary
+        else "本轮复用历史 MARKET_INTEL 输出，未重新计算竞品摘要。"
+    )
     risk_projection = _precompute_risk_projection(payload)
 
     # ── Task 1: 数据分析任务 ──────────────────────────────
@@ -582,4 +588,5 @@ def build_pricing_crew(
             3: agents["RISK_CONTROL"],
             4: agents["MANAGER_COORDINATOR"],
         },
+        precomputed_competitor_summary=competitor_summary if include_competitor_summary else None,
     )

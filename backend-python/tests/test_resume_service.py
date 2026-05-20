@@ -99,6 +99,32 @@ def _add_failed(db: Session, task_id: int, order: int, run_attempt: int = 0) -> 
     )
 
 
+def _insert_failed_row(
+    db: Session,
+    *,
+    task_id: int,
+    order: int,
+    raw_output: dict | None,
+    run_attempt: int = 0,
+) -> None:
+    db.add(
+        AgentRunLog(
+            task_id=task_id,
+            role_name=f"Agent-{order}",
+            speak_order=order,
+            thought_content="boom",
+            thinking_summary="boom",
+            evidence_json=[],
+            suggestion_json={"error": True, "message": "boom"},
+            raw_output_json=raw_output,
+            display_order=order,
+            stage="failed",
+            run_attempt=run_attempt,
+        )
+    )
+    db.commit()
+
+
 def test_empty_task_returns_full_run():
     db = _build_session()
     svc = ResumeService(db)
@@ -179,6 +205,59 @@ def test_failed_rows_do_not_count_as_completed():
     start_from, prior = svc.compute_resume_point(task_id=1)
     assert start_from == 2
     assert prior == {1: {"agent": "data"}}
+
+
+def test_completed_raw_output_with_tool_audit_replays_without_audit_payload():
+    db = _build_session()
+    _add_completed(
+        db,
+        task_id=1,
+        order=1,
+        raw={
+            "suggestedPrice": "29.90",
+            "summary": "ok",
+            "toolAudit": [{"toolName": "estimate_profit", "status": "success"}],
+        },
+    )
+
+    prior = LogRepo(db).list_completed_raw_outputs(task_id=1)
+    start_from, resume_prior = ResumeService(db).compute_resume_point(task_id=1)
+
+    assert prior == {1: {"suggestedPrice": "29.90", "summary": "ok"}}
+    assert start_from == 2
+    assert resume_prior == prior
+
+
+def test_failed_raw_output_with_tool_audit_is_not_replayed():
+    db = _build_session()
+    _insert_failed_row(
+        db,
+        task_id=1,
+        order=1,
+        raw_output={"toolAudit": [{"toolName": "estimate_profit", "status": "error"}]},
+    )
+
+    plan = ResumeService(db).compute_resume_plan(task_id=1)
+
+    assert plan.prior_outputs == {}
+    assert plan.analysis_orders_to_run == [1, 2, 3]
+
+
+def test_audit_only_completed_raw_output_is_not_replayed():
+    db = _build_session()
+    _add_completed(
+        db,
+        task_id=1,
+        order=1,
+        raw={"toolAudit": [{"toolName": "estimate_profit", "status": "success"}]},
+    )
+
+    prior = LogRepo(db).list_completed_raw_outputs(task_id=1)
+    start_from, resume_prior = ResumeService(db).compute_resume_point(task_id=1)
+
+    assert prior == {}
+    assert start_from == 1
+    assert resume_prior == {}
 
 
 def test_different_tasks_are_isolated():
