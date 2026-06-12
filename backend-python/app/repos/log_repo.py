@@ -7,10 +7,11 @@ from sqlalchemy.orm import Session
 
 from app.models.agent_run_log import AgentRunLog
 from app.models.pricing_task import PricingTask
+from app.services.resume_fingerprint import is_resume_meta_compatible, strip_replay_metadata
 
 
 def _strip_tool_audit(raw: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in raw.items() if key != "toolAudit"}
+    return strip_replay_metadata(raw)
 
 
 class LogRepo:
@@ -177,7 +178,11 @@ class LogRepo:
         self.db.commit()
         return int(result.rowcount or 0)
 
-    def list_completed_raw_outputs(self, task_id: int) -> dict[int, dict[str, Any]]:
+    def list_completed_raw_outputs(
+        self,
+        task_id: int,
+        expected_resume_meta: dict[str, Any] | None = None,
+    ) -> dict[int, dict[str, Any]]:
         """返回已完成 Agent 的 raw_output_json，按 display_order 聚合。
 
         同一 display_order 若存在多轮 completed 记录（理论上不会，但历史数据可能），
@@ -201,6 +206,8 @@ class LogRepo:
                 continue
             raw = row.raw_output_json
             if not isinstance(raw, dict) or not raw:
+                continue
+            if not is_resume_meta_compatible(raw, expected_resume_meta):
                 continue
             replay_raw = _strip_tool_audit(raw)
             if not replay_raw:

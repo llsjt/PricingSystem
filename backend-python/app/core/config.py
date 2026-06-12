@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     running_lease_timeout_seconds: int = Field(default=300, alias="RUNNING_LEASE_TIMEOUT_SECONDS")
     dispatch_republish_seconds: int = Field(default=120, alias="DISPATCH_REPUBLISH_SECONDS")
     execution_heartbeat_interval_seconds: int = Field(default=30, alias="EXECUTION_HEARTBEAT_INTERVAL_SECONDS")
+    worker_graceful_shutdown_seconds: int = Field(default=60, alias="WORKER_GRACEFUL_SHUTDOWN_SECONDS")
+    python_auto_schema_patch: bool = Field(default=False, alias="PYTHON_AUTO_SCHEMA_PATCH")
 
     competitor_data_source: Literal["tmall_csv"] = Field(default="tmall_csv", alias="COMPETITOR_DATA_SOURCE")
     market_competitor_min_valid_count: int = Field(default=3, alias="MARKET_COMPETITOR_MIN_VALID_COUNT")
@@ -91,6 +93,11 @@ class Settings(BaseSettings):
     crewai_tool_call_max_rounds: int = Field(default=2, alias="CREWAI_TOOL_CALL_MAX_ROUNDS")
     crewai_tool_call_max_per_round: int = Field(default=2, alias="CREWAI_TOOL_CALL_MAX_PER_ROUND")
     crewai_tool_timeout_seconds: int = Field(default=5, alias="CREWAI_TOOL_TIMEOUT_SECONDS")
+    backup_llm_enabled: bool = Field(default=False, alias="BACKUP_LLM_ENABLED")
+    backup_llm_api_key: str = Field(default="", alias="BACKUP_LLM_API_KEY")
+    backup_llm_base_url: str = Field(default="", alias="BACKUP_LLM_BASE_URL")
+    backup_llm_model: str = Field(default="", alias="BACKUP_LLM_MODEL")
+    backup_llm_provider: str = Field(default="", alias="BACKUP_LLM_PROVIDER")
 
     @field_validator("crewai_tool_call_max_rounds")
     @classmethod
@@ -127,6 +134,15 @@ class Settings(BaseSettings):
             problems.append("blank internal api token")
         if not self.mysql_password.strip() or self.mysql_password.strip() == "123456":
             problems.append("unsafe mysql password")
+        if self.python_auto_schema_patch:
+            problems.append("python auto schema patch must be disabled in production")
+        if self.backup_llm_enabled and (
+            not self.backup_llm_api_key.strip()
+            or not self.backup_llm_base_url.strip()
+            or not self.backup_llm_model.strip()
+            or not self.backup_llm_provider.strip()
+        ):
+            problems.append("backup llm is enabled without a complete audited provider config")
         if problems:
             raise RuntimeError("Unsafe production configuration: " + ", ".join(problems))
 

@@ -23,6 +23,7 @@ def create_task(
     created_at: datetime,
     started_at: datetime | None = None,
     completed_at: datetime | None = None,
+    consumer_retry_count: int = 0,
 ) -> PricingTask:
     task = PricingTask(
         id=task_id,
@@ -36,6 +37,7 @@ def create_task(
         constraint_text="",
         trace_id=f"trace-{task_id}",
         retry_count=0,
+        consumer_retry_count=consumer_retry_count,
         created_at=created_at,
         started_at=started_at,
         completed_at=completed_at,
@@ -51,7 +53,14 @@ def test_metrics_snapshot_counts_durations_and_stale_running_tasks():
     now = datetime(2026, 4, 8, 13, 0, 0)
     create_task(db, task_id=1, status="QUEUED", created_at=now - timedelta(minutes=3))
     create_task(db, task_id=2, status="RUNNING", created_at=now - timedelta(minutes=20), started_at=now - timedelta(minutes=20))
-    create_task(db, task_id=3, status="RETRYING", created_at=now - timedelta(minutes=5), started_at=now - timedelta(minutes=5))
+    create_task(
+        db,
+        task_id=3,
+        status="RETRYING",
+        created_at=now - timedelta(minutes=5),
+        started_at=now - timedelta(minutes=5),
+        consumer_retry_count=2,
+    )
     create_task(
         db,
         task_id=4,
@@ -97,5 +106,6 @@ def test_metrics_snapshot_counts_durations_and_stale_running_tasks():
     assert snapshot["failed"] == 1
     assert snapshot["cancelled"] == 1
     assert snapshot["staleRunningTasks"] == 1
+    assert snapshot["consumerRetryCount"] == 2
     assert snapshot["avgDurationSeconds"] == 135.0
     assert snapshot["maxDurationSeconds"] == 240.0

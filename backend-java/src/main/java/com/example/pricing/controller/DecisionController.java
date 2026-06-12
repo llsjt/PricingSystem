@@ -37,6 +37,9 @@ import java.util.Map;
 @Slf4j
 public class DecisionController {
 
+    private static final int MAX_STRATEGY_GOAL_LENGTH = 50;
+    private static final int MAX_CONSTRAINTS_LENGTH = 1000;
+
     private final DecisionTaskService decisionTaskService;
 
     /**
@@ -54,7 +57,15 @@ public class DecisionController {
             if (strategyGoal.isBlank()) {
                 return Result.error("请选择策略目标");
             }
+            if (strategyGoal.length() > MAX_STRATEGY_GOAL_LENGTH) {
+                return Result.error(400, "strategyGoal length cannot exceed 50");
+            }
+            if (constraints.length() > MAX_CONSTRAINTS_LENGTH) {
+                return Result.error(400, "constraints length cannot exceed 1000");
+            }
             return Result.success(decisionTaskService.startTask(productIds, strategyGoal, constraints, getCurrentUserId(request)));
+        } catch (IllegalArgumentException e) {
+            return Result.error(400, e.getMessage());
         } catch (Exception e) {
             log.error("启动定价任务失败", e);
             return Result.error(e.getMessage());

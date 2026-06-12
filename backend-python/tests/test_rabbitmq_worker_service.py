@@ -37,8 +37,8 @@ class FakeRepo:
         self.calls.append(("get_by_id", task_id))
         return self.task
 
-    def acquire_execution(self, task_id: int, execution_id: str, *, allow_reclaim: bool, max_retry: int) -> bool:
-        self.calls.append(("acquire_execution", task_id, allow_reclaim, max_retry))
+    def acquire_execution(self, task_id: int, execution_id: str, *, allow_reclaim: bool, stale_before=None, max_retry: int) -> bool:
+        self.calls.append(("acquire_execution", task_id, allow_reclaim, stale_before, max_retry))
         return True
 
     def increment_consumer_retry_and_release(self, task_id: int, execution_id: str, reason: str | None) -> int:
@@ -157,6 +157,8 @@ def _build_settings(*, concurrency: int = 1, prefetch: int = 1, agent_max_retrie
         worker_retry_backoff_max_seconds=30,
         agent_max_retries=agent_max_retries,
         execution_heartbeat_interval_seconds=30,
+        running_lease_timeout_seconds=300,
+        worker_graceful_shutdown_seconds=1,
     )
 
 

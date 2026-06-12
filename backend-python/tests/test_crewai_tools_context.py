@@ -4,8 +4,9 @@ from decimal import Decimal
 from inspect import signature
 
 from app.crew.protocols import CrewRunPayload
+from app.application.cancellation_checker import request_shutdown, clear_shutdown, TaskCancelledError
 from app.schemas.agent import DailyMetricSnapshot, ProductContext, TrafficSnapshot
-from app.tools.crewai_tools import query_competitor_summary, summarize_product_data
+from app.tools.crewai_tools import evaluate_risk_rules, query_competitor_summary, summarize_product_data
 from app.tools.tool_context import ToolContext, active_tool_context
 from app.tools.tool_registry import allowed_tool_names, get_tools_for_agent, is_tool_allowed
 
@@ -165,6 +166,7 @@ def test_tool_registry_returns_role_scoped_tools():
     assert [tool.name for tool in get_tools_for_agent("MANAGER_COORDINATOR")] == [
         "estimate_sales_volume",
         "estimate_profit",
+        "evaluate_risk_rules",
     ]
 
 
@@ -176,4 +178,41 @@ def test_tool_registry_checks_authorization_by_agent_code():
     }
     assert is_tool_allowed("DATA_ANALYSIS", "estimate_profit") is True
     assert is_tool_allowed("DATA_ANALYSIS", "query_competitor_summary") is False
+    assert allowed_tool_names("MANAGER_COORDINATOR") == {
+        "estimate_sales_volume",
+        "estimate_profit",
+        "evaluate_risk_rules",
+    }
+    assert is_tool_allowed("MANAGER_COORDINATOR", "evaluate_risk_rules") is True
+    assert is_tool_allowed("MANAGER_COORDINATOR", "query_competitor_summary") is False
     assert is_tool_allowed("UNKNOWN_AGENT", "estimate_profit") is False
+
+
+def test_evaluate_risk_rules_accepts_force_manual_review():
+    result = json.loads(
+        evaluate_risk_rules.func(
+            current_price=100,
+            cost_price=50,
+            candidate_price=90,
+            min_profit_rate=0.15,
+            max_discount_rate=0.5,
+            min_price=0,
+            max_price=0,
+            force_manual_review=True,
+        )
+    )
+
+    assert result["is_pass"] is False
+    assert result["need_manual_review"] is True
+
+
+def test_tools_raise_when_worker_shutdown_requested():
+    request_shutdown()
+    try:
+        try:
+            summarize_product_data.func()
+            raise AssertionError("expected TaskCancelledError")
+        except TaskCancelledError:
+            pass
+    finally:
+        clear_shutdown()

@@ -12,7 +12,12 @@ from app.api.internal_tasks import router as internal_tasks_router
 from app.core.config import get_settings
 from app.core.logger import configure_logging
 from app.core.trace_context import bind_trace_context
-from app.db.migrations import ensure_agent_run_log_schema, ensure_pricing_task_recovery_schema
+from app.db.migrations import (
+    check_agent_run_log_schema,
+    check_pricing_task_recovery_schema,
+    ensure_agent_run_log_schema,
+    ensure_pricing_task_recovery_schema,
+)
 from app.services.rabbitmq_worker_service import get_rabbitmq_worker_service
 from app.services.task_recovery_service import get_task_recovery_loop
 
@@ -50,10 +55,14 @@ async def trace_logging_middleware(request: Request, call_next):
 
 @app.on_event("startup")
 async def startup_migrations() -> None:
-    """启动时先校验生产安全配置，再补齐数据库字段并拉起 RabbitMQ Worker。"""
+    """启动时先校验生产安全配置，再检查或补齐数据库字段并拉起 RabbitMQ Worker。"""
     settings.validate_production_safety()
-    ensure_agent_run_log_schema(settings.mysql_db)
-    ensure_pricing_task_recovery_schema(settings.mysql_db)
+    if settings.python_auto_schema_patch:
+        ensure_agent_run_log_schema(settings.mysql_db)
+        ensure_pricing_task_recovery_schema(settings.mysql_db)
+    else:
+        check_agent_run_log_schema(settings.mysql_db)
+        check_pricing_task_recovery_schema(settings.mysql_db)
     await get_rabbitmq_worker_service().start()
     await get_task_recovery_loop().start()
 

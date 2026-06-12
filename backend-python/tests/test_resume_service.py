@@ -1,12 +1,14 @@
 """ResumeService contract tests for resume/retry behavior."""
 
-import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.sql import text
 
+from app.crew.protocols import CrewRunPayload
 from app.models.agent_run_log import AgentRunLog
 from app.repos.log_repo import LogRepo
+from app.schemas.agent import DailyMetricSnapshot, ProductContext, TrafficSnapshot
+from app.services.resume_fingerprint import attach_resume_meta
 from app.services.resume_service import ResumeService
 
 
@@ -59,43 +61,52 @@ def _add_completed(
     )
 
 
-def _insert_completed_row(
-    db: Session,
-    *,
-    task_id: int,
-    order: int,
-    raw_output: dict | None,
-    run_attempt: int = 0,
-) -> None:
-    db.add(
-        AgentRunLog(
-            task_id=task_id,
-            role_name=f"Agent-{order}",
-            speak_order=order,
-            thought_content="ok",
-            thinking_summary="ok",
-            evidence_json=[],
-            suggestion_json={"summary": "ok"},
-            raw_output_json=raw_output,
-            display_order=order,
-            stage="completed",
-            run_attempt=run_attempt,
-        )
-    )
-    db.commit()
-
-
-def _add_failed(db: Session, task_id: int, order: int, run_attempt: int = 0) -> None:
-    repo = LogRepo(db)
-    repo.append_card(
-        task_id=task_id,
-        agent_name=f"Agent-{order}",
-        display_order=order,
-        thinking_summary="boom",
-        evidence=[],
-        suggestion={"error": True, "message": "boom"},
-        stage="failed",
-        run_attempt=run_attempt,
+def _payload(*, min_price: str = "90.00") -> CrewRunPayload:
+    return CrewRunPayload(
+        task_id=1,
+        strategy_goal="PROFIT",
+        constraints={
+            "min_price": min_price,
+            "max_price": "150.00",
+            "max_discount_rate": "0.50",
+            "force_manual_review": False,
+        },
+        product=ProductContext(
+            productId=100,
+            shopId=10,
+            productName="测试商品",
+            categoryName="日用",
+            currentPrice="120.00",
+            costPrice="70.00",
+            stock=80,
+        ),
+        metrics=[
+            DailyMetricSnapshot(
+                statDate="2026-06-01",
+                visitorCount=100,
+                addCartCount=20,
+                payBuyerCount=10,
+                salesCount=10,
+                turnover="1200.00",
+                conversionRate="0.10",
+            )
+        ],
+        traffic=[
+            TrafficSnapshot(
+                statDate="2026-06-01",
+                trafficSource="search",
+                impressionCount=1000,
+                clickCount=100,
+                visitorCount=90,
+                payAmount="900.00",
+                roi="2.00",
+            )
+        ],
+        baseline_sales=100,
+        baseline_profit="500.00",
+        llm_api_key="secret",
+        llm_base_url="https://llm.example.test",
+        llm_model="model-a",
     )
 
 
@@ -125,109 +136,6 @@ def _insert_failed_row(
     db.commit()
 
 
-def test_empty_task_returns_full_run():
-    db = _build_session()
-    svc = ResumeService(db)
-    start_from, prior = svc.compute_resume_point(task_id=1)
-    assert start_from == 1
-    assert prior == {}
-
-
-def test_data_done_resumes_from_market():
-    db = _build_session()
-    _add_completed(db, task_id=1, order=1, raw={"suggestedPrice": "29.90"})
-    svc = ResumeService(db)
-    start_from, prior = svc.compute_resume_point(task_id=1)
-    assert start_from == 2
-    assert prior == {1: {"suggestedPrice": "29.90"}}
-
-
-def test_data_and_market_done_resumes_from_risk():
-    db = _build_session()
-    _add_completed(db, task_id=1, order=1, raw={"agent": "data"})
-    _add_completed(db, task_id=1, order=2, raw={"agent": "market"})
-    svc = ResumeService(db)
-    start_from, prior = svc.compute_resume_point(task_id=1)
-    assert start_from == 3
-    assert prior == {1: {"agent": "data"}, 2: {"agent": "market"}}
-
-
-def test_non_contiguous_prefix_breaks_at_first_gap():
-    db = _build_session()
-    _add_completed(db, task_id=1, order=2, raw={"agent": "market"})
-    svc = ResumeService(db)
-    start_from, prior = svc.compute_resume_point(task_id=1)
-    assert start_from == 1
-    assert prior == {}
-
-
-@pytest.mark.parametrize(
-    ("raw_output", "case_label"),
-    [
-        (None, "null"),
-        ({}, "empty-object"),
-    ],
-)
-def test_completed_without_reusable_raw_output_treated_as_incomplete(raw_output: dict | None, case_label: str):
-    db = _build_session()
-    _insert_completed_row(db, task_id=1, order=1, raw_output=raw_output)
-    svc = ResumeService(db)
-    start_from, prior = svc.compute_resume_point(task_id=1)
-    assert start_from == 1
-    assert prior == {}, case_label
-
-
-def test_all_four_done_returns_past_last_order():
-    db = _build_session()
-    for order in (1, 2, 3, 4):
-        _add_completed(db, task_id=1, order=order, raw={"order": order})
-    svc = ResumeService(db)
-    start_from, prior = svc.compute_resume_point(task_id=1)
-    assert start_from == 5
-    assert sorted(prior.keys()) == [1, 2, 3, 4]
-
-
-def test_latest_run_attempt_wins_when_multiple_completed_rows_for_same_order():
-    db = _build_session()
-    _add_completed(db, task_id=1, order=1, raw={"v": "old"}, run_attempt=0)
-    _add_completed(db, task_id=1, order=1, raw={"v": "new"}, run_attempt=1)
-    svc = ResumeService(db)
-    start_from, prior = svc.compute_resume_point(task_id=1)
-    assert start_from == 2
-    assert prior[1] == {"v": "new"}
-
-
-def test_failed_rows_do_not_count_as_completed():
-    db = _build_session()
-    _add_completed(db, task_id=1, order=1, raw={"agent": "data"}, run_attempt=0)
-    _add_failed(db, task_id=1, order=2, run_attempt=0)
-    svc = ResumeService(db)
-    start_from, prior = svc.compute_resume_point(task_id=1)
-    assert start_from == 2
-    assert prior == {1: {"agent": "data"}}
-
-
-def test_completed_raw_output_with_tool_audit_replays_without_audit_payload():
-    db = _build_session()
-    _add_completed(
-        db,
-        task_id=1,
-        order=1,
-        raw={
-            "suggestedPrice": "29.90",
-            "summary": "ok",
-            "toolAudit": [{"toolName": "estimate_profit", "status": "success"}],
-        },
-    )
-
-    prior = LogRepo(db).list_completed_raw_outputs(task_id=1)
-    start_from, resume_prior = ResumeService(db).compute_resume_point(task_id=1)
-
-    assert prior == {1: {"suggestedPrice": "29.90", "summary": "ok"}}
-    assert start_from == 2
-    assert resume_prior == prior
-
-
 def test_failed_raw_output_with_tool_audit_is_not_replayed():
     db = _build_session()
     _insert_failed_row(
@@ -241,41 +149,6 @@ def test_failed_raw_output_with_tool_audit_is_not_replayed():
 
     assert plan.prior_outputs == {}
     assert plan.analysis_orders_to_run == [1, 2, 3]
-
-
-def test_audit_only_completed_raw_output_is_not_replayed():
-    db = _build_session()
-    _add_completed(
-        db,
-        task_id=1,
-        order=1,
-        raw={"toolAudit": [{"toolName": "estimate_profit", "status": "success"}]},
-    )
-
-    prior = LogRepo(db).list_completed_raw_outputs(task_id=1)
-    start_from, resume_prior = ResumeService(db).compute_resume_point(task_id=1)
-
-    assert prior == {}
-    assert start_from == 1
-    assert resume_prior == {}
-
-
-def test_different_tasks_are_isolated():
-    db = _build_session()
-    _add_completed(db, task_id=100, order=1, raw={"agent": "data-100"})
-    _add_completed(db, task_id=200, order=1, raw={"agent": "data-200"})
-    _add_completed(db, task_id=200, order=2, raw={"agent": "market-200"})
-
-    svc = ResumeService(db)
-
-    start_100, prior_100 = svc.compute_resume_point(task_id=100)
-    start_200, prior_200 = svc.compute_resume_point(task_id=200)
-
-    assert start_100 == 2
-    assert prior_100 == {1: {"agent": "data-100"}}
-
-    assert start_200 == 3
-    assert prior_200 == {1: {"agent": "data-200"}, 2: {"agent": "market-200"}}
 
 
 def test_resume_plan_only_replays_missing_analysis_orders():
@@ -295,22 +168,18 @@ def test_resume_plan_only_replays_missing_analysis_orders():
     assert plan.all_done is False
 
 
-def test_resume_plan_keeps_non_contiguous_reusable_outputs_without_faking_continuous_prefix():
+def test_resume_plan_keeps_non_contiguous_reusable_outputs():
     db = _build_session()
     _add_completed(db, task_id=1, order=1, raw={"agent": "data"})
     _add_completed(db, task_id=1, order=3, raw={"agent": "risk"})
 
-    service = ResumeService(db)
-    plan = service.compute_resume_plan(task_id=1)
-    start_from, prior = service.compute_resume_point(task_id=1)
+    plan = ResumeService(db).compute_resume_plan(task_id=1)
 
     assert plan.analysis_orders_to_run == [2]
     assert plan.prior_outputs == {
         1: {"agent": "data"},
         3: {"agent": "risk"},
     }
-    assert start_from == 2
-    assert prior == {1: {"agent": "data"}}
 
 
 def test_resume_plan_runs_only_manager_when_all_analysis_outputs_exist():
@@ -348,3 +217,46 @@ def test_resume_plan_marks_all_done_when_manager_output_exists():
     assert plan.manager_completed is True
     assert plan.should_run_manager_now is False
     assert plan.all_done is True
+
+
+def test_resume_plan_reuses_output_when_payload_fingerprint_matches():
+    db = _build_session()
+    payload = _payload()
+    _add_completed(
+        db,
+        task_id=1,
+        order=1,
+        raw=attach_resume_meta({"agent": "data"}, payload),
+    )
+
+    plan = ResumeService(db).compute_resume_plan(task_id=1, payload=payload)
+
+    assert plan.prior_outputs == {1: {"agent": "data"}}
+    assert plan.analysis_orders_to_run == [2, 3]
+
+
+def test_resume_plan_does_not_reuse_output_when_payload_fingerprint_changes():
+    db = _build_session()
+    original_payload = _payload(min_price="90.00")
+    changed_payload = _payload(min_price="95.00")
+    _add_completed(
+        db,
+        task_id=1,
+        order=1,
+        raw=attach_resume_meta({"agent": "data"}, original_payload),
+    )
+
+    plan = ResumeService(db).compute_resume_plan(task_id=1, payload=changed_payload)
+
+    assert plan.prior_outputs == {}
+    assert plan.analysis_orders_to_run == [1, 2, 3]
+
+
+def test_resume_plan_does_not_reuse_legacy_output_without_fingerprint_for_payload_run():
+    db = _build_session()
+    _add_completed(db, task_id=1, order=1, raw={"agent": "legacy-data"})
+
+    plan = ResumeService(db).compute_resume_plan(task_id=1, payload=_payload())
+
+    assert plan.prior_outputs == {}
+    assert plan.analysis_orders_to_run == [1, 2, 3]

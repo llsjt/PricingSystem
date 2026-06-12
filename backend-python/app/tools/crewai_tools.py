@@ -6,6 +6,7 @@ from typing import Any
 
 from crewai.tools import tool
 
+from app.application.cancellation_checker import raise_if_cancelled
 from app.tools.elasticity_profit_tool import ElasticityProfitTool
 from app.tools.product_data_tool import ProductDataTool
 from app.tools.risk_rule_tool import RiskRuleTool
@@ -64,6 +65,7 @@ def _product_snapshot_data(summary: dict[str, Any]) -> dict[str, Any]:
 @tool("summarize_product_data")
 def summarize_product_data() -> str:
     """返回当前商品经营快照，不生成建议价，不做销量或利润测算。"""
+    raise_if_cancelled()
     ctx = active_tool_context.get()
     if ctx is None:
         return _tool_error("TOOL_CONTEXT_MISSING", "summarize_product_data requires active ToolContext")
@@ -79,6 +81,7 @@ def summarize_product_data() -> str:
 @tool("query_competitor_summary")
 def query_competitor_summary() -> str:
     """返回当前商品的预计算竞品摘要，不实时查询外部数据源。"""
+    raise_if_cancelled()
     ctx = active_tool_context.get()
     if ctx is None:
         return _tool_error("TOOL_CONTEXT_MISSING", "query_competitor_summary requires active ToolContext")
@@ -99,6 +102,7 @@ def estimate_sales_volume(
     strategy_goal: str,
 ) -> str:
     """估算调价后的月销量。"""
+    raise_if_cancelled()
     estimated = _elasticity_tool.estimate_sales(
         baseline_sales=int(baseline_sales),
         current_price=Decimal(str(current_price)),
@@ -115,6 +119,7 @@ def estimate_profit(
     expected_sales: int,
 ) -> str:
     """根据售价、成本价和预期销量估算月利润。"""
+    raise_if_cancelled()
     profit = _elasticity_tool.estimate_profit(
         price=Decimal(str(price)),
         cost_price=Decimal(str(cost_price)),
@@ -132,8 +137,10 @@ def evaluate_risk_rules(
     max_discount_rate: float = 0.5,
     min_price: float = 0.0,
     max_price: float = 0.0,
+    force_manual_review: bool | None = None,
 ) -> str:
     """评估候选价格是否满足硬性风控规则。"""
+    raise_if_cancelled()
     constraints: dict[str, Any] = {
         "min_profit_rate": min_profit_rate,
         "max_discount_rate": max_discount_rate,
@@ -142,6 +149,8 @@ def evaluate_risk_rules(
         constraints["min_price"] = min_price
     if max_price > 0:
         constraints["max_price"] = max_price
+    if force_manual_review is not None:
+        constraints["force_manual_review"] = force_manual_review
     result = _risk_rule_tool.evaluate(
         current_price=Decimal(str(current_price)),
         cost_price=Decimal(str(cost_price)),

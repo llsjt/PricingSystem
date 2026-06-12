@@ -9,6 +9,7 @@ from app.models.agent_run_log import AgentRunLog
 from app.models.pricing_result import PricingResult
 from app.models.pricing_task import PricingTask
 from app.schemas.result import TaskFinalResult
+from app.services.result_finalization_service import ExecutionOwnerChanged
 from app.tools.log_writer_tool import LogWriterTool
 from app.tools.result_writer_tool import ResultWriterTool
 
@@ -117,7 +118,11 @@ def test_result_writer_skips_when_execution_id_is_not_current_owner():
     db = build_session()
     create_task(db, task_id=2, execution_id="exec-current")
 
-    ResultWriterTool(db, execution_id="exec-stale").write_final_result(final_payload(2))
+    try:
+        ResultWriterTool(db, execution_id="exec-stale").write_final_result(final_payload(2))
+        raise AssertionError("expected stale writer to raise ExecutionOwnerChanged")
+    except ExecutionOwnerChanged:
+        pass
 
     assert db.query(PricingResult).count() == 0
     assert db.get(PricingTask, 2).task_status == "RUNNING"

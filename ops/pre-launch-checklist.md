@@ -53,7 +53,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\deploy-public-beta.ps1 -EnvFi
 4. 做一次告警阈值检查：
 
 ```powershell
-python .\scripts\check-operational-alerts.py --base-url http://127.0.0.1:8080
+python .\scripts\check-operational-alerts.py --java-base-url http://127.0.0.1:8080 --python-base-url http://127.0.0.1:8000
 ```
 
 5. 按 [public-beta-runbook.md](/D:/代码/备份/graduation_project/ops/public-beta-runbook.md) 完成最少一次任务创建、取消、结果查看、人工审核和价格应用走查

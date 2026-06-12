@@ -518,9 +518,33 @@ def build_pricing_crew(
             "决策规则：\n"
             "- 最终价格必须不低于风控的安全底价\n"
             "- 最终价格必须不高于市场天花板价\n"
-            "- 使用 estimate_sales_volume 和 estimate_profit 工具验证最终价格的预期效果\n"
+            "- 市场天花板价只有在 sourceStatus=OK、marketCeiling>0、dataQuality!=LOW 时才可作为硬约束\n"
             f'  (baseline_sales={payload.baseline_sales}, current_price="{money(product.current_price)}", '
             f'cost_price="{money(product.cost_price)}", strategy_goal="{payload.strategy_goal}")\n\n'
+            "Manager decision paths:\n"
+            "Fast Path: do not call tools when DATA_ANALYSIS / MARKET_INTEL / RISK_CONTROL suggested prices differ by <=2% or <=0.50, "
+            "RISK_CONTROL.isPass=true, DATA_ANALYSIS.expectedProfit > baselineProfit, MARKET_INTEL.sourceStatus=OK, "
+            "MARKET_INTEL.dataQuality!=LOW, and DATA_ANALYSIS.confidence>=0.6 plus MARKET_INTEL.confidence>=0.6. "
+            "Write FAST_PATH to agentOpinion.decision.arbitrationDecision and explain why no verification is needed.\n"
+            "Verification Path: use estimate_profit for weak or non-improving profit; use estimate_sales_volume only when sales assumptions are missing; "
+            "use evaluate_risk_rules when the candidate finalPrice is near safeFloorPrice or RISK_CONTROL.isPass=false; "
+            "do not query external market data when sourceStatus!=OK or dataQuality=LOW, lower consensusScore and stay conservative instead. "
+            "Write one of PROFIT_VERIFICATION, PRICE_DISAGREEMENT, RISK_VERIFICATION, MARKET_WEAK_SIGNAL, or CONSERVATIVE_DOWNGRADE to "
+            "agentOpinion.decision.arbitrationDecision.\n"
+            "Risk verification parameters for evaluate_risk_rules must be bound exactly as:\n"
+            f"- current_price <- product.current_price = {money(product.current_price)}\n"
+            f"- cost_price <- product.cost_price = {money(product.cost_price)}\n"
+            "- candidate_price <- manager finalPrice after arbitration\n"
+            f"- min_profit_rate <- payload.constraints.min_profit_rate = {(payload.constraints or {}).get('min_profit_rate', 0.15)}\n"
+            f"- max_discount_rate <- payload.constraints.max_discount_rate = {(payload.constraints or {}).get('max_discount_rate', 0.5)}\n"
+            f"- min_price <- payload.constraints.min_price = {(payload.constraints or {}).get('min_price', 0)}\n"
+            f"- max_price <- payload.constraints.max_price = {(payload.constraints or {}).get('max_price', 0)}\n"
+            f"- force_manual_review <- payload.constraints.force_manual_review = {bool((payload.constraints or {}).get('force_manual_review', False))}\n"
+            "resultSummary first sentence must start with exactly one of: 可确认 / 建议复核 / 不建议确认. "
+            "It must include the active strategy goal, key evidence, risk judgment, and next action. "
+            "If force_manual_review=true, output a manual-review conclusion. "
+            "If the result is a midpoint arbitration, selectedAgent and selectedPrice must be JSON null values, not the string value \"null\". "
+            "Do not add loopTrace, verificationSummary, or verificationPath fields.\n\n"
             "执行策略要求：\n"
             f"- 所有定价结果都必须进入「{MANUAL_REVIEW_STRATEGY}」流程，不允许直接执行或灰度发布。\n"
             f'- 输出 JSON 的 executeStrategy 字段必须固定为「{MANUAL_REVIEW_STRATEGY}」。\n\n'
@@ -553,7 +577,7 @@ def build_pricing_crew(
             '"rejectedOpinions": ["未采纳意见1"], '
             '"arbitrationDecision": "最终裁决结论(可选)", '
             '"arbitrationReason": "裁决理由(可选)", '
-            '"selectedAgent": "DATA_ANALYSIS/MARKET_INTEL/RISK_CONTROL/null", '
+            '"selectedAgent": DATA_ANALYSIS/MARKET_INTEL/RISK_CONTROL or JSON null, '
             '"selectedPrice": 被采纳意见价格(数字或null), '
             '"selectedStrategy": "被采纳方案策略(可选)"}'
             '\nMust also include "agentOpinion" with "relations" and "decision". The relations object must include "dependsOnOpinionIds", "acceptedOpinionIds", "rejectedOpinionIds", and "selectedOpinionIds". The decision object must include "decisionType", "consensusScore", "arbitrationDecision", and "arbitrationReason".'

@@ -49,8 +49,15 @@ _TOOL_REGISTRATIONS: tuple[ToolRegistration, ...] = (
     ToolRegistration(
         name="evaluate_risk_rules",
         tool=evaluate_risk_rules,
-        allowed_agents=frozenset({"RISK_CONTROL"}),
-        audit_summary_fields=("passed", "violations"),
+        allowed_agents=frozenset({"RISK_CONTROL", "MANAGER_COORDINATOR"}),
+        audit_summary_fields=(
+            "is_pass",
+            "safe_floor_price",
+            "suggested_price",
+            "risk_level",
+            "need_manual_review",
+            "margin",
+        ),
     ),
 )
 

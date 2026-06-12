@@ -16,7 +16,7 @@ import static org.mockito.Mockito.when;
 class HealthControllerTest {
 
     @Test
-    void readyReportsOkOnlyWhenDatabasePythonAndRabbitmqAreAllReady() {
+    void readyReportsOkWhenDatabaseAndRabbitmqAreReady() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         PythonBackendHealthClient pythonBackendHealthClient = mock(PythonBackendHealthClient.class);
         OperationsMetricsService operationsMetricsService = mock(OperationsMetricsService.class);
@@ -43,14 +43,41 @@ class HealthControllerTest {
     }
 
     @Test
-    void readyReportsDegradedWhenAnyDependencyIsDown() {
+    void readyDoesNotDegradeWhenPythonWorkerIsDown() {
+        JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
+        PythonBackendHealthClient pythonBackendHealthClient = mock(PythonBackendHealthClient.class);
+        OperationsMetricsService operationsMetricsService = mock(OperationsMetricsService.class);
+        ConnectionFactory connectionFactory = mock(ConnectionFactory.class);
+        Connection connection = mock(Connection.class);
+
+        when(jdbcTemplate.queryForObject("SELECT 1", Integer.class)).thenReturn(1);
+        when(pythonBackendHealthClient.isReady()).thenReturn(false);
+        when(connectionFactory.createConnection()).thenReturn(connection);
+
+        HealthController controller = new HealthController(
+                jdbcTemplate,
+                pythonBackendHealthClient,
+                operationsMetricsService,
+                connectionFactory
+        );
+
+        Map<String, Object> payload = controller.ready();
+
+        assertEquals("ok", payload.get("status"));
+        assertEquals("ok", payload.get("database"));
+        assertEquals("down", payload.get("pythonWorker"));
+        assertEquals("ok", payload.get("rabbitmq"));
+    }
+
+    @Test
+    void readyReportsDegradedWhenRabbitmqIsDown() {
         JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
         PythonBackendHealthClient pythonBackendHealthClient = mock(PythonBackendHealthClient.class);
         OperationsMetricsService operationsMetricsService = mock(OperationsMetricsService.class);
         ConnectionFactory connectionFactory = mock(ConnectionFactory.class);
 
         when(jdbcTemplate.queryForObject("SELECT 1", Integer.class)).thenReturn(1);
-        when(pythonBackendHealthClient.isReady()).thenReturn(false);
+        when(pythonBackendHealthClient.isReady()).thenReturn(true);
         when(connectionFactory.createConnection()).thenThrow(new IllegalStateException("rabbitmq down"));
 
         HealthController controller = new HealthController(
@@ -64,7 +91,7 @@ class HealthControllerTest {
 
         assertEquals("degraded", payload.get("status"));
         assertEquals("ok", payload.get("database"));
-        assertEquals("down", payload.get("pythonWorker"));
+        assertEquals("ok", payload.get("pythonWorker"));
         assertEquals("down", payload.get("rabbitmq"));
     }
 }

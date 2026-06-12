@@ -1,0 +1,37 @@
+{
+  "caseName": "market_low_quality_product",
+  "payload": {
+    "strategyGoal": "MARKET_SHARE",
+    "baselineSales": 100,
+    "baselineProfit": "500.00",
+    "currentPrice": "120.00",
+    "costPrice": "80.00",
+    "constraints": {
+      "min_profit_rate": 0.2,
+      "max_discount_rate": 0.5,
+      "min_price": 90,
+      "max_price": 150,
+      "force_manual_review": false
+    }
+  },
+  "managerOutput": {
+    "finalPrice": "110.00",
+    "expectedSales": 110,
+    "expectedProfit": "2700.00",
+    "profitGrowth": "2200.00",
+    "isPass": true,
+    "resultSummary": "建议复核：本次按市场份额优先处理，建议价为110.00元，下一步：等待更多竞品数据。主要依据是市场数据质量低，只能弱参考。风险结论：价格仍高于安全底价。",
+    "arbitrationReason": "市场信号质量低，未把marketCeiling作为硬约束，也未强跟市场价。",
+    "arbitrationDecision": "MARKET_WEAK_SIGNAL",
+    "toolAudit": []
+  },
+  "expected": {
+    "finalPrice": "110.00",
+    "expectedProfit": "2700.00",
+    "profitGrowth": "2200.00",
+    "isPass": true,
+    "summaryStartsWith": "建议复核",
+    "arbitrationDecision": "MARKET_WEAK_SIGNAL",
+    "toolAudit": []
+  }
+}

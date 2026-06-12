@@ -40,6 +40,7 @@ public class OperationsMetricsService {
         int failed = 0;
         int cancelled = 0;
         int staleRunningTasks = 0;
+        int consumerRetryCount = 0;
         long durationSamples = 0L;
         double durationSumSeconds = 0d;
         double maxDurationSeconds = 0d;
@@ -48,6 +49,7 @@ public class OperationsMetricsService {
 
         for (PricingTask task : tasks) {
             String status = normalizeStatus(task);
+            consumerRetryCount += task.getConsumerRetryCount() == null ? 0 : task.getConsumerRetryCount();
             if (task.getCreatedAt() != null && (latestTaskCreatedAt == null || task.getCreatedAt().isAfter(latestTaskCreatedAt))) {
                 latestTaskCreatedAt = task.getCreatedAt();
             }
@@ -91,6 +93,7 @@ public class OperationsMetricsService {
         snapshot.put("failed", failed);
         snapshot.put("cancelled", cancelled);
         snapshot.put("staleRunningTasks", staleRunningTasks);
+        snapshot.put("consumerRetryCount", consumerRetryCount);
         snapshot.put("avgDurationSeconds", durationSamples == 0 ? 0d : round(durationSumSeconds / durationSamples));
         snapshot.put("maxDurationSeconds", round(maxDurationSeconds));
         snapshot.put("latestTaskCreatedAt", latestTaskCreatedAt == null ? null : latestTaskCreatedAt.toString());

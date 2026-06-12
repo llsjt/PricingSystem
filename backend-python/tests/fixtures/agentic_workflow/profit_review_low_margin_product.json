@@ -1,0 +1,41 @@
+{
+  "caseName": "profit_review_low_margin_product",
+  "payload": {
+    "strategyGoal": "MAX_PROFIT",
+    "baselineSales": 100,
+    "baselineProfit": "500.00",
+    "currentPrice": "120.00",
+    "costPrice": "80.00",
+    "constraints": {
+      "min_profit_rate": 0.2,
+      "max_discount_rate": 0.5,
+      "min_price": 90,
+      "max_price": 150,
+      "force_manual_review": false
+    }
+  },
+  "managerOutput": {
+    "finalPrice": "101.00",
+    "expectedSales": 100,
+    "expectedProfit": "510.00",
+    "profitGrowth": "10.00",
+    "isPass": true,
+    "resultSummary": "建议复核：本次按利润优先处理，建议价为101.00元，下一步：人工复核利润空间。主要依据是利润改善较弱。风险结论：接近安全底价。",
+    "arbitrationReason": "利润复核显示改善幅度有限，虽然没有跌破底价，但不应直接确认。",
+    "arbitrationDecision": "PROFIT_VERIFICATION",
+    "toolAudit": [
+      {"toolName": "estimate_profit", "status": "success"}
+    ]
+  },
+  "expected": {
+    "finalPrice": "101.00",
+    "expectedProfit": "510.00",
+    "profitGrowth": "10.00",
+    "isPass": true,
+    "summaryStartsWith": "建议复核",
+    "arbitrationDecision": "PROFIT_VERIFICATION",
+    "toolAudit": [
+      {"toolName": "estimate_profit", "status": "success"}
+    ]
+  }
+}

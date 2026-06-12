@@ -1,0 +1,37 @@
+{
+  "caseName": "fast_path_normal_product",
+  "payload": {
+    "strategyGoal": "MAX_PROFIT",
+    "baselineSales": 100,
+    "baselineProfit": "500.00",
+    "currentPrice": "120.00",
+    "costPrice": "80.00",
+    "constraints": {
+      "min_profit_rate": 0.2,
+      "max_discount_rate": 0.5,
+      "min_price": 90,
+      "max_price": 150,
+      "force_manual_review": false
+    }
+  },
+  "managerOutput": {
+    "finalPrice": "110.00",
+    "expectedSales": 100,
+    "expectedProfit": "2500.00",
+    "profitGrowth": "2000.00",
+    "isPass": true,
+    "resultSummary": "可确认：本次按利润优先处理，建议价为110.00元，下一步：人工确认后应用。主要依据是三方价格接近且利润改善明确。风险结论：通过安全底价。",
+    "arbitrationReason": "数据分析、市场情报和风控意见一致，未发现需要复核的利润或风险冲突。",
+    "arbitrationDecision": "FAST_PATH",
+    "toolAudit": []
+  },
+  "expected": {
+    "finalPrice": "110.00",
+    "expectedProfit": "2500.00",
+    "profitGrowth": "2000.00",
+    "isPass": true,
+    "summaryStartsWith": "可确认",
+    "arbitrationDecision": "FAST_PATH",
+    "toolAudit": []
+  }
+}

@@ -315,6 +315,71 @@ class DecisionTaskServiceImplTest {
     }
 
     @Test
+    void applyDecisionRejectsGuardrailBlockedResultWithoutUpdatingProduct() {
+        PricingResult result = new PricingResult();
+        result.setId(501L);
+        result.setTaskId(601L);
+        result.setFinalPrice(new BigDecimal("88.00"));
+        result.setIsPass(0);
+        result.setResultSummary("系统风控兜底已触发");
+
+        PricingTask task = new PricingTask();
+        task.setId(601L);
+        task.setShopId(5L);
+        task.setProductId(701L);
+        task.setTaskStatus("MANUAL_REVIEW");
+
+        Product product = new Product();
+        product.setId(701L);
+        product.setShopId(5L);
+        product.setCurrentPrice(new BigDecimal("99.00"));
+
+        when(resultMapper.selectById(501L)).thenReturn(result);
+        when(taskMapper.selectById(601L)).thenReturn(task);
+        when(shopService.getShopIdsByUser(88L)).thenReturn(List.of(5L));
+        when(productMapper.selectById(701L)).thenReturn(product);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> service.applyDecision(501L, 88L));
+
+        assertEquals("Pricing result requires manual review: 系统风控兜底已触发", ex.getMessage());
+        verify(resultMapper, never()).updateById(any(PricingResult.class));
+        verify(productMapper, never()).updateById(any(Product.class));
+        verify(taskMapper, never()).updateById(any(PricingTask.class));
+    }
+
+    @Test
+    void applyDecisionRejectsMissingPassFlagWithoutUpdatingProduct() {
+        PricingResult result = new PricingResult();
+        result.setId(502L);
+        result.setTaskId(602L);
+        result.setFinalPrice(new BigDecimal("88.00"));
+        result.setIsPass(null);
+
+        PricingTask task = new PricingTask();
+        task.setId(602L);
+        task.setShopId(5L);
+        task.setProductId(702L);
+        task.setTaskStatus("MANUAL_REVIEW");
+
+        Product product = new Product();
+        product.setId(702L);
+        product.setShopId(5L);
+        product.setCurrentPrice(new BigDecimal("99.00"));
+
+        when(resultMapper.selectById(502L)).thenReturn(result);
+        when(taskMapper.selectById(602L)).thenReturn(task);
+        when(shopService.getShopIdsByUser(88L)).thenReturn(List.of(5L));
+        when(productMapper.selectById(702L)).thenReturn(product);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> service.applyDecision(502L, 88L));
+
+        assertEquals("Pricing result requires manual review: Pricing result is blocked by guardrails", ex.getMessage());
+        verify(resultMapper, never()).updateById(any(PricingResult.class));
+        verify(productMapper, never()).updateById(any(Product.class));
+        verify(taskMapper, never()).updateById(any(PricingTask.class));
+    }
+
+    @Test
     void batchDeleteTasksRemovesOwnedTerminalTasksAndArtifacts() {
         PricingTask completed = new PricingTask();
         completed.setId(12L);

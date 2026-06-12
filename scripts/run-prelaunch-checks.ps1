@@ -107,7 +107,8 @@ Invoke-CheckedCommand -Description 'Validate PowerShell scripts' -Command {
 Invoke-CheckedCommand -Description 'Validate Python ops scripts' -Command {
     & $pythonCommand -m py_compile `
         (Resolve-RepoPath 'scripts/load-test-public-beta.py') `
-        (Resolve-RepoPath 'scripts/check-operational-alerts.py')
+        (Resolve-RepoPath 'scripts/check-operational-alerts.py') `
+        (Resolve-RepoPath 'scripts/observe-gray-rollout.py')
     if ($LASTEXITCODE -ne 0) {
         throw 'Python ops script compilation failed.'
     }

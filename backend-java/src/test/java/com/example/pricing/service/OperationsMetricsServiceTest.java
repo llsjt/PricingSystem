@@ -18,6 +18,7 @@ class OperationsMetricsServiceTest {
 
         PricingTask queued = task("QUEUED", now.minusMinutes(3), null, null);
         PricingTask retrying = task("RETRYING", now.minusMinutes(5), now.minusMinutes(5), null);
+        retrying.setConsumerRetryCount(2);
         PricingTask running = task("RUNNING", now.minusMinutes(20), now.minusMinutes(20), null);
         PricingTask completed = task("COMPLETED", now.minusMinutes(15), now.minusMinutes(14), now.minusMinutes(10));
         PricingTask manualReview = task("MANUAL_REVIEW", now.minusMinutes(12), now.minusMinutes(11), now.minusMinutes(8));
@@ -41,6 +42,7 @@ class OperationsMetricsServiceTest {
         assertEquals(1, snapshot.get("failed"));
         assertEquals(1, snapshot.get("cancelled"));
         assertEquals(1, snapshot.get("staleRunningTasks"));
+        assertEquals(2, snapshot.get("consumerRetryCount"));
         assertEquals(135.0d, snapshot.get("avgDurationSeconds"));
         assertEquals(240.0d, snapshot.get("maxDurationSeconds"));
     }

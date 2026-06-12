@@ -147,16 +147,52 @@ def test_recover_stale_running_marks_failed_after_retry_budget():
 
 def test_acquire_execution_reclaims_redelivered_task_and_increments_retry_count():
     db = build_session()
-    create_task(db, task_id=2, status="RUNNING", execution_id="exec-old", consumer_retry_count=0)
+    task = create_task(db, task_id=2, status="RUNNING", execution_id="exec-old", consumer_retry_count=0)
+    stale_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=20)
+    task.started_at = stale_time
+    task.last_heartbeat_at = stale_time
+    db.add(task)
+    db.commit()
     repo = TaskRepo(db)
 
-    assert repo.acquire_execution(2, "exec-new", allow_reclaim=True, max_retry=3) is True
+    assert repo.acquire_execution(
+        2,
+        "exec-new",
+        allow_reclaim=True,
+        stale_before=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=5),
+        max_retry=3,
+    ) is True
 
     refreshed = db.get(PricingTask, 2)
     assert refreshed is not None
     assert refreshed.current_execution_id == "exec-new"
     assert refreshed.task_status == "RUNNING"
     assert refreshed.consumer_retry_count == 1
+
+
+def test_acquire_execution_does_not_reclaim_live_redelivered_task():
+    db = build_session()
+    task = create_task(db, task_id=11, status="RUNNING", execution_id="exec-live", consumer_retry_count=0)
+    live_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=1)
+    task.started_at = live_time
+    task.last_heartbeat_at = live_time
+    db.add(task)
+    db.commit()
+    repo = TaskRepo(db)
+
+    assert repo.acquire_execution(
+        11,
+        "exec-new",
+        allow_reclaim=True,
+        stale_before=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=5),
+        max_retry=3,
+    ) is False
+
+    refreshed = db.get(PricingTask, 11)
+    assert refreshed is not None
+    assert refreshed.current_execution_id == "exec-live"
+    assert refreshed.task_status == "RUNNING"
+    assert refreshed.consumer_retry_count == 0
 
 
 def test_increment_consumer_retry_and_release_clears_owner():

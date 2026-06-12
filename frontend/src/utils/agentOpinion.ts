@@ -21,6 +21,7 @@ type AgentOpinionSource =
   | undefined
 
 export interface NormalizedManagerArbitration {
+  decisionType: string | null
   consensusScore: number | null
   consensusScoreText: string | null
   consensusScorePercent: number | null
@@ -79,6 +80,17 @@ const normalizeAgentCode = (value: unknown): PricingAgentCode | null => {
 const parseAgentCodeFromOpinionId = (value: unknown): PricingAgentCode | null => {
   const match = String(value ?? '').match(/:agent:([A-Z_]+):/)
   return normalizeAgentCode(match?.[1] || '')
+}
+
+const normalizeDecisionType = (value: unknown) => {
+  const text = String(value ?? '').trim().toUpperCase()
+  return ['FOLLOW', 'OVERRIDE', 'MERGE', 'REJECT_ALL'].includes(text) ? text : null
+}
+
+const compositeDecisionLabel = (decisionType: string | null) => {
+  if (decisionType === 'MERGE') return '综合专家意见折中定价'
+  if (decisionType === 'REJECT_ALL') return '未采纳单一专家方案'
+  return null
 }
 
 const readLegacyField = (source: AgentOpinionSource, keys: string[]) => {
@@ -143,12 +155,16 @@ const buildArbitration = (
   const acceptedOpinionIds = asOpinionIdList(relations.acceptedOpinionIds)
   const rejectedOpinionIds = asOpinionIdList(relations.rejectedOpinionIds)
   const selectedOpinionIds = asOpinionIdList(relations.selectedOpinionIds)
+  const decisionType = normalizeDecisionType(decision.decisionType ?? readLegacyField(source, ['decisionType', 'arbitrationDecision']))
+  const compositeLabel = compositeDecisionLabel(decisionType)
   const legacyDisagreementPoints = asItemList(readLegacyField(source, ['disagreementPoints', 'conflicts', 'disagreements', 'conflictPoints']))
   const legacyAccepted = asItemList(readLegacyField(source, ['acceptedOpinions']))
   const legacyRejected = asItemList(readLegacyField(source, ['rejectedOpinions']))
 
-  const selectedAgentCode = normalizeAgentCode(readLegacyField(source, ['selectedAgent', 'selectedOption']))
-    || parseAgentCodeFromOpinionId(selectedOpinionIds[0] || acceptedOpinionIds[0])
+  const selectedAgentCode = compositeLabel
+    ? null
+    : normalizeAgentCode(readLegacyField(source, ['selectedAgent', 'selectedOption']))
+      || parseAgentCodeFromOpinionId(selectedOpinionIds[0] || acceptedOpinionIds[0])
   const selectedPrice = toNumber(readLegacyField(source, ['selectedPrice'])) ?? toNumber(pricing.recommendedPrice)
   const selectedStrategy = toText(readLegacyField(source, ['selectedStrategy'])) || toText(coerceRecord(coerceRecord(source).suggestion).strategy)
 
@@ -167,6 +183,7 @@ const buildArbitration = (
     && !decisionSummary
     && !decisionReason
     && !selectedAgentCode
+    && !compositeLabel
     && selectedPrice === null
     && !selectedStrategy
   ) {
@@ -176,6 +193,7 @@ const buildArbitration = (
   const consensusPercent = consensusScore === null ? null : Math.max(0, Math.min(100, consensusScore > 1 ? consensusScore : consensusScore * 100))
   return {
     consensusScore,
+    decisionType,
     consensusScoreText: consensusPercent === null ? null : `${consensusPercent.toFixed(2)}%`,
     consensusScorePercent: consensusPercent,
     disagreementSummary,
@@ -185,7 +203,7 @@ const buildArbitration = (
     decisionSummary,
     decisionReason,
     selectedAgentCode,
-    selectedAgentLabel: selectedAgentCode ? AGENT_NAME_BY_CODE[selectedAgentCode] : null,
+    selectedAgentLabel: compositeLabel || (selectedAgentCode ? AGENT_NAME_BY_CODE[selectedAgentCode] : null),
     selectedPrice,
     selectedPriceText: selectedPrice === null ? null : formatCurrency(selectedPrice),
     selectedStrategy,
@@ -254,7 +272,7 @@ export const extractManagerArbitrationFields = (
       arbitrationReason: arbitration.decisionReason,
       decisionSummary: arbitration.decisionSummary,
       decisionReason: arbitration.decisionReason,
-      selectedAgent: arbitration.selectedAgentCode,
+      selectedAgent: arbitration.selectedAgentLabel,
       selectedOption: arbitration.selectedAgentCode,
       selectedPrice: arbitration.selectedPrice,
       selectedStrategy: arbitration.selectedStrategy

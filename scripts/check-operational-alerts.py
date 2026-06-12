@@ -21,6 +21,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-stale-running", type=int, default=3)
     parser.add_argument("--max-manual-review", type=int, default=20)
     parser.add_argument("--max-failed", type=int, default=20)
+    parser.add_argument("--max-consumer-retry", type=int, default=10)
+    parser.add_argument("--max-cas-conflicts", type=int, default=0)
+    parser.add_argument("--max-retry-publish-failures", type=int, default=0)
+    parser.add_argument("--max-progress-publish-failures", type=int, default=0)
+    parser.add_argument("--max-llm-timeouts", type=int, default=5)
+    parser.add_argument("--max-manual-review-without-result", type=int, default=0)
     return parser.parse_args()
 
 
@@ -37,6 +43,7 @@ def main() -> int:
 
     java_tasks = java_metrics.get("tasks", {})
     python_tasks = python_metrics.get("tasks", {})
+    python_runtime = python_metrics.get("runtime", {})
 
     if int(java_tasks.get("queueDepth", 0)) > args.max_java_queue_depth:
         breaches.append("java queue depth exceeded")
@@ -50,6 +57,18 @@ def main() -> int:
         breaches.append("java manual review backlog exceeded")
     if int(java_tasks.get("failed", 0)) > args.max_failed:
         breaches.append("java failed task count exceeded")
+    if int(python_tasks.get("consumerRetryCount", 0)) > args.max_consumer_retry:
+        breaches.append("python consumer retry count exceeded")
+    if int(python_runtime.get("casConflictCount", 0)) > args.max_cas_conflicts:
+        breaches.append("python CAS conflict count exceeded")
+    if int(python_runtime.get("retryPublishFailureCount", 0)) > args.max_retry_publish_failures:
+        breaches.append("python retry publish failure count exceeded")
+    if int(python_runtime.get("progressPublishFailureCount", 0)) > args.max_progress_publish_failures:
+        breaches.append("python progress publish failure count exceeded")
+    if int(python_runtime.get("llmTimeoutCount", 0)) > args.max_llm_timeouts:
+        breaches.append("python LLM timeout count exceeded")
+    if int(python_runtime.get("manualReviewWithoutResultCount", 0)) > args.max_manual_review_without_result:
+        breaches.append("python manual review without result count exceeded")
 
     report = {
         "java": java_metrics,

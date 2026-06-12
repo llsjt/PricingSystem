@@ -8,6 +8,7 @@ from app.db.session import SessionLocal
 from app.repos.task_repo import TaskRepo
 from app.schemas.common import HealthResponse
 from app.services.rabbitmq_worker_service import get_rabbitmq_worker_service
+from app.services.runtime_metrics import get_runtime_metrics
 
 router = APIRouter(tags=["health"])
 
@@ -77,4 +78,5 @@ def health_metrics() -> dict:
         "rabbitmq": "ok" if worker.ready else "down",
         "worker": worker.snapshot(),
         "tasks": task_metrics,
+        "runtime": get_runtime_metrics().snapshot(),
     }

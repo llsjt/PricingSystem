@@ -8,6 +8,32 @@ from app.db.session import engine
 
 logger = logging.getLogger(__name__)
 
+AGENT_RUN_LOG_REQUIRED_COLUMNS = {
+    "thinking_summary",
+    "evidence_json",
+    "suggestion_json",
+    "raw_output_json",
+    "final_reason",
+    "display_order",
+    "stage",
+    "run_attempt",
+}
+AGENT_RUN_LOG_REQUIRED_INDEXES = {
+    "idx_task_display_order",
+    "idx_task_run_attempt_display_order",
+}
+INDEX_ALIASES = {
+    "idx_task_display_order": {"idx_task_display_order", "idx_agent_run_log_task_display_order"},
+}
+PRICING_TASK_RECOVERY_REQUIRED_COLUMNS = {
+    "last_heartbeat_at",
+    "recovery_count",
+    "last_recovered_at",
+}
+PRICING_TASK_RECOVERY_REQUIRED_INDEXES = {
+    "idx_pricing_task_status_heartbeat",
+}
+
 
 def _list_columns(table_name: str, schema_name: str) -> set[str]:
     with engine.connect() as conn:
@@ -45,6 +71,44 @@ def _has_index(table_name: str, schema_name: str, index_name: str) -> bool:
             },
         ).first()
     return row is not None
+
+
+def _has_required_index(table_name: str, schema_name: str, index_name: str) -> bool:
+    candidates = INDEX_ALIASES.get(index_name, {index_name})
+    return any(_has_index(table_name, schema_name, candidate) for candidate in candidates)
+
+
+def _assert_schema_ready(table_name: str, schema_name: str, required_columns: set[str], required_indexes: set[str]) -> None:
+    existing = _list_columns(table_name, schema_name)
+    missing_columns = sorted(required_columns - existing)
+    missing_indexes = sorted(index for index in required_indexes if not _has_required_index(table_name, schema_name, index))
+    if missing_columns or missing_indexes:
+        parts: list[str] = []
+        if missing_columns:
+            parts.append(f"missing columns: {', '.join(missing_columns)}")
+        if missing_indexes:
+            parts.append(f"missing indexes: {', '.join(missing_indexes)}")
+        raise RuntimeError(f"{table_name} schema is not ready; run database migrations first ({'; '.join(parts)})")
+
+
+def check_agent_run_log_schema(schema_name: str) -> None:
+    """Check agent_run_log schema without applying DDL."""
+    _assert_schema_ready(
+        "agent_run_log",
+        schema_name,
+        AGENT_RUN_LOG_REQUIRED_COLUMNS,
+        AGENT_RUN_LOG_REQUIRED_INDEXES,
+    )
+
+
+def check_pricing_task_recovery_schema(schema_name: str) -> None:
+    """Check pricing_task recovery schema without applying DDL."""
+    _assert_schema_ready(
+        "pricing_task",
+        schema_name,
+        PRICING_TASK_RECOVERY_REQUIRED_COLUMNS,
+        PRICING_TASK_RECOVERY_REQUIRED_INDEXES,
+    )
 
 
 def ensure_agent_run_log_schema(schema_name: str) -> None:
@@ -94,7 +158,7 @@ def ensure_agent_run_log_schema(schema_name: str) -> None:
             )
         logger.info("Applied startup migration for agent_run_log columns: %s", ", ".join(statements))
 
-    if not _has_index(table_name, schema_name, "idx_task_display_order"):
+    if not _has_required_index(table_name, schema_name, "idx_task_display_order"):
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE agent_run_log ADD INDEX idx_task_display_order (task_id, display_order)"))
         logger.info("Applied startup migration index idx_task_display_order")

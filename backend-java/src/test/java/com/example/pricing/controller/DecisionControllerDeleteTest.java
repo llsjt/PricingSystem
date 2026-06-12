@@ -7,14 +7,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
 
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -31,6 +34,25 @@ class DecisionControllerDeleteTest {
         mockMvc = MockMvcBuilders.standaloneSetup(new DecisionController(decisionTaskService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
+    }
+
+    @Test
+    void startDecisionTaskRejectsOverlongStrategyGoalBeforeServiceCall() throws Exception {
+        mockMvc.perform(post("/api/decision/start")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .requestAttr("currentUserId", 7L)
+                        .content("""
+                                {
+                                  "productIds": [101],
+                                  "strategyGoal": "%s",
+                                  "constraints": ""
+                                }
+                """.formatted("A".repeat(51))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(400))
+                .andExpect(jsonPath("$.message").value("strategyGoal length cannot exceed 50"));
+
+        verifyNoInteractions(decisionTaskService);
     }
 
     @Test

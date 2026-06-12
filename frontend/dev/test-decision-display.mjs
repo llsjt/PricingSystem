@@ -75,6 +75,76 @@ assert.equal(normalizedNewOpinion.arbitration?.decisionReason, '竞品带宽更�
 assert.equal(normalizedNewOpinion.arbitration?.consensusScore, 0, 'keeps zero consensus score from the new agentOpinion payload')
 assert.equal(normalizedNewOpinion.arbitration?.consensusScoreText, '0.00%', 'formats zero consensus score without dropping it')
 
+const normalizedMergeOpinion = normalizeAgentOpinion({
+  agentCode: 'MANAGER_COORDINATOR',
+  agentOpinion: {
+    opinionId: 'task:agent:MANAGER_COORDINATOR:merge',
+    agentCode: 'MANAGER_COORDINATOR',
+    agentName: '经理协调智能体',
+    status: 'MERGED',
+    summary: '折中定价',
+    relations: {
+      acceptedOpinionIds: ['task:agent:MARKET_INTEL:1'],
+      selectedOpinionIds: ['task:agent:MARKET_INTEL:1']
+    },
+    decision: {
+      decisionType: 'MERGE',
+      consensusScore: 0.72,
+      arbitrationDecision: '综合专家意见',
+      arbitrationReason: '市场与风控存在分歧，采用折中价'
+    }
+  }
+})
+
+assert.ok(normalizedMergeOpinion, 'normalizes MERGE arbitration payload')
+assert.equal(normalizedMergeOpinion.arbitration?.decisionType, 'MERGE', 'keeps MERGE decision type')
+assert.equal(normalizedMergeOpinion.arbitration?.selectedAgentCode, null, 'MERGE does not infer a selected single agent')
+assert.equal(normalizedMergeOpinion.arbitration?.selectedAgentLabel, '综合专家意见折中定价', 'MERGE shows a composite decision label')
+
+const mergeBlock = getManagerArbitrationBlock({
+  agentOpinion: normalizedMergeOpinion.raw
+})
+assert.ok(mergeBlock?.decisionLines.includes('采纳方案：综合专家意见折中定价'), 'MERGE display uses composite decision wording')
+assert.ok(
+  !mergeBlock?.decisionLines.some((line) => line.includes('竞品市场判断')),
+  'MERGE display does not claim a single accepted agent as the selected plan'
+)
+
+const normalizedRejectAllOpinion = normalizeAgentOpinion({
+  agentCode: 'MANAGER_COORDINATOR',
+  agentOpinion: {
+    opinionId: 'task:agent:MANAGER_COORDINATOR:reject-all',
+    agentCode: 'MANAGER_COORDINATOR',
+    agentName: '经理协调智能体',
+    status: 'BLOCKED',
+    summary: '全部方案均需人工复核',
+    relations: {
+      acceptedOpinionIds: ['task:agent:DATA_ANALYSIS:1'],
+      selectedOpinionIds: ['task:agent:DATA_ANALYSIS:1']
+    },
+    decision: {
+      decisionType: 'REJECT_ALL',
+      consensusScore: 0.22,
+      arbitrationDecision: '拒绝自动采纳',
+      arbitrationReason: '利润和风控结论冲突'
+    }
+  }
+})
+
+assert.ok(normalizedRejectAllOpinion, 'normalizes REJECT_ALL arbitration payload')
+assert.equal(normalizedRejectAllOpinion.arbitration?.decisionType, 'REJECT_ALL', 'keeps REJECT_ALL decision type')
+assert.equal(normalizedRejectAllOpinion.arbitration?.selectedAgentCode, null, 'REJECT_ALL does not infer a selected single agent')
+assert.equal(normalizedRejectAllOpinion.arbitration?.selectedAgentLabel, '未采纳单一专家方案', 'REJECT_ALL shows a composite rejection label')
+
+const rejectAllBlock = getManagerArbitrationBlock({
+  agentOpinion: normalizedRejectAllOpinion.raw
+})
+assert.ok(rejectAllBlock?.decisionLines.includes('采纳方案：未采纳单一专家方案'), 'REJECT_ALL display uses composite rejection wording')
+assert.ok(
+  !rejectAllBlock?.decisionLines.some((line) => line.includes('经营收益测算')),
+  'REJECT_ALL display does not claim a single accepted agent as the selected plan'
+)
+
 const normalizedLegacyOpinion = normalizeAgentOpinion({
   resultSummary: '旧仲裁摘要',
   suggestedPrice: 28.8,

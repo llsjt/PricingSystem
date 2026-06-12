@@ -11,6 +11,7 @@ import com.example.pricing.service.PricingTaskStreamService;
 import com.example.pricing.vo.DecisionLogVO;
 import com.example.pricing.vo.PricingTaskDetailVO;
 import com.example.pricing.vo.PricingTaskSnapshotVO;
+import jakarta.validation.Valid;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,7 +42,7 @@ public class PricingTaskController {
      * 为单个商品创建定价任务，供旧版前端或简化入口使用。
      */
     @PostMapping
-    public Result<Long> createTask(@RequestBody PricingTaskCreateDTO request, HttpServletRequest httpRequest) {
+    public Result<Long> createTask(@Valid @RequestBody PricingTaskCreateDTO request, HttpServletRequest httpRequest) {
         try {
             if (request.getProductId() == null) {
                 return Result.error("商品ID不能为空");
@@ -50,6 +51,8 @@ public class PricingTaskController {
             String constraints = request.getConstraints();
             Long taskId = decisionTaskService.createPricingTask(request.getProductId(), strategyGoal, constraints, getCurrentUserId(httpRequest));
             return Result.success(taskId);
+        } catch (IllegalArgumentException e) {
+            return Result.error(400, e.getMessage());
         } catch (Exception e) {
             log.error("create pricing task failed", e);
             return Result.error(e.getMessage());

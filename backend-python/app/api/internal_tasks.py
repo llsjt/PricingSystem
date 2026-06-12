@@ -18,6 +18,7 @@ from app.schemas.task import (
 )
 from app.services.dispatch_service import DispatchService
 from app.services.dispatch_publisher_service import get_dispatch_publisher_service
+from app.services.runtime_metrics import get_runtime_metrics
 from app.services.task_recovery_service import TaskRecoveryService
 
 router = APIRouter(
@@ -100,7 +101,13 @@ async def retry_task(
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         updated = task_repo.mark_retrying(task, trace_id=req.trace_id)
-        await get_dispatch_publisher_service().publish_task(updated.id, updated.trace_id)
+        try:
+            await get_dispatch_publisher_service().publish_task(updated.id, updated.trace_id)
+        except Exception as exc:
+            reason = f"retry publish failed: {exc}"
+            task_repo.mark_failed_force(task_id, reason)
+            get_runtime_metrics().increment("retryPublishFailureCount")
+            raise HTTPException(status_code=503, detail=reason) from exc
         return DispatchTaskResponse(
             accepted=True,
             taskId=task_id,

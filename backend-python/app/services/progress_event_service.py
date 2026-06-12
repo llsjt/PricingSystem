@@ -2,10 +2,14 @@
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.core.config import get_settings
+from app.services.runtime_metrics import get_runtime_metrics
+
+logger = logging.getLogger(__name__)
 
 
 class ProgressEventService:
@@ -16,14 +20,15 @@ class ProgressEventService:
 
         import aio_pika
 
-        connection = await aio_pika.connect_robust(
-            host=settings.rabbitmq_host,
-            port=settings.rabbitmq_port,
-            login=settings.rabbitmq_username,
-            password=settings.rabbitmq_password,
-            virtualhost=settings.rabbitmq_vhost,
-        )
+        connection = None
         try:
+            connection = await aio_pika.connect_robust(
+                host=settings.rabbitmq_host,
+                port=settings.rabbitmq_port,
+                login=settings.rabbitmq_username,
+                password=settings.rabbitmq_password,
+                virtualhost=settings.rabbitmq_vhost,
+            )
             channel = await connection.channel()
             exchange = await channel.declare_exchange(settings.task_progress_exchange, aio_pika.ExchangeType.DIRECT, durable=True)
             body = json.dumps(
@@ -41,11 +46,19 @@ class ProgressEventService:
                 aio_pika.Message(body=body, delivery_mode=aio_pika.DeliveryMode.PERSISTENT),
                 routing_key=settings.task_progress_routing_key,
             )
+        except Exception:
+            get_runtime_metrics().increment("progressPublishFailureCount")
+            logger.warning("Progress event publish failed, taskId=%s eventType=%s", task_id, event_type, exc_info=True)
         finally:
-            await connection.close()
+            if connection is not None:
+                await connection.close()
 
     def publish_sync(self, event_type: str, task_id: int, execution_id: str | None, payload: dict) -> None:
-        asyncio.run(self.publish(event_type, task_id, execution_id, payload))
+        try:
+            asyncio.run(self.publish(event_type, task_id, execution_id, payload))
+        except Exception:
+            get_runtime_metrics().increment("progressPublishFailureCount")
+            logger.warning("Progress event publish_sync failed, taskId=%s eventType=%s", task_id, event_type, exc_info=True)
 
 
 _progress_event_service = ProgressEventService()

@@ -5,13 +5,16 @@ import json
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.core.config import get_settings
+from app.application.cancellation_checker import clear_shutdown, request_shutdown
 from app.db.session import SessionLocal
 from app.repos.task_repo import TaskRepo
 from app.schemas.task import DispatchTaskResponse
 from app.services.dispatch_service import DispatchService
+from app.services.result_finalization_service import ExecutionOwnerChanged
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +86,8 @@ class RabbitMqWorkerService:
         self._connection = None
         self._consumer_channels: list[Any] = []
         self._consumer_queues: list[Any] = []
+        self._inflight: dict[asyncio.Task, dict[str, Any]] = {}
+        self._stopping = False
 
     @property
     def ready(self) -> bool:
@@ -94,30 +99,47 @@ class RabbitMqWorkerService:
             "ready": self._ready,
             "workerConcurrency": self._configured_concurrency,
             "activeConsumers": len(self._consumer_channels),
+            "inflight": len(self._inflight),
             "prefetch": int(self.settings.rabbitmq_prefetch),
             "maxRetry": int(self.settings.worker_max_retry),
         }
 
     async def start(self) -> None:
+        clear_shutdown()
         if self.repo is not None:
             self._started = True
             self._ready = True
+            self._stopping = False
             return
         if self._runner_task and not self._runner_task.done():
             return
         self._started = True
+        self._stopping = False
         self._runner_task = asyncio.create_task(self._run())
         await asyncio.sleep(0)
 
     async def stop(self) -> None:
+        request_shutdown()
         self._started = False
         self._ready = False
+        self._stopping = True
+        await self._close_consumers()
+        await self._wait_inflight()
         if self._runner_task is not None:
             self._runner_task.cancel()
             await asyncio.gather(self._runner_task, return_exceptions=True)
             self._runner_task = None
-        await self._close_consumers()
         await self._close_connection()
+
+    async def _wait_inflight(self) -> None:
+        if not self._inflight:
+            return
+        timeout = int(getattr(self.settings, "worker_graceful_shutdown_seconds", 60) or 60)
+        tasks = list(self._inflight.keys())
+        try:
+            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=max(timeout, 1))
+        except asyncio.TimeoutError:
+            logger.warning("RabbitMQ worker graceful shutdown timed out, inflight=%s", list(self._inflight.values()))
 
     async def _close_consumers(self) -> None:
         while self._consumer_channels:
@@ -218,6 +240,9 @@ class RabbitMqWorkerService:
 
     async def on_message(self, message: Any) -> None:
         """消费单条派发消息，并完成抢占执行权、执行任务、确认或重入队列。"""
+        if self._stopping:
+            await message.nack(requeue=True)
+            return
         try:
             payload = json.loads(message.body)
             task_id = int(payload["taskId"])
@@ -243,12 +268,16 @@ class RabbitMqWorkerService:
                 return
 
             execution_id = str(uuid.uuid4())
+            stale_before = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+                seconds=max(int(getattr(self.settings, "running_lease_timeout_seconds", 300) or 300), 1)
+            )
             # 只有成功抢到 current_execution_id 的 Worker 才能继续执行，避免同一任务被重复消费。
             acquired = await asyncio.to_thread(
                 repo.acquire_execution,
                 task_id,
                 execution_id,
                 allow_reclaim=bool(getattr(message, "redelivered", False)),
+                stale_before=stale_before,
                 max_retry=int(self.settings.worker_max_retry),
             )
             if not acquired:
@@ -256,9 +285,15 @@ class RabbitMqWorkerService:
                 return
 
             heartbeat_task = self._start_heartbeat(task_id, execution_id)
+            current_task = asyncio.current_task()
+            if current_task is not None:
+                self._inflight[current_task] = {"taskId": task_id, "executionId": execution_id, "redelivered": bool(getattr(message, "redelivered", False))}
             try:
                 await self.progress_service.publish("TASK_STARTED", task_id, execution_id, {})
                 await self.dispatch_service.run_task(task_id, execution_id)
+                await message.ack()
+            except ExecutionOwnerChanged:
+                logger.info("Task finalization owner changed, ack stale execution, taskId=%s executionId=%s", task_id, execution_id)
                 await message.ack()
             except RecoverableError as exc:
                 # 可恢复错误走“释放执行权 + 增加消费重试次数 + 重新入队”这条路径。
@@ -300,6 +335,8 @@ class RabbitMqWorkerService:
                 await message.ack()
             finally:
                 await self._stop_heartbeat(heartbeat_task)
+                if current_task is not None:
+                    self._inflight.pop(current_task, None)
         finally:
             if owns_repo_session:
                 repo.db.close()

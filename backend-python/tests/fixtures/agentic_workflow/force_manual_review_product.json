@@ -1,0 +1,41 @@
+{
+  "caseName": "force_manual_review_product",
+  "payload": {
+    "strategyGoal": "MAX_PROFIT",
+    "baselineSales": 100,
+    "baselineProfit": "500.00",
+    "currentPrice": "120.00",
+    "costPrice": "80.00",
+    "constraints": {
+      "min_profit_rate": 0.2,
+      "max_discount_rate": 0.5,
+      "min_price": 90,
+      "max_price": 150,
+      "force_manual_review": true
+    }
+  },
+  "managerOutput": {
+    "finalPrice": "110.00",
+    "expectedSales": 100,
+    "expectedProfit": "2500.00",
+    "profitGrowth": "2000.00",
+    "isPass": false,
+    "resultSummary": "建议复核：本次按利润优先处理，建议价为110.00元，下一步：人工复核。主要依据是force_manual_review=true。风险结论：必须人工确认。",
+    "arbitrationReason": "风控约束要求强制人工复核，经理不得自动确认。",
+    "arbitrationDecision": "RISK_VERIFICATION",
+    "toolAudit": [
+      {"toolName": "evaluate_risk_rules", "status": "success", "argsSummary": {"force_manual_review": true}}
+    ]
+  },
+  "expected": {
+    "finalPrice": "110.00",
+    "expectedProfit": "2500.00",
+    "profitGrowth": "2000.00",
+    "isPass": false,
+    "summaryStartsWith": "建议复核",
+    "arbitrationDecision": "RISK_VERIFICATION",
+    "toolAudit": [
+      {"toolName": "evaluate_risk_rules", "status": "success", "argsSummary": {"force_manual_review": true}}
+    ]
+  }
+}

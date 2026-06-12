@@ -10,6 +10,7 @@ from app.agents import crewai_agents
 from app.core.config import Settings, get_settings
 from app.crew import crewai_runtime
 from app.crew.crewai_runtime import OpenAICompatibleCrewAILLM, build_crewai_llm, debug_log, is_debug_logging_enabled
+from app.infra.llm_client import FailoverCrewAILLM
 
 
 def _make_llm(monkeypatch, responses):
@@ -448,6 +449,44 @@ def test_tools_unsupported_422_degrades_once_without_tools(monkeypatch):
     assert "tools" not in payloads[1]
 
 
+def test_failover_llm_uses_backup_after_primary_429(monkeypatch):
+    _set_tool_loop_env(monkeypatch, enabled=False)
+    primary, primary_payloads = _make_llm(
+        monkeypatch,
+        [
+            crewai_runtime.LLMHttpError(
+                status_code=429,
+                body="rate limited",
+                url="https://primary.example.com/v1/chat/completions",
+            )
+        ],
+    )
+    backup, backup_payloads = _make_llm(monkeypatch, [_chat_response({"content": "backup answer"})])
+    failover = FailoverCrewAILLM(primary=primary, backup=backup)
+
+    assert failover.call("price") == "backup answer"
+    assert len(primary_payloads) == 1
+    assert len(backup_payloads) == 1
+
+
+def test_build_crewai_llm_returns_failover_adapter_when_backup_enabled(monkeypatch):
+    monkeypatch.setenv("BACKUP_LLM_ENABLED", "true")
+    monkeypatch.setenv("BACKUP_LLM_API_KEY", "backup-key")
+    monkeypatch.setenv("BACKUP_LLM_BASE_URL", "https://backup.example.com/v1")
+    monkeypatch.setenv("BACKUP_LLM_MODEL", "backup-model")
+    get_settings.cache_clear()
+
+    llm = build_crewai_llm(
+        api_key="primary-key",
+        base_url="https://primary.example.com/v1",
+        model="primary-model",
+    )
+
+    assert isinstance(llm, FailoverCrewAILLM)
+    assert llm.primary.model == "primary-model"
+    assert llm.backup.model == "backup-model"
+
+
 def test_tool_loop_exceeded_raises_runtime_error(monkeypatch):
     _set_tool_loop_env(monkeypatch, max_rounds=1)
     llm, payloads = _make_llm(
@@ -498,6 +537,7 @@ def test_agents_receive_role_scoped_tools(monkeypatch):
     assert [tool.name for tool in agents["MANAGER_COORDINATOR"].tools] == [
         "estimate_sales_volume",
         "estimate_profit",
+        "evaluate_risk_rules",
     ]
 
 

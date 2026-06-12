@@ -4,6 +4,7 @@
 
 package com.example.pricing.dto;
 
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 /**
@@ -12,6 +13,10 @@ import lombok.Data;
 @Data
 public class PricingTaskCreateDTO {
     private Long productId;
+
+    @Size(max = 1000, message = "constraints length cannot exceed 1000")
     private String constraints;
+
+    @Size(max = 50, message = "strategyGoal length cannot exceed 50")
     private String strategyGoal;
 }

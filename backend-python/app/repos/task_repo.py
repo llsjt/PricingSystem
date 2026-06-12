@@ -10,6 +10,10 @@ from app.models.pricing_task import PricingTask
 from app.utils.math_utils import money
 
 
+TERMINAL_STATES = ("COMPLETED", "FAILED", "CANCELLED", "MANUAL_REVIEW")
+FINALIZABLE_STATES = ("RUNNING", "QUEUED", "RETRYING")
+
+
 class TaskRepo:
     def __init__(self, db: Session):
         self.db = db
@@ -63,15 +67,32 @@ class TaskRepo:
 
         return None
 
-    def acquire_execution(self, task_id: int, execution_id: str, *, allow_reclaim: bool, max_retry: int) -> bool:
+    def acquire_execution(
+        self,
+        task_id: int,
+        execution_id: str,
+        *,
+        allow_reclaim: bool,
+        stale_before: datetime | None = None,
+        max_retry: int,
+    ) -> bool:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
+        stale_threshold = stale_before or now
         filters = [
             PricingTask.id == int(task_id),
-            PricingTask.task_status.notin_(("COMPLETED", "FAILED", "CANCELLED", "MANUAL_REVIEW")),
+            PricingTask.task_status.notin_(TERMINAL_STATES),
             PricingTask.consumer_retry_count < int(max_retry),
         ]
         if allow_reclaim:
-            filters.append(PricingTask.current_execution_id.is_not(None) | PricingTask.current_execution_id.is_(None))
+            filters.append(
+                or_(
+                    PricingTask.current_execution_id.is_(None),
+                    and_(
+                        PricingTask.current_execution_id.is_not(None),
+                        self._stale_lease_filter(stale_threshold),
+                    ),
+                )
+            )
         else:
             filters.append(PricingTask.current_execution_id.is_(None))
 
@@ -164,6 +185,7 @@ class TaskRepo:
                 {
                     PricingTask.task_status: "FAILED",
                     PricingTask.current_execution_id: None,
+                    PricingTask.last_heartbeat_at: None,
                     PricingTask.failure_reason: safe_reason,
                     PricingTask.llm_api_key_enc: None,
                     PricingTask.llm_base_url: None,
@@ -187,6 +209,7 @@ class TaskRepo:
                     PricingTask.task_status: "RETRYING",
                     PricingTask.retry_count: PricingTask.retry_count + 1,
                     PricingTask.current_execution_id: None,
+                    PricingTask.last_heartbeat_at: None,
                     PricingTask.failure_reason: safe_reason,
                     PricingTask.started_at: None,
                     PricingTask.completed_at: None,
@@ -207,12 +230,13 @@ class TaskRepo:
             .filter(
                 PricingTask.id == int(task_id),
                 PricingTask.current_execution_id == execution_id,
-                PricingTask.task_status.notin_(("COMPLETED", "FAILED", "CANCELLED", "MANUAL_REVIEW")),
+                PricingTask.task_status.notin_(TERMINAL_STATES),
             )
             .update(
                 {
                     PricingTask.consumer_retry_count: PricingTask.consumer_retry_count + 1,
                     PricingTask.current_execution_id: None,
+                    PricingTask.last_heartbeat_at: None,
                     PricingTask.task_status: "RETRYING",
                     PricingTask.started_at: None,
                     PricingTask.completed_at: None,
@@ -231,12 +255,13 @@ class TaskRepo:
             .filter(
                 PricingTask.id == int(task_id),
                 PricingTask.current_execution_id == execution_id,
-                PricingTask.task_status.notin_(("COMPLETED", "FAILED", "CANCELLED", "MANUAL_REVIEW")),
+                PricingTask.task_status.notin_(TERMINAL_STATES),
             )
             .update(
                 {
                     PricingTask.task_status: "FAILED",
                     PricingTask.current_execution_id: None,
+                    PricingTask.last_heartbeat_at: None,
                     PricingTask.failure_reason: (reason or "")[:255] if reason else None,
                     PricingTask.llm_api_key_enc: None,
                     PricingTask.llm_base_url: None,
@@ -255,12 +280,13 @@ class TaskRepo:
             self.db.query(PricingTask)
             .filter(
                 PricingTask.id == int(task_id),
-                PricingTask.task_status.notin_(("COMPLETED", "FAILED", "CANCELLED", "MANUAL_REVIEW")),
+                PricingTask.task_status.notin_(TERMINAL_STATES),
             )
             .update(
                 {
                     PricingTask.task_status: "FAILED",
                     PricingTask.current_execution_id: None,
+                    PricingTask.last_heartbeat_at: None,
                     PricingTask.failure_reason: (reason or "")[:255] if reason else None,
                     PricingTask.llm_api_key_enc: None,
                     PricingTask.llm_base_url: None,
@@ -282,6 +308,10 @@ class TaskRepo:
         clear_failure_reason: bool = False,
         execution_id: str | None = None,
     ) -> PricingTask:
+        current_status = str(task.task_status or "").upper()
+        next_status = str(status or "").upper()
+        if current_status in TERMINAL_STATES and current_status != next_status:
+            return task
         if execution_id and not self._can_write(task, execution_id):
             return task
         now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -297,8 +327,10 @@ class TaskRepo:
             task.last_heartbeat_at = now
         elif status in {"FAILED", "CANCELLED", "COMPLETED", "MANUAL_REVIEW"}:
             task.completed_at = now
+            task.current_execution_id = None
+            task.last_heartbeat_at = None
 
-        if status in {"FAILED", "CANCELLED"}:
+        if status in {"FAILED", "CANCELLED", "COMPLETED", "MANUAL_REVIEW"}:
             task.llm_api_key_enc = None
             task.llm_base_url = None
             task.llm_model = None
@@ -328,6 +360,7 @@ class TaskRepo:
         task.task_status = "RETRYING"
         task.retry_count = int(task.retry_count or 0) + 1
         task.current_execution_id = None
+        task.last_heartbeat_at = None
         task.trace_id = trace_id or task.trace_id
         task.failure_reason = failure_reason[:255] if failure_reason else None
         task.started_at = None
@@ -349,6 +382,7 @@ class TaskRepo:
             PricingTask.task_status: "RETRYING",
             PricingTask.retry_count: PricingTask.retry_count + 1,
             PricingTask.current_execution_id: None,
+            PricingTask.last_heartbeat_at: None,
             PricingTask.failure_reason: failure_reason[:255] if failure_reason else None,
             PricingTask.started_at: None,
             PricingTask.completed_at: None,
@@ -360,7 +394,7 @@ class TaskRepo:
             .filter(
                 PricingTask.id == int(task_id),
                 PricingTask.current_execution_id == execution_id,
-                PricingTask.task_status.notin_(("COMPLETED", "FAILED", "CANCELLED", "MANUAL_REVIEW")),
+                PricingTask.task_status.notin_(TERMINAL_STATES),
             )
             .update(updated_values, synchronize_session=False)
         )
@@ -383,6 +417,43 @@ class TaskRepo:
         self.db.refresh(task)
         return task
 
+    def finalize_manual_review_if_owner(
+        self,
+        *,
+        task_id: int,
+        execution_id: str,
+        suggested_min_price: Decimal,
+        suggested_max_price: Decimal,
+        failure_reason: str | None = None,
+    ) -> int:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        values = {
+            PricingTask.suggested_min_price: money(suggested_min_price),
+            PricingTask.suggested_max_price: money(suggested_max_price),
+            PricingTask.task_status: "MANUAL_REVIEW",
+            PricingTask.completed_at: now,
+            PricingTask.current_execution_id: None,
+            PricingTask.last_heartbeat_at: None,
+            PricingTask.llm_api_key_enc: None,
+            PricingTask.llm_base_url: None,
+            PricingTask.llm_model: None,
+        }
+        if failure_reason is not None:
+            values[PricingTask.failure_reason] = failure_reason[:255]
+        else:
+            values[PricingTask.failure_reason] = None
+
+        updated = (
+            self.db.query(PricingTask)
+            .filter(
+                PricingTask.id == int(task_id),
+                PricingTask.current_execution_id == execution_id,
+                PricingTask.task_status.in_(FINALIZABLE_STATES),
+            )
+            .update(values, synchronize_session=False)
+        )
+        return int(updated or 0)
+
     def find_by_code(self, task_code: str) -> PricingTask | None:
         stmt = select(PricingTask).where(PricingTask.task_code == task_code).limit(1)
         return self.db.scalars(stmt).first()
@@ -390,7 +461,7 @@ class TaskRepo:
     @staticmethod
     def _can_write(task: PricingTask, execution_id: str) -> bool:
         status = str(task.task_status or "").upper()
-        if status in {"COMPLETED", "FAILED", "CANCELLED", "MANUAL_REVIEW"}:
+        if status in TERMINAL_STATES:
             return False
         return str(task.current_execution_id or "") == execution_id
 
@@ -401,6 +472,7 @@ class TaskRepo:
 
         total = len(tasks)
         queued = retrying = running = completed = manual_review = failed = cancelled = stale_running = 0
+        consumer_retry_count = 0
         duration_sum = 0.0
         duration_max = 0.0
         duration_samples = 0
@@ -408,6 +480,7 @@ class TaskRepo:
 
         for task in tasks:
             status = str(task.task_status or "").upper()
+            consumer_retry_count += int(task.consumer_retry_count or 0)
             if task.created_at and (latest_created_at is None or task.created_at > latest_created_at):
                 latest_created_at = task.created_at
 
@@ -448,6 +521,7 @@ class TaskRepo:
             "failed": failed,
             "cancelled": cancelled,
             "staleRunningTasks": stale_running,
+            "consumerRetryCount": consumer_retry_count,
             "avgDurationSeconds": round(duration_sum / duration_samples, 2) if duration_samples else 0.0,
             "maxDurationSeconds": round(duration_max, 2),
             "latestTaskCreatedAt": latest_created_at.isoformat() if latest_created_at else None,
@@ -458,4 +532,9 @@ class TaskRepo:
         return or_(
             PricingTask.last_heartbeat_at <= stale_before,
             and_(PricingTask.last_heartbeat_at.is_(None), PricingTask.started_at <= stale_before),
+            and_(
+                PricingTask.last_heartbeat_at.is_(None),
+                PricingTask.started_at.is_(None),
+                PricingTask.updated_at <= stale_before,
+            ),
         )

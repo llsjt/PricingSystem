@@ -31,7 +31,39 @@ class ResultRepo:
         review_required: bool,
         execution_id: str | None = None,
     ) -> PricingResult:
-        if execution_id and not self._can_write(task_id, execution_id):
+        entity = self.upsert_result_without_commit(
+            task_id=task_id,
+            final_price=final_price,
+            expected_sales=expected_sales,
+            expected_profit=expected_profit,
+            profit_growth=profit_growth,
+            is_pass=is_pass,
+            execute_strategy=execute_strategy,
+            result_summary=result_summary,
+            review_required=review_required,
+            execution_id=execution_id,
+            check_owner=True,
+        )
+        self.db.commit()
+        self.db.refresh(entity)
+        return entity
+
+    def upsert_result_without_commit(
+        self,
+        task_id: int,
+        final_price: Decimal,
+        expected_sales: int,
+        expected_profit: Decimal,
+        profit_growth: Decimal,
+        is_pass: bool,
+        execute_strategy: str,
+        result_summary: str,
+        review_required: bool,
+        execution_id: str | None = None,
+        *,
+        check_owner: bool = False,
+    ) -> PricingResult:
+        if check_owner and execution_id and not self._can_write(task_id, execution_id):
             return PricingResult(task_id=task_id, execution_id=execution_id, final_price=money(final_price), expected_profit=money(expected_profit))
         entity = self.get_by_task_id(task_id)
         if entity is None:
@@ -48,8 +80,7 @@ class ResultRepo:
         entity.review_required = 1 if review_required else 0
 
         self.db.add(entity)
-        self.db.commit()
-        self.db.refresh(entity)
+        self.db.flush()
         return entity
 
     def _can_write(self, task_id: int, execution_id: str) -> bool:

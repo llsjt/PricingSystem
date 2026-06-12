@@ -61,7 +61,7 @@ public class HealthController {
             rabbitmqOk = true;
         } catch (Exception ignore) {
         }
-        payload.put("status", databaseOk && pythonOk && rabbitmqOk ? "ok" : "degraded");
+        payload.put("status", databaseOk && rabbitmqOk ? "ok" : "degraded");
         payload.put("database", databaseOk ? "ok" : "down");
         payload.put("pythonWorker", pythonOk ? "ok" : "down");
         payload.put("rabbitmq", rabbitmqOk ? "ok" : "down");
@@ -71,7 +71,9 @@ public class HealthController {
     @GetMapping("/metrics")
     public Map<String, Object> metrics() {
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("status", ready().get("status"));
+        Map<String, Object> ready = ready();
+        payload.put("status", ready.get("status"));
+        payload.put("pythonWorker", ready.get("pythonWorker"));
         payload.put("tasks", operationsMetricsService.snapshot());
         return payload;
     }

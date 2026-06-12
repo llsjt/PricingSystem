@@ -61,3 +61,44 @@ powershell -ExecutionPolicy Bypass -File scripts/apply-db-migrations.ps1
 ```
 
 Migration state is tracked in `schema_migration_history`.
+
+Before a release, run the migration gate check:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/check-db-migration-gates.ps1
+```
+
+- Use `-RequireRollback` for new schema-changing releases. Historical migrations in `database/rollback_baseline_waivers.txt` predate the rollback gate; do not add new migrations to that waiver file.
+- Use `-CheckCleanDatabase` only against an isolated staging or disposable database; it invokes the migration apply script and records the result through `schema_migration_history`.
+- This agent architecture hardening pass does not add a new SQL migration, so no new rollback SQL is required for these code-only changes.
+
+For an isolated clean database rehearsal, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/verify-clean-db-migrations.ps1
+```
+
+This creates a temporary database, applies `schema.sql` and every ordered `migration_*.sql`, then drops the temporary database unless `-KeepDatabase` is passed.
+
+## 7. Pricing worker rollout gates
+
+- Keep `PYTHON_AUTO_SCHEMA_PATCH=false` in production. Python startup must only check schema readiness; schema changes must be applied by `database/schema.sql` plus ordered `migration_*.sql` files.
+- Deploy the Java/frontend compatibility version before rolling out Python worker changes that clear `current_execution_id` on terminal finalization.
+- Start the Python worker gray rollout with `RABBITMQ_PREFETCH=1` and `RABBITMQ_WORKER_CONCURRENCY=1`.
+- Verify SSE terminal behavior before expanding workers: `MANUAL_REVIEW/COMPLETED` should end the browser stream without waiting for four completed cards; `FAILED/CANCELLED` should emit `task_failed`.
+- Watch `queueDepth`, `activeExecutions`, `staleRunningTasks`, `consumerRetryCount`, `retryPublishFailureCount`, `casConflictCount`, `progressPublishFailureCount`, `llmTimeoutCount`, `manualReviewWithoutResultCount`, and `manualReview` for 30-60 minutes before scaling out.
+- `sseTerminalLatencyMs` is a reserved rollout metric name until terminal DB-write and SSE-send timestamps are collected; do not use it as a go/no-go threshold without that instrumentation.
+- Record the observation window with:
+
+```powershell
+python scripts/observe-gray-rollout.py --duration-minutes 30 --interval-seconds 60
+```
+
+The script writes JSONL samples and a summary under `ops/reports/runtime/`. Any threshold breach is a no-go for scaling out.
+
+## 8. Retry and recovery notes
+
+- Browser/user retry should go through Java. Python `/internal/tasks/{taskId}/retry` is an internal compatibility/ops entry.
+- If Python internal retry marks a task `RETRYING` but RabbitMQ publish fails, it must compensate the task to `FAILED`; investigate RabbitMQ before retrying again.
+- Redelivered RabbitMQ messages with a live `current_execution_id` are expected to be acked and dropped. Only stale leases should be reclaimed.
+- Java `/api/health/ready` no longer fails solely because Python Worker is down. Treat `pythonWorker=down` in readiness/metrics as an operations alert, not a Java gateway outage.

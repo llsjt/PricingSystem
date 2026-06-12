@@ -21,21 +21,48 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from app.agent.definitions import (
+    AGENT_KIND_BY_CODE as _AGENT_KIND_BY_CODE,
+    AGENT_META as _AGENT_META,
+    ANALYSIS_ORDERS as _ANALYSIS_ORDERS,
+    MANAGER_ORDER as _MANAGER_ORDER,
+    get_agent_meta,
+)
+from app.agent_outputs.card_mapper import (
+    build_data_card,
+    build_failed_card,
+    build_manager_card,
+    build_market_card,
+    build_risk_card,
+)
+from app.agent_outputs.normalizer import (
+    AgentOutputValidationError,
+    first_present,
+    normalize_manager_output_contract,
+    normalize_optional_text,
+    normalize_selected_agent,
+    validate_agent_output,
+    validate_without_untrusted_agent_opinion,
+)
+from app.agent_outputs.parser import parse_and_validate_output
+from app.application.cancellation_checker import raise_if_cancelled
 from app.crew.crew_factory import CrewBundle, build_pricing_crew
-from app.crew.crewai_runtime import build_crewai_llm, debug_log, extract_json_object
+from app.crew.crewai_runtime import build_crewai_llm, debug_log
 from app.crew.protocols import CrewRunPayload
-from app.schemas.agent import AgentOpinionV1, DataAgentOutput, ManagerAgentOutput, MarketAgentOutput, RiskAgentOutput
+from app.domain.final_decision_verifier import FinalDecisionVerifier, VerificationContext, append_guardrail_summary
+from app.schemas.agent import AgentOpinionV1
 from app.schemas.result import TaskFinalResult
+from app.services.resume_fingerprint import attach_resume_meta
 from app.services.resume_service import ResumeService
 from app.services.progress_event_service import get_progress_event_service
+from app.services.runtime_metrics import get_runtime_metrics
 from app.tools.log_writer_tool import LogWriterTool
 from app.tools.result_writer_tool import ResultWriterTool
 from app.repos.task_repo import TaskRepo
 from app.utils.math_utils import money
-from app.utils.text_utils import MANUAL_REVIEW_STRATEGY, to_strategy_goal_cn, to_risk_level_cn
+from app.utils.text_utils import MANUAL_REVIEW_STRATEGY, to_risk_level_cn, to_strategy_goal_cn
 
 logger = logging.getLogger(__name__)
 
@@ -104,20 +131,11 @@ def _safe_money_delta(new_value: Any, old_value: Any) -> float | None:
 
 
 def _normalize_optional_text(val: Any) -> str | None:
-    text = str(val or "").strip()
-    if not text:
-        return None
-    if text in {"-", "--", "—", "暂无", "暂无数据", "无", "N/A", "n/a", "null", "None"}:
-        return None
-    return text
+    return normalize_optional_text(val)
 
 
 def _first_present(source: dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        value = source.get(key)
-        if value is not None and value != "":
-            return value
-    return None
+    return first_present(source, *keys)
 
 
 def _normalize_optional_list(value: Any) -> list[Any]:
@@ -127,10 +145,11 @@ def _normalize_optional_list(value: Any) -> list[Any]:
 
 
 def _normalize_selected_agent(val: Any) -> str | None:
-    text = _normalize_optional_text(val)
-    if text in {"DATA_ANALYSIS", "MARKET_INTEL", "RISK_CONTROL"}:
-        return text
-    return None
+    return normalize_selected_agent(val)
+
+
+def _normalize_manager_output_contract(parsed: dict[str, Any]) -> dict[str, Any]:
+    return normalize_manager_output_contract(parsed)
 
 
 def _deep_merge_dict(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -152,42 +171,6 @@ def _to_string_list(value: Any) -> list[str]:
         if text:
             result.append(text)
     return result
-
-
-# ── Agent 元数据（名称和展示顺序） ──────────────────────────
-_AGENT_META = [
-    {"code": "DATA_ANALYSIS", "name": "数据分析Agent", "order": 1},
-    {"code": "MARKET_INTEL", "name": "市场情报Agent", "order": 2},
-    {"code": "RISK_CONTROL", "name": "风险控制Agent", "order": 3},
-    {"code": "MANAGER_COORDINATOR", "name": "经理协调Agent", "order": 4},
-]
-
-_ANALYSIS_ORDERS = (1, 2, 3)
-_MANAGER_ORDER = 4
-
-_AGENT_OUTPUT_MODELS = {
-    "DATA_ANALYSIS": DataAgentOutput,
-    "MARKET_INTEL": MarketAgentOutput,
-    "RISK_CONTROL": RiskAgentOutput,
-    "MANAGER_COORDINATOR": ManagerAgentOutput,
-}
-
-_AGENT_KIND_BY_CODE = {
-    "DATA_ANALYSIS": "PRICE_PROPOSAL",
-    "MARKET_INTEL": "MARKET_ASSESSMENT",
-    "RISK_CONTROL": "RISK_ASSESSMENT",
-    "MANAGER_COORDINATOR": "ARBITRATION",
-}
-
-
-class AgentOutputValidationError(RuntimeError):
-    def __init__(self, agent_code: str, message: str):
-        super().__init__(message)
-        self.agent_code = agent_code
-        self.message = message
-
-    def __str__(self) -> str:
-        return f"[{self.agent_code}] {self.message}"
 
 
 @dataclass(frozen=True)
@@ -228,6 +211,7 @@ class OrchestrationService:
         self.task_repo = TaskRepo(db)
         self.log_tool = LogWriterTool(db, execution_id=execution_id)
         self.result_tool = ResultWriterTool(db, execution_id=execution_id)
+        self.final_decision_verifier = FinalDecisionVerifier()
 
     @staticmethod
     def _summarize_failure_message(error: Any) -> str:
@@ -242,6 +226,7 @@ class OrchestrationService:
 
         timeout_tokens = ("timeout", "timed out", "time out", "readtimeout", "connecttimeout")
         if any(token in normalized for token in timeout_tokens):
+            get_runtime_metrics().increment("llmTimeoutCount")
             return "LLM 调用超时"
 
         parse_tokens = ("json", "parse", "decode", "expecting value", "invalid control character")
@@ -252,33 +237,16 @@ class OrchestrationService:
 
     @staticmethod
     def _build_failed_card(summary: str) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
-        concise = str(summary or "").strip() or "CrewAI 任务执行失败"
-        return (
-            concise,
-            [{"label": "错误摘要", "value": concise}],
-            {"error": True, "message": concise},
-        )
+        return build_failed_card(summary)
 
     @staticmethod
     def _validate_agent_output(agent_code: str, parsed: dict[str, Any]) -> dict[str, Any]:
-        model_cls = _AGENT_OUTPUT_MODELS.get(agent_code)
-        if model_cls is None:
-            return parsed
-        try:
-            model = model_cls.model_validate(parsed)
-        except ValidationError as exc:
-            recovered = OrchestrationService._validate_without_untrusted_agent_opinion(model_cls, parsed, exc)
-            if recovered is not None:
-                return recovered
-            raise AgentOutputValidationError(agent_code, "输出结构校验失败") from exc
-        # mode="json" 将 Decimal 序列化为字符串，保证 raw_output_json 可直接存入 JSON 列，
-        # 同时下游 _safe_float / _safe_int / money() 都能接受字符串输入，行为与原实现一致。
-        return model.model_dump(by_alias=True, exclude_none=True, mode="json")
+        return validate_agent_output(agent_code, parsed)
 
     # ── 从 LLM 输出构建数据分析卡片 ──────────────────────────
     @staticmethod
     def _get_agent_meta(order: int) -> dict[str, Any]:
-        return _AGENT_META[order - 1]
+        return get_agent_meta(order)
 
     @staticmethod
     def _safe_parallel_tools(agent: Any) -> list[Any]:
@@ -302,6 +270,7 @@ class OrchestrationService:
         tools: list[Any] | None,
         precomputed_competitor_summary: str | None = None,
     ) -> AgentRunOutput:
+        raise_if_cancelled()
         meta = self._get_agent_meta(order)
         logger.info("Agent [%s] 开始执行 (order=%d)", meta["name"], order)
         debug_log(
@@ -348,29 +317,7 @@ class OrchestrationService:
         return AgentRunOutput(raw=raw, tool_audit=tool_audit)
 
     def _parse_and_validate_output(self, *, order: int, raw: str) -> dict[str, Any]:
-        meta = self._get_agent_meta(order)
-        parsed = extract_json_object(raw)
-        if not parsed:
-            raise AgentOutputValidationError(meta["code"], "输出解析失败")
-        sanitized = dict(parsed)
-        provided_opinion = None
-        for key in list(sanitized.keys()):
-            normalized_key = "".join(ch for ch in str(key).lower() if ch.isalnum())
-            if normalized_key != "agentopinion":
-                continue
-            if provided_opinion is None:
-                provided_opinion = sanitized.pop(key)
-            else:
-                sanitized.pop(key, None)
-        validated = self._validate_agent_output(meta["code"], sanitized)
-        if isinstance(provided_opinion, dict):
-            try:
-                opinion = AgentOpinionV1.model_validate(provided_opinion)
-            except ValidationError:
-                pass
-            else:
-                validated["agentOpinion"] = opinion.model_dump(by_alias=True, exclude_none=True, mode="json")
-        return validated
+        return parse_and_validate_output(order=order, raw=raw)
 
     def _publish_agent_running(self, payload: CrewRunPayload, order: int) -> None:
         meta = self._get_agent_meta(order)
@@ -406,6 +353,7 @@ class OrchestrationService:
         if not orders_to_run:
             return
 
+        raise_if_cancelled()
         for order in orders_to_run:
             self._publish_agent_running(payload, order)
 
@@ -489,29 +437,11 @@ class OrchestrationService:
 
     @staticmethod
     def _validate_agent_output(agent_code: str, parsed: dict[str, Any]) -> dict[str, Any]:
-        model_cls = _AGENT_OUTPUT_MODELS.get(agent_code)
-        if model_cls is None:
-            return parsed
-        try:
-            model = model_cls.model_validate(parsed)
-        except ValidationError as exc:
-            recovered = OrchestrationService._validate_without_untrusted_agent_opinion(model_cls, parsed, exc)
-            if recovered is not None:
-                return recovered
-            raise AgentOutputValidationError(agent_code, "输出结构校验失败") from exc
-        return model.model_dump(by_alias=True, exclude_none=True, mode="json")
+        return validate_agent_output(agent_code, parsed)
 
     @staticmethod
-    def _validate_without_untrusted_agent_opinion(model_cls: type[Any], parsed: dict[str, Any], exc: ValidationError) -> dict[str, Any] | None:
-        if "agentOpinion" not in parsed:
-            return None
-        sanitized = dict(parsed)
-        sanitized.pop("agentOpinion", None)
-        try:
-            model = model_cls.model_validate(sanitized)
-        except ValidationError:
-            return None
-        return model.model_dump(by_alias=True, exclude_none=True, mode="json")
+    def _validate_without_untrusted_agent_opinion(model_cls: type[Any], parsed: dict[str, Any], exc: Any) -> dict[str, Any] | None:
+        return validate_without_untrusted_agent_opinion(model_cls, parsed)
 
     @staticmethod
     def _build_opinion_id(task_id: int, agent_code: str, run_attempt: int = 0) -> str:
@@ -1092,16 +1022,16 @@ class OrchestrationService:
         )
         reason_why: str | None = None
         if order == 1:
-            thinking, evidence, suggestion = self._build_data_card(payload, normalized_output)
+            thinking, evidence, suggestion = build_data_card(payload, normalized_output)
         elif order == 2:
-            thinking, evidence, suggestion = self._build_market_card(normalized_output)
+            thinking, evidence, suggestion = build_market_card(normalized_output)
         elif order == 3:
-            thinking, evidence, suggestion = self._build_risk_card(payload, normalized_output)
+            thinking, evidence, suggestion = build_risk_card(payload, normalized_output)
         else:
             data_p = prior_outputs.get(1, {})
             market_p = prior_outputs.get(2, {})
             risk_p = prior_outputs.get(3, {})
-            thinking, evidence, suggestion, reason_why = self._build_manager_card(
+            thinking, evidence, suggestion, reason_why = build_manager_card(
                 normalized_output, data_p, market_p, risk_p
             )
 
@@ -1113,7 +1043,7 @@ class OrchestrationService:
             evidence=evidence,
             suggestion=suggestion,
             reason_why=reason_why,
-            raw_output=normalized_output,
+            raw_output=attach_resume_meta(normalized_output, payload),
         )
 
     def _write_agent_failed_card(
@@ -1146,7 +1076,8 @@ class OrchestrationService:
 
     # ── 主执行方法 ────────────────────────────────────────────
     def run(self, payload: CrewRunPayload) -> TaskFinalResult:
-        resume_plan = ResumeService(self.db).compute_resume_plan(payload.task_id)
+        raise_if_cancelled()
+        resume_plan = ResumeService(self.db).compute_resume_plan(payload.task_id, payload=payload)
         prior_outputs = dict(resume_plan.prior_outputs)
 
         if resume_plan.all_done:
@@ -1184,7 +1115,7 @@ class OrchestrationService:
             include_competitor_summary=2 in resume_plan.analysis_orders_to_run,
         )
 
-        resume_plan = ResumeService(self.db).compute_resume_plan(payload.task_id)
+        resume_plan = ResumeService(self.db).compute_resume_plan(payload.task_id, payload=payload)
         prior_outputs = dict(resume_plan.prior_outputs)
 
         if resume_plan.all_done:
@@ -1211,6 +1142,7 @@ class OrchestrationService:
         if not resume_plan.manager_completed:
             manager_order = _MANAGER_ORDER
             meta = self._get_agent_meta(manager_order)
+            raise_if_cancelled()
             self._publish_agent_running(payload, manager_order)
             manager_context = self._format_opinions_for_manager_context(
                 prior_outputs,
@@ -1267,14 +1199,16 @@ class OrchestrationService:
 
         logger.info("Crew 执行完成 (task_id=%d)", payload.task_id)
         debug_log(f"[CrewAI] crew completed task_id={payload.task_id}")
-        return self._finalize_result(payload, prior_outputs.get(_MANAGER_ORDER, {}))
+        return self._finalize_result(payload, prior_outputs.get(_MANAGER_ORDER, {}), prior_outputs=prior_outputs)
 
     def _finalize_result(
         self,
         payload: CrewRunPayload,
         manager_parsed: dict[str, Any],
+        prior_outputs: dict[int, dict[str, Any]] | None = None,
     ) -> TaskFinalResult:
         """对经理 Agent 输出做最终校验 + 硬约束，写入 pricing_result 并返回。"""
+        manager_parsed = _normalize_manager_output_contract(manager_parsed)
         manager_parsed = self._validate_agent_output("MANAGER_COORDINATOR", manager_parsed)
 
         # 提取最终定价字段。核心字段必须来自已校验的经理 Agent 输出，不再静默兜底。
@@ -1290,23 +1224,24 @@ class OrchestrationService:
         suggested_min = money(manager_parsed["suggestedMinPrice"])
         suggested_max = money(manager_parsed["suggestedMaxPrice"])
 
-        # ── 强制硬约束校验（Python 代码强制执行，不依赖 LLM 判断） ──
-        # 约束1: 最终价格不得低于成本价（不允许亏损）
-        cost = money(payload.product.cost_price)
-        if final_price < cost:
-            logger.warning("硬约束: 最终价格 %s 低于成本价 %s，强制标记为人工审核", final_price, cost)
-            is_pass = False
-            execute_strategy = MANUAL_REVIEW_STRATEGY
-
-        # 约束2: 预期利润必须高于基线利润（调价必须有意义）
-        if expected_profit <= money(payload.baseline_profit):
+        verifier = getattr(self, "final_decision_verifier", None) or FinalDecisionVerifier()
+        verification = verifier.verify(
+            VerificationContext(
+                payload=payload,
+                final_price=final_price,
+                expected_profit=expected_profit,
+                prior_outputs=prior_outputs or {},
+            )
+        )
+        if not verification.is_pass:
             logger.warning(
-                "硬约束: 预期利润 %s 未超过基线利润 %s，强制标记为人工审核",
-                expected_profit,
-                money(payload.baseline_profit),
+                "硬约束: 最终定价触发风控兜底, task_id=%s, reason_codes=%s",
+                payload.task_id,
+                verification.reason_codes,
             )
             is_pass = False
-            execute_strategy = MANUAL_REVIEW_STRATEGY
+            result_summary = append_guardrail_summary(result_summary, verification)
+        execute_strategy = verification.execute_strategy
 
         # ── 构建并写入最终定价结果 ──────────────────────────────
         final_payload = TaskFinalResult(
@@ -1321,6 +1256,8 @@ class OrchestrationService:
             suggestedMinPrice=suggested_min,
             suggestedMaxPrice=suggested_max,
         )
+        if hasattr(self.result_tool, "set_verification_result"):
+            self.result_tool.set_verification_result(verification)
         self.result_tool.write_final_result(final_payload)
         self.progress_service.publish_sync(
             "TASK_MANUAL_REVIEW" if execute_strategy == MANUAL_REVIEW_STRATEGY else "TASK_COMPLETED",

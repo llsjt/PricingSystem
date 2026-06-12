@@ -22,6 +22,8 @@ from app.repos.log_repo import LogRepo
 from app.services.dispatch_service import DispatchService
 from app.services import orchestration_service as orchestration_module
 from app.services.orchestration_service import OrchestrationService
+from app.services.resume_fingerprint import attach_resume_meta
+from app.application.cancellation_checker import TaskCancelledError, clear_shutdown, request_shutdown
 from app.tools.log_writer_tool import LogWriterTool
 
 
@@ -62,6 +64,15 @@ def build_session(*tables) -> Session:
     return sessionmaker(bind=engine, autoflush=False, autocommit=False, class_=Session)()
 
 
+def test_orchestration_run_aborts_when_shutdown_requested():
+    request_shutdown()
+    try:
+        with pytest.raises(TaskCancelledError):
+            OrchestrationService(build_session()).run(_payload(task_id=1))
+    finally:
+        clear_shutdown()
+
+
 def create_running_task(db: Session, task_id: int = 1) -> PricingTask:
     task = PricingTask(
         id=task_id,
@@ -95,6 +106,10 @@ def _payload(task_id: int) -> SimpleNamespace:
         llm_base_url=None,
         llm_model=None,
     )
+
+
+def _resume_raw(task_id: int, raw_output: dict) -> dict:
+    return attach_resume_meta(raw_output, _payload(task_id))
 
 
 def _valid_data_output() -> dict:
@@ -781,7 +796,7 @@ def test_orchestration_service_reruns_only_manager_after_manager_failure(monkeyp
         thinking_summary="done",
         evidence=[],
         suggestion={"summary": "done"},
-        raw_output=_valid_data_output(),
+        raw_output=_resume_raw(task.id, _valid_data_output()),
     )
     repo.append_card(
         task_id=task.id,
@@ -790,7 +805,7 @@ def test_orchestration_service_reruns_only_manager_after_manager_failure(monkeyp
         thinking_summary="done",
         evidence=[],
         suggestion={"summary": "done"},
-        raw_output=_valid_market_output(),
+        raw_output=_resume_raw(task.id, _valid_market_output()),
     )
     repo.append_card(
         task_id=task.id,
@@ -799,7 +814,7 @@ def test_orchestration_service_reruns_only_manager_after_manager_failure(monkeyp
         thinking_summary="done",
         evidence=[],
         suggestion={"summary": "done"},
-        raw_output=_valid_risk_output(),
+        raw_output=_resume_raw(task.id, _valid_risk_output()),
     )
     repo.append_card(
         task_id=task.id,
@@ -878,7 +893,7 @@ def test_orchestration_service_runs_only_manager_without_writing_replay_complete
             thinking_summary="done",
             evidence=[],
             suggestion={"summary": "done"},
-            raw_output=raw_output,
+            raw_output=_resume_raw(task.id, raw_output),
             run_attempt=0,
         )
 
@@ -1016,7 +1031,7 @@ def test_resume_plan_all_done_does_not_build_new_crew(monkeypatch):
             thinking_summary="done",
             evidence=[],
             suggestion={"summary": "done"},
-            raw_output=raw_output,
+            raw_output=_resume_raw(task.id, raw_output),
         )
 
     monkeypatch.setattr(
@@ -1053,7 +1068,7 @@ def test_market_replay_disables_competitor_precompute_when_only_manager_runs(mon
             thinking_summary="done",
             evidence=[],
             suggestion={"summary": "done"},
-            raw_output=raw_output,
+            raw_output=_resume_raw(task.id, raw_output),
         )
     bundle = _fake_bundle([
         _valid_data_output(),
@@ -1103,13 +1118,16 @@ def test_manager_retry_accepts_replayed_upstream_opinion_id(monkeypatch):
             thinking_summary="done",
             evidence=[],
             suggestion={"summary": "done"},
-            raw_output=_attach_agent_opinion(
+            raw_output=_resume_raw(
                 task.id,
-                raw_output,
-                agent_code,
-                agent_name,
-                kind=kind,
-                status=status,
+                _attach_agent_opinion(
+                    task.id,
+                    raw_output,
+                    agent_code,
+                    agent_name,
+                    kind=kind,
+                    status=status,
+                ),
             ),
             run_attempt=0,
         )
@@ -1169,13 +1187,16 @@ def test_manager_retry_remaps_llm_relation_attempt_to_replayed_opinion_id(monkey
             thinking_summary="done",
             evidence=[],
             suggestion={"summary": "done"},
-            raw_output=_attach_agent_opinion(
+            raw_output=_resume_raw(
                 task.id,
-                raw_output,
-                agent_code,
-                agent_name,
-                kind=kind,
-                status=status,
+                _attach_agent_opinion(
+                    task.id,
+                    raw_output,
+                    agent_code,
+                    agent_name,
+                    kind=kind,
+                    status=status,
+                ),
             ),
             run_attempt=0,
         )
@@ -1389,7 +1410,7 @@ def test_orchestration_service_only_replays_missing_analysis_agents_before_runni
         thinking_summary="done",
         evidence=[],
         suggestion={"summary": "done"},
-        raw_output=_valid_data_output(),
+        raw_output=_resume_raw(task.id, _valid_data_output()),
     )
     repo.append_card(
         task_id=task.id,
@@ -1398,7 +1419,7 @@ def test_orchestration_service_only_replays_missing_analysis_agents_before_runni
         thinking_summary="done",
         evidence=[],
         suggestion={"summary": "done"},
-        raw_output=_valid_risk_output(),
+        raw_output=_resume_raw(task.id, _valid_risk_output()),
     )
 
     bundle = _fake_bundle(
@@ -1553,7 +1574,7 @@ def test_orchestration_service_replays_legacy_manager_output_without_arbitration
         thinking_summary="done",
         evidence=[],
         suggestion={"summary": "done"},
-        raw_output=_valid_data_output(),
+        raw_output=_resume_raw(task.id, _valid_data_output()),
     )
     repo.append_card(
         task_id=task.id,
@@ -1562,7 +1583,7 @@ def test_orchestration_service_replays_legacy_manager_output_without_arbitration
         thinking_summary="done",
         evidence=[],
         suggestion={"summary": "done"},
-        raw_output=_valid_market_output(),
+        raw_output=_resume_raw(task.id, _valid_market_output()),
     )
     repo.append_card(
         task_id=task.id,
@@ -1571,7 +1592,7 @@ def test_orchestration_service_replays_legacy_manager_output_without_arbitration
         thinking_summary="done",
         evidence=[],
         suggestion={"summary": "done"},
-        raw_output=_valid_risk_output(),
+        raw_output=_resume_raw(task.id, _valid_risk_output()),
     )
     repo.append_card(
         task_id=task.id,
@@ -1580,7 +1601,7 @@ def test_orchestration_service_replays_legacy_manager_output_without_arbitration
         thinking_summary="done",
         evidence=[],
         suggestion={"summary": "done"},
-        raw_output={
+        raw_output=_resume_raw(task.id, {
             "finalPrice": "30.00",
             "expectedSales": 118,
             "expectedProfit": "990.00",
@@ -1591,7 +1612,7 @@ def test_orchestration_service_replays_legacy_manager_output_without_arbitration
             "resultSummary": "manager-summary",
             "suggestedMinPrice": "28.00",
             "suggestedMaxPrice": "32.00",
-        },
+        }),
     )
 
     monkeypatch.setattr(

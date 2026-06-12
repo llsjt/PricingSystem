@@ -109,7 +109,7 @@ class PricingTaskStreamServiceTest {
     }
 
     @Test
-    void taskCompletedRealtimeEventWaitsForFourCompletedCardsInCurrentRound() {
+    void taskCompletedRealtimeEventDoesNotWaitForFourCompletedCards() {
         PricingTaskMapper taskMapper = mock(PricingTaskMapper.class);
         PricingResultMapper resultMapper = mock(PricingResultMapper.class);
         AgentRunLogMapper logMapper = mock(AgentRunLogMapper.class);
@@ -138,7 +138,7 @@ class PricingTaskStreamServiceTest {
                 Instant.parse("2026-04-30T10:01:00Z")
         ));
 
-        assertTrue(emitter.payloads().isEmpty());
+        assertEquals(List.of("task_completed"), emitter.types());
     }
 
     @Test
@@ -205,6 +205,38 @@ class PricingTaskStreamServiceTest {
                 "trace-108",
                 Map.of(),
                 Instant.parse("2026-04-30T10:03:00Z")
+        ));
+
+        assertEquals(List.of("task_completed"), emitter.types());
+        assertEquals("MANUAL_REVIEW", emitter.payloads().get(0).get("status"));
+    }
+
+    @Test
+    void terminalRealtimeEventIgnoresClearedOwnerWhenResultExists() {
+        PricingTaskMapper taskMapper = mock(PricingTaskMapper.class);
+        PricingResultMapper resultMapper = mock(PricingResultMapper.class);
+        AgentRunLogMapper logMapper = mock(AgentRunLogMapper.class);
+        PricingTaskStreamService service = new PricingTaskStreamService(taskMapper, resultMapper, logMapper, null);
+        RecordingSseEmitter emitter = new RecordingSseEmitter();
+        PricingTask task = task(111L, "MANUAL_REVIEW", null);
+        PricingResult result = new PricingResult();
+        result.setTaskId(111L);
+        result.setExecutionId("exec-finished");
+        result.setFinalPrice(new java.math.BigDecimal("88.00"));
+
+        when(taskMapper.selectById(111L)).thenReturn(task);
+        when(resultMapper.selectOne(ArgumentMatchers.any())).thenReturn(result);
+        when(logMapper.selectList(ArgumentMatchers.any())).thenReturn(List.of());
+
+        service.register(111L, emitter);
+        service.handleProgressEvent(new TaskProgressEvent(
+                "evt-111",
+                "TASK_MANUAL_REVIEW",
+                111L,
+                "exec-finished",
+                "trace-111",
+                Map.of(),
+                Instant.parse("2026-04-30T10:04:00Z")
         ));
 
         assertEquals(List.of("task_completed"), emitter.types());
@@ -289,11 +321,11 @@ class PricingTaskStreamServiceTest {
         assertFalse(PricingTaskStreamService.shouldEmitCompletedEvent(task, result, 4));
 
         task.setTaskStatus("MANUAL_REVIEW");
-        assertFalse(PricingTaskStreamService.shouldEmitCompletedEvent(task, result, 3));
+        assertTrue(PricingTaskStreamService.shouldEmitCompletedEvent(task, result, 3));
         assertTrue(PricingTaskStreamService.shouldEmitCompletedEvent(task, result, 4));
 
         task.setTaskStatus("COMPLETED");
-        assertFalse(PricingTaskStreamService.shouldEmitCompletedEvent(task, result, 2));
+        assertTrue(PricingTaskStreamService.shouldEmitCompletedEvent(task, result, 2));
         assertTrue(PricingTaskStreamService.shouldEmitCompletedEvent(task, result, 4));
     }
 

@@ -1,0 +1,41 @@
+{
+  "caseName": "risk_review_below_safe_floor_product",
+  "payload": {
+    "strategyGoal": "MAX_PROFIT",
+    "baselineSales": 100,
+    "baselineProfit": "500.00",
+    "currentPrice": "120.00",
+    "costPrice": "80.00",
+    "constraints": {
+      "min_profit_rate": 0.2,
+      "max_discount_rate": 0.5,
+      "min_price": 90,
+      "max_price": 150,
+      "force_manual_review": false
+    }
+  },
+  "managerOutput": {
+    "finalPrice": "75.00",
+    "expectedSales": 120,
+    "expectedProfit": "1800.00",
+    "profitGrowth": "1300.00",
+    "isPass": true,
+    "resultSummary": "建议复核：本次按利润优先处理，建议价为75.00元，下一步：调整约束后重跑。主要依据是候选价低于安全底价。风险结论：需风控复核。",
+    "arbitrationReason": "风控复核发现候选价低于安全底价，必须转人工审核。",
+    "arbitrationDecision": "RISK_VERIFICATION",
+    "toolAudit": [
+      {"toolName": "evaluate_risk_rules", "status": "success"}
+    ]
+  },
+  "expected": {
+    "finalPrice": "75.00",
+    "expectedProfit": "1800.00",
+    "profitGrowth": "1300.00",
+    "isPass": false,
+    "summaryStartsWith": "建议复核",
+    "arbitrationDecision": "RISK_VERIFICATION",
+    "toolAudit": [
+      {"toolName": "evaluate_risk_rules", "status": "success"}
+    ]
+  }
+}

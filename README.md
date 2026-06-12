@@ -42,6 +42,16 @@ Browser
 - Java 负责实时 SSE 事件流，前端不直接连接 Python。
 - Python 负责执行智能定价流程并写回结果，Java 负责对外查询、任务协调与展示。
 - Function calling 仅在 Python Worker 内部执行，不改变 Java API、前端类型或 SSE 事件契约；最终价格仍由 Python 硬约束校验。
+- Java `/api/health/ready` 只以 Java 自身、MySQL 和 RabbitMQ 为就绪门禁；Python Worker 状态进入 health payload、metrics 和告警，不再拖低 Java 网关 readiness。
+
+### 任务执行契约
+
+- 状态机冻结为 `PENDING -> QUEUED -> RUNNING -> MANUAL_REVIEW -> COMPLETED`，失败/重试路径为 `RUNNING -> RETRYING -> RUNNING`，终态包括 `COMPLETED`、`MANUAL_REVIEW`、`FAILED`、`CANCELLED`。
+- Python Worker 通过 `current_execution_id` 和 `last_heartbeat_at` 做 execution fencing；RabbitMQ redelivery 只有在 owner lease 过期后才能抢占。
+- 最终结果、建议价格区间、任务终态、owner 清理和任务 LLM 快照清理在 Python 侧通过单事务 CAS 一次提交。
+- SSE 终态事件优先于 Agent 卡片完整性：`MANUAL_REVIEW/COMPLETED + result` 直接推送 `task_completed`，`FAILED/CANCELLED` 直接推送 `task_failed`。
+- `agentOpinion.decision.decisionType=MERGE/REJECT_ALL` 时，前端不再从 `acceptedOpinionIds/selectedOpinionIds` 反推采纳了单一 Agent。
+- Python 生产环境禁止启动时自动 DDL；`PYTHON_AUTO_SCHEMA_PATCH` 默认关闭，生产打开会启动失败。
 
 ## 核心功能
 

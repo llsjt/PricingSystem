@@ -34,7 +34,6 @@ public class PricingTaskStreamService {
     private static final String SCHEMA_VERSION = "1.0.0";
     private static final String CHANNEL = "pricing.task.card";
     private static final String MANUAL_REVIEW_STRATEGY = "人工审核";
-    private static final int EXPECTED_AGENT_CARD_COUNT = 4;
     private static final ObjectMapper STAGE_OBJECT_MAPPER = new ObjectMapper();
 
     private final PricingTaskMapper taskMapper;
@@ -66,7 +65,7 @@ public class PricingTaskStreamService {
             return;
         }
         PricingTask task = taskMapper.selectById(event.taskId());
-        if (!isCurrentExecution(task, event.executionId())) {
+        if (!isTerminalProgressEvent(event.eventType()) && !isCurrentExecution(task, event.executionId())) {
             return;
         }
         for (Map<String, Object> payload : payloadsForEvent(event, task)) {
@@ -154,14 +153,21 @@ public class PricingTaskStreamService {
             }
             case "TASK_COMPLETED", "TASK_MANUAL_REVIEW" -> {
                 PricingResult result = getResultForTask(task);
-                int completedCardCount = countCompletedCards(effectiveAgentTimelineProjector.project(task, listTaskLogs(taskId)));
-                if (task == null || !shouldEmitCompletedEvent(task, result, completedCardCount)) {
-                    yield List.of();
+                if (task == null) {
+                    yield List.of(baseMessage(taskId, "task_failed", Map.of("message", "task not found", "status", "FAILED")));
                 }
-                yield List.of(baseMessage(taskId, "task_completed", Map.of(
-                        "status", normalizeStatus(task),
-                        "result", buildResultPayload(result)
-                )));
+                if (shouldEmitCompletedEvent(task, result, 0)) {
+                    yield List.of(baseMessage(taskId, "task_completed", Map.of(
+                            "status", normalizeStatus(task),
+                            "result", buildResultPayload(result)
+                    )));
+                }
+                yield shouldEmitTerminalFailure(task, result)
+                        ? List.of(baseMessage(taskId, "task_failed", Map.of(
+                                "message", resolveTerminalMessage(task),
+                                "status", normalizeStatus(task)
+                        )))
+                        : List.of();
             }
             case "TASK_FAILED" -> {
                 if (task == null) {
@@ -203,6 +209,13 @@ public class PricingTaskStreamService {
         return currentExecutionId.equals(executionId);
     }
 
+    private static boolean isTerminalProgressEvent(String eventType) {
+        String normalized = String.valueOf(eventType).trim().toUpperCase();
+        return "TASK_COMPLETED".equals(normalized)
+                || "TASK_MANUAL_REVIEW".equals(normalized)
+                || "TASK_FAILED".equals(normalized);
+    }
+
     private String resolveTaskStatus(Long taskId) {
         PricingTask task = taskMapper.selectById(taskId);
         return task == null ? "FAILED" : normalizeStatus(task);
@@ -239,7 +252,6 @@ public class PricingTaskStreamService {
     static boolean shouldEmitCompletedEvent(PricingTask task, PricingResult result, int completedCardCount) {
         String status = normalizeStatus(task);
         return result != null
-                && completedCardCount >= EXPECTED_AGENT_CARD_COUNT
                 && ("COMPLETED".equals(status) || "MANUAL_REVIEW".equals(status));
     }
 
@@ -259,6 +271,9 @@ public class PricingTaskStreamService {
         }
         if ("MANUAL_REVIEW".equals(status)) {
             return "需要人工审核";
+        }
+        if ("CANCELLED".equals(status)) {
+            return "任务已取消";
         }
         return "task failed";
     }

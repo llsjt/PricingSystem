@@ -67,6 +67,9 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
 
     private static final String MANUAL_REVIEW_STRATEGY = "人工审核";
 
+    private static final int MAX_STRATEGY_GOAL_LENGTH = 50;
+    private static final int MAX_CONSTRAINTS_LENGTH = 1000;
+
     private final PricingTaskMapper taskMapper;
     private final PricingResultMapper resultMapper;
     private final AgentRunLogMapper logMapper;
@@ -129,6 +132,13 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         String normalizedGoal = (strategyGoal == null || strategyGoal.isBlank()) ? "MAX_PROFIT" : strategyGoal.trim();
         String normalizedConstraints = constraints == null ? "" : constraints.trim();
         // 用幂等键把“用户 + 商品 + 目标 + 约束”绑定起来，尽量复用仍可查看的历史任务。
+        if (normalizedGoal.length() > MAX_STRATEGY_GOAL_LENGTH) {
+            throw new IllegalArgumentException("strategyGoal length cannot exceed 50");
+        }
+        if (normalizedConstraints.length() > MAX_CONSTRAINTS_LENGTH) {
+            throw new IllegalArgumentException("constraints length cannot exceed 1000");
+        }
+
         String idempotencyKey = pricingTaskReuseSupport.buildIdempotencyKey(productIds, normalizedGoal, normalizedConstraints, userId);
 
         PricingTask existingTask = pricingTaskReuseSupport.findReusableTask(idempotencyKey, product.getShopId());
@@ -400,6 +410,12 @@ public class DecisionTaskServiceImpl implements DecisionTaskService {
         Product product = productMapper.selectById(task.getProductId());
         if (product == null) {
             throw new IllegalArgumentException("商品不存在");
+        }
+        if (result.getIsPass() == null || result.getIsPass() != 1) {
+            String reason = result.getResultSummary() == null || result.getResultSummary().isBlank()
+                    ? "Pricing result is blocked by guardrails"
+                    : result.getResultSummary();
+            throw new IllegalStateException("Pricing result requires manual review: " + reason);
         }
         BigDecimal finalPrice = scaleMoney(result.getFinalPrice());
         assertPriceWithinGuardrails(product, task, finalPrice);

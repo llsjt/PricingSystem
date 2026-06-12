@@ -109,3 +109,43 @@ def test_retry_task_rejects_when_user_llm_config_missing(monkeypatch):
         raise AssertionError("expected retry_task to raise HTTPException")
     except HTTPException as exc:
         assert exc.status_code == 409
+
+
+def test_retry_task_marks_failed_when_publish_fails(monkeypatch):
+    db = build_session()
+    task = create_task(db, task_id=703, status="FAILED", requested_by_user_id=11)
+    db.add(
+        UserLlmConfig(
+            id=2,
+            user_id=11,
+            llm_api_key_enc=encrypt_api_key("sk-user"),
+            llm_base_url="https://user.example.com/v1",
+            llm_model="user-model",
+        )
+    )
+    db.commit()
+
+    class FailingPublisher:
+        async def publish_task(self, task_id, trace_id):  # noqa: ANN001
+            raise RuntimeError("rabbitmq down")
+
+    monkeypatch.setattr("app.api.internal_tasks.get_dispatch_publisher_service", lambda: FailingPublisher())
+
+    try:
+        asyncio.run(
+            internal_tasks.retry_task(
+                task.id,
+                RetryTaskRequest(productId=task.product_id),
+                db,
+            )
+        )
+        raise AssertionError("expected retry_task to raise HTTPException")
+    except HTTPException as exc:
+        assert exc.status_code == 503
+
+    refreshed = db.get(PricingTask, task.id)
+    assert refreshed is not None
+    assert refreshed.task_status == "FAILED"
+    assert refreshed.current_execution_id is None
+    assert refreshed.llm_api_key_enc is None
+    assert "retry publish failed" in (refreshed.failure_reason or "")

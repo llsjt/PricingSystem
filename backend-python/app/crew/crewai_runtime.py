@@ -705,7 +705,7 @@ def build_crewai_llm(
     read_timeout = min(max(int(settings.crewai_llm_read_timeout_seconds or 0), 5), max(total_timeout - 1, 5))
     max_retries = max(int(settings.crewai_llm_max_retries or 0), 0)
 
-    return OpenAICompatibleCrewAILLM(
+    primary = OpenAICompatibleCrewAILLM(
         api_key=effective_api_key,
         base_url=effective_base_url,
         model=selected_model,
@@ -715,6 +715,35 @@ def build_crewai_llm(
         max_retries=max_retries,
         retry_backoff_seconds=settings.llm_retry_backoff_seconds,
     )
+    if not bool(getattr(settings, "backup_llm_enabled", False)):
+        return primary
+
+    backup_missing: list[str] = []
+    backup_api_key = settings.backup_llm_api_key.strip() or effective_api_key
+    backup_base_url = settings.backup_llm_base_url.strip()
+    backup_model = settings.backup_llm_model.strip()
+    if not backup_api_key:
+        backup_missing.append("BACKUP_LLM_API_KEY")
+    if not backup_base_url:
+        backup_missing.append("BACKUP_LLM_BASE_URL")
+    if not backup_model:
+        backup_missing.append("BACKUP_LLM_MODEL")
+    if backup_missing:
+        raise RuntimeError(f"Missing required backup LLM config: {', '.join(backup_missing)}")
+
+    from app.infra.llm_client import FailoverCrewAILLM
+
+    backup = OpenAICompatibleCrewAILLM(
+        api_key=backup_api_key,
+        base_url=backup_base_url,
+        model=backup_model,
+        timeout_seconds=total_timeout,
+        connect_timeout_seconds=connect_timeout,
+        read_timeout_seconds=read_timeout,
+        max_retries=max_retries,
+        retry_backoff_seconds=settings.llm_retry_backoff_seconds,
+    )
+    return FailoverCrewAILLM(primary=primary, backup=backup)
 
 
 def _repair_json_text(text: str) -> str:
